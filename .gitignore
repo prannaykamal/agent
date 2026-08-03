@@ -1,0 +1,16 @@
+.agent/
+.venv/
+__pycache__/
+*.pyc
+.env
+.env.*
+*.db
+*.sqlite
+node_modules/
+frontend/node_modules/
+dist/
+build/
+.pytest_cache/
+.coverage
+.vscode/
+.idea/

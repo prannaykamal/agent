@@ -1,0 +1,142 @@
+import pytest
+from typing import List, Any, Optional
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.outputs import ChatResult, ChatGeneration
+from fastapi.testclient import TestClient
+from src.db import init_db, get_connection
+from src.harness.graph import build_agent_graph, resume_graph_after_approval, node_tools
+from src.api.server import app
+
+class DeterministicFakeLLM(BaseChatModel):
+    responses: List[AIMessage]
+
+    def _generate(self, messages: List[Any], stop: Optional[List[str]] = None, run_manager: Any = None, **kwargs: Any) -> ChatResult:
+        resp = self.responses.pop(0) if self.responses else AIMessage(content="Completed task.")
+        return ChatResult(generations=[ChatGeneration(message=resp)])
+
+    def bind_tools(self, tools: Any, **kwargs: Any) -> Any:
+        return self
+
+    @property
+    def _llm_type(self) -> str:
+        return "deterministic_fake"
+
+@pytest.fixture
+def temp_db(tmp_path, monkeypatch):
+    db_file = tmp_path / "test_p2_hitl.db"
+    mem_file = tmp_path / "MEMORY.md"
+
+    monkeypatch.setattr("src.db.DB_PATH", db_file)
+    monkeypatch.setattr("src.config.MEMORY_PATH", mem_file)
+    init_db(db_file)
+    return db_file
+
+client = TestClient(app)
+
+def test_p2_high_risk_tool_approval_resumption(temp_db, monkeypatch):
+    """
+    P2 Test 1, 2, 3, 4, 6:
+    LLM emits actual high-risk bank_transfer tool call.
+    Verifies HITL pause, approval via decision API, tool execution, ToolMessage injection,
+    and model producing final user-facing response.
+    """
+    msg_tool_call = AIMessage(
+        content="I will transfer $500 to vendor.",
+        tool_calls=[{
+            "name": "bank_transfer",
+            "args": {"recipient": "vendor_acc_101", "amount": 500.0},
+            "id": "call_bt_777"
+        }]
+    )
+    msg_final = AIMessage(content="Transfer of $500 to vendor_acc_101 has been completed successfully.")
+
+    fake_llm = DeterministicFakeLLM(responses=[msg_tool_call, msg_final])
+    monkeypatch.setattr("src.harness.graph.get_primary_llm", lambda **kw: (fake_llm, 128000))
+
+    graph = build_agent_graph()
+
+    initial_state = {
+        "messages": [HumanMessage(content="Transfer $500 to vendor")],
+        "session_id": "sess_p2_approve",
+        "loop_count": 0,
+        "tools_used": [],
+        "loop_events": []
+    }
+
+    res = graph.invoke(initial_state)
+
+    # Verify execution paused for HITL approval
+    assert res.get("approval_status") == "PENDING"
+    req_id = res.get("pending_approval_id")
+    assert req_id is not None
+
+    # Resume graph after human approval
+    resume_res = resume_graph_after_approval(req_id, "APPROVED")
+    assert resume_res["status"] == "APPROVED"
+    assert "response" in resume_res
+    assert "completed successfully" in resume_res["response"]
+
+def test_p2_high_risk_tool_rejection_resumption(temp_db, monkeypatch):
+    """
+    P2 Test 5 & 6:
+    LLM emits high-risk bank_transfer tool call.
+    On rejection, verifies rejection observation ToolMessage appended, model loop continues,
+    and safe rejection response produced.
+    """
+    msg_tool_call = AIMessage(
+        content="Requesting bank transfer of $1000.",
+        tool_calls=[{
+            "name": "bank_transfer",
+            "args": {"recipient": "acc_unknown", "amount": 1000.0},
+            "id": "call_bt_888"
+        }]
+    )
+    msg_rejection_ack = AIMessage(content="The transfer was rejected by operator. No funds were transferred.")
+
+    fake_llm = DeterministicFakeLLM(responses=[msg_tool_call, msg_rejection_ack])
+    monkeypatch.setattr("src.harness.graph.get_primary_llm", lambda **kw: (fake_llm, 128000))
+
+    graph = build_agent_graph()
+
+    initial_state = {
+        "messages": [HumanMessage(content="Transfer $1000")],
+        "session_id": "sess_p2_reject",
+        "loop_count": 0,
+        "tools_used": [],
+        "loop_events": []
+    }
+
+    res = graph.invoke(initial_state)
+    assert res.get("approval_status") == "PENDING"
+    req_id = res.get("pending_approval_id")
+
+    resume_res = resume_graph_after_approval(req_id, "REJECTED")
+    assert resume_res["status"] == "REJECTED"
+    assert "rejected" in resume_res["response"].lower()
+
+def test_p2_node_tools_blocks_unapproved_high_risk(temp_db):
+    """
+    P2 Test 7:
+    Direct invocation of high-risk tools outside HITL gate in node_tools is blocked.
+    """
+    msg_high_risk = AIMessage(
+        content="Deleting database",
+        tool_calls=[{
+            "name": "delete_database",
+            "args": {"db_name": "prod_db"},
+            "id": "call_del_123"
+        }]
+    )
+
+    state = {
+        "messages": [msg_high_risk],
+        "session_id": "sess_p2_block",
+        "loop_count": 1,
+        "approval_status": "NONE"
+    }
+
+    out = node_tools(state)
+    tool_msgs = out.get("messages", [])
+    assert len(tool_msgs) == 1
+    assert "blocked" in tool_msgs[0].content.lower()

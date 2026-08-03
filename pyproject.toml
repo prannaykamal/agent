@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "personal-assistant-agent"
+version = "0.1.0"
+description = "24x7 Personal AI Assistant with LangGraph, SQLite FTS5, Multi-Provider LLMs, and Cockpit UI"
+authors = [{ name = "DeepMind Agentic AI Team" }]
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "langgraph>=0.2.0",
+    "langchain>=0.3.0",
+    "langchain-core>=0.3.0",
+    "langchain-community>=0.3.0",
+    "langchain-openai>=0.2.0",
+    "langchain-anthropic>=0.2.0",
+    "langchain-google-genai>=0.2.0",
+    "fastapi>=0.115.0",
+    "uvicorn>=0.30.0",
+    "pydantic>=2.8.0",
+    "python-dotenv>=1.0.0",
+    "playwright>=1.40.0",
+    "duckduckgo-search>=4.0.0"
+]
+
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]

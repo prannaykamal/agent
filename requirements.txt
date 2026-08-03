@@ -1,0 +1,14 @@
+langchain>=0.3.0
+langchain-core>=0.3.0
+langchain-community>=0.3.0
+langgraph>=0.2.0
+langchain-openai>=0.2.0
+pydantic>=2.0.0
+python-dotenv>=1.0.0
+pytest>=8.0.0
+fastapi>=0.110.0
+uvicorn>=0.28.0
+langchain-anthropic>=0.1.0
+langchain-google-genai>=1.0.0
+playwright>=1.40.0
+duckduckgo-search>=4.0.0
