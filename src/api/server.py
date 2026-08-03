@@ -352,12 +352,12 @@ def api_add_skill(req: SkillRequest):
         trigger_keywords=req.trigger_keywords,
         execution_steps=req.execution_steps
     )
-    return {"status": "success", "message": f"Skill '{req.name}' added/updated and synced to .agent/SKILL.md"}
+    return {"status": "success", "message": f"Skill '{req.name}' saved as a versioned SKILL.md file"}
 
 @app.delete("/api/skills/{skill_name}")
 def api_delete_skill(skill_name: str):
     delete_procedural_skill(name=skill_name)
-    return {"status": "success", "message": f"Skill '{skill_name}' deleted and synced to .agent/SKILL.md"}
+    return {"status": "success", "message": f"Skill '{skill_name}' disabled and archived"}
 
 # --- Calendar Endpoints ---
 
@@ -818,5 +818,6 @@ if os.path.exists(target_static):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("src.api.server:app", host="0.0.0.0", port=8000, reload=True)
+
 
 

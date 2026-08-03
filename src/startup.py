@@ -1,6 +1,7 @@
-from pathlib import Path
+﻿from pathlib import Path
 from src.config import AGENT_DIR, MEMORY_PATH, SOUL_PATH, SKILL_PATH, DB_PATH
 from src.db import init_db
+from src.memory.skill_files import GENERATED_SKILL_INDEX_MARKER, generated_skill_root, user_skill_root
 
 def ensure_system_initialized() -> dict:
     """
@@ -29,12 +30,17 @@ def ensure_system_initialized() -> dict:
             encoding="utf-8"
         )
 
-    # Initialize default SKILL.md if missing
+    # Initialize versioned procedural skill namespaces without touching user-authored files.
+    generated_skill_root(SKILL_PATH).mkdir(parents=True, exist_ok=True)
+    user_skill_root(SKILL_PATH).mkdir(parents=True, exist_ok=True)
+
+    # Initialize compatibility SKILL.md only when missing.
     if not SKILL_PATH.exists():
         SKILL_PATH.write_text(
+            f"{GENERATED_SKILL_INDEX_MARKER}\n"
             "# Procedural Skills & Workflows\n\n"
-            "## Skills Catalog\n"
-            "- **general_assistant**: Answers questions and manages tasks cleanly.\n",
+            "## Active Generated Skills\n\n"
+            "*No procedural skills defined yet.*\n",
             encoding="utf-8"
         )
 
@@ -47,5 +53,8 @@ def ensure_system_initialized() -> dict:
         "db_path": str(DB_PATH),
         "soul_exists": SOUL_PATH.exists(),
         "memory_exists": MEMORY_PATH.exists(),
-        "skill_exists": SKILL_PATH.exists()
+        "skill_exists": SKILL_PATH.exists(),
+        "generated_skill_dir_exists": generated_skill_root(SKILL_PATH).exists(),
+        "user_skill_dir_exists": user_skill_root(SKILL_PATH).exists()
     }
+
