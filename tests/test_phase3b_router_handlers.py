@@ -65,6 +65,16 @@ def test_every_memory_job_type_has_registered_handler_and_later_phase_jobs_are_n
             assert result.retryable is False
             assert result.result["processed"] is False
             continue
+        if job_type == "procedural_candidate_generation":
+            assert handler.__class__.__name__ == "ProceduralCandidateGenerationJobHandler"
+            result = handler.handle(
+                job={"id": f"job-{job_type}", "job_type": job_type},
+                payload={"schema_version": 1},
+            )
+            assert result.success is False
+            assert result.retryable is False
+            assert result.result["processed"] is False
+            continue
         result = handler.handle(
             job={"id": f"job-{job_type}", "job_type": job_type},
             payload={"schema_version": 1},
@@ -153,6 +163,7 @@ def test_missing_schema_version_returns_failure():
 
     assert result.success is False
     assert "schema_version" in result.result["message"]
+
 
 
 

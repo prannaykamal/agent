@@ -132,7 +132,7 @@ def test_registry_uses_real_episode_handler_and_preserves_other_handlers():
     assert isinstance(registry["episode_generation"], EpisodeGenerationJobHandler)
     assert registry["summary_generation"].__class__.__name__ == "SummaryGenerationJobHandler"
     assert registry["semantic_candidate_extraction"].__class__.__name__ == "SemanticCandidateExtractionJobHandler"
-    assert registry["procedural_candidate_generation"].__class__.__name__ == "NoOpMemoryJobHandler"
+    assert registry["procedural_candidate_generation"].__class__.__name__ == "ProceduralCandidateGenerationJobHandler"
 
 
 def test_secondary_unavailable_returns_retryable_failure(temp_db, monkeypatch):
@@ -253,5 +253,6 @@ def test_handler_writes_no_legacy_or_unrelated_memory_tables(temp_db, monkeypatc
 
     assert {table: _count(temp_db, table) for table in unrelated} == before
     assert _count(temp_db, "structured_episodes") == 1
+
 
 

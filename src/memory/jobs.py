@@ -14,6 +14,7 @@ PHASE_3A_PAYLOAD_SCHEMA_VERSION = 1
 PHASE_5B_SUMMARY_PAYLOAD_SCHEMA_VERSION = 1
 PHASE_6B_EPISODE_PAYLOAD_SCHEMA_VERSION = 1
 PHASE_7C_SEMANTIC_CONSOLIDATION_PAYLOAD_SCHEMA_VERSION = 1
+PHASE_8B_PROCEDURAL_CANDIDATE_PAYLOAD_SCHEMA_VERSION = 1
 MEMORY_JOB_STATUS_QUEUED = "QUEUED"
 MEMORY_JOB_STATUS_RUNNING = "RUNNING"
 MEMORY_JOB_STATUS_RETRYING = "RETRYING"
@@ -25,16 +26,19 @@ POST_TURN_SOURCE = "graph.post_turn"
 SUMMARY_GENERATION_SOURCE = "graph.short_term_budget"
 EPISODE_GENERATION_SOURCE = "graph.episode_detector"
 SEMANTIC_CONSOLIDATION_SOURCE = "memory.semantic_consolidation_trigger"
+PROCEDURAL_CANDIDATE_GENERATION_SOURCE = "memory.episode_generation"
 PHASE_3A_CREATED_BY = "phase_3a_enqueue"
 PHASE_5B_CREATED_BY = "phase_5b_summary_enqueue"
 PHASE_6B_CREATED_BY = "phase_6b_episode_enqueue"
 PHASE_7C_CREATED_BY = "phase_7c_semantic_consolidation_enqueue"
+PHASE_8B_CREATED_BY = "phase_8b_procedural_candidate_enqueue"
 
 _HITL_PAUSE_PREFIX = "[HUMAN APPROVAL REQUIRED"
 _SEMANTIC_JOB_TYPE: MemoryJobType = "semantic_candidate_extraction"
 _EPISODE_JOB_TYPE: MemoryJobType = "episode_generation"
 _SUMMARY_JOB_TYPE: MemoryJobType = "summary_generation"
 _SEMANTIC_CONSOLIDATION_JOB_TYPE: MemoryJobType = "semantic_consolidation"
+_PROCEDURAL_CANDIDATE_JOB_TYPE: MemoryJobType = "procedural_candidate_generation"
 
 
 @dataclass(frozen=True)
@@ -479,6 +483,28 @@ def build_episode_generation_job_spec(
     )
 
 
+def make_procedural_candidate_generation_idempotency_key(
+    *,
+    session_id: str,
+    source_episode_ids: Sequence[str],
+    source_episode_title: str,
+    secondary_provider: str,
+    secondary_model_name: str,
+    payload_schema_version: int = PHASE_8B_PROCEDURAL_CANDIDATE_PAYLOAD_SCHEMA_VERSION,
+) -> str:
+    canonical_input = {
+        "schema_version": payload_schema_version,
+        "job_type": _PROCEDURAL_CANDIDATE_JOB_TYPE,
+        "session_id": str(session_id),
+        "source_episode_ids": [str(episode_id) for episode_id in source_episode_ids],
+        "source_episode_title_hash": sha256_hex(str(source_episode_title or "")),
+        "secondary_provider": str(secondary_provider or "openai"),
+        "secondary_model_name": str(secondary_model_name or "gpt-4o-mini"),
+    }
+    digest = _short_hash(canonical_json(canonical_input), 16)
+    session_hash = _short_hash(str(session_id), 12)
+    return f"memq:v1:{_PROCEDURAL_CANDIDATE_JOB_TYPE}:{session_hash}:{digest}"
+
 def build_semantic_consolidation_payload(
     *,
     session_id: str,
@@ -603,6 +629,117 @@ def enqueue_semantic_consolidation_job(
         candidate_ids=candidate_ids,
         episode_ids=episode_ids,
         maintenance_date=maintenance_date,
+    )
+    target_queue = queue if queue is not None else SQLiteMemoryJobQueue()
+    return target_queue.enqueue_spec(spec)
+
+def build_procedural_candidate_generation_payload(
+    *,
+    session_id: str,
+    source_episode_id: str,
+    source_episode_title: str,
+    source_episode_importance: float,
+    primary_provider: str,
+    primary_model_name: str,
+    secondary_provider: str,
+    secondary_model_name: str,
+    source_episode_ids: Optional[Sequence[str]] = None,
+) -> Dict[str, Any]:
+    from src.harness.llm_router import normalize_provider
+
+    episode_ids = [str(episode_id) for episode_id in (source_episode_ids or [source_episode_id])]
+    provider = normalize_provider(primary_provider)
+    sec_provider = normalize_provider(secondary_provider or primary_provider)
+    return {
+        "schema_version": PHASE_8B_PROCEDURAL_CANDIDATE_PAYLOAD_SCHEMA_VERSION,
+        "source": PROCEDURAL_CANDIDATE_GENERATION_SOURCE,
+        "session_id": str(session_id),
+        "models": {
+            "primary_provider": provider,
+            "primary_model_name": primary_model_name or "gpt-4o-mini",
+            "secondary_provider": sec_provider,
+            "secondary_model_name": secondary_model_name or "gpt-4o-mini",
+        },
+        "procedural_candidate_generation": {
+            "schema_version": PHASE_8B_PROCEDURAL_CANDIDATE_PAYLOAD_SCHEMA_VERSION,
+            "source": "structured_episode",
+            "source_episode_id": str(source_episode_id),
+            "source_episode_ids": episode_ids,
+            "source_episode_title": str(source_episode_title),
+            "source_episode_importance": float(source_episode_importance),
+            "dedup_required": True,
+            "create_skill_files": False,
+            "promotion_allowed": False,
+        },
+        "created_by": PHASE_8B_CREATED_BY,
+    }
+
+
+def build_procedural_candidate_generation_job_spec(
+    *,
+    session_id: str,
+    source_episode_id: str,
+    source_episode_title: str,
+    source_episode_importance: float,
+    primary_provider: str,
+    primary_model_name: str,
+    secondary_provider: str,
+    secondary_model_name: str,
+    source_episode_ids: Optional[Sequence[str]] = None,
+) -> MemoryJobSpec:
+    payload = build_procedural_candidate_generation_payload(
+        session_id=session_id,
+        source_episode_id=source_episode_id,
+        source_episode_title=source_episode_title,
+        source_episode_importance=source_episode_importance,
+        primary_provider=primary_provider,
+        primary_model_name=primary_model_name,
+        secondary_provider=secondary_provider,
+        secondary_model_name=secondary_model_name,
+        source_episode_ids=source_episode_ids,
+    )
+    models = payload["models"]
+    payload_details = payload["procedural_candidate_generation"]
+    idempotency_key = make_procedural_candidate_generation_idempotency_key(
+        session_id=session_id,
+        source_episode_ids=payload_details["source_episode_ids"],
+        source_episode_title=source_episode_title,
+        secondary_provider=models["secondary_provider"],
+        secondary_model_name=models["secondary_model_name"],
+    )
+    return MemoryJobSpec(
+        job_type=_PROCEDURAL_CANDIDATE_JOB_TYPE,
+        payload=payload,
+        idempotency_key=idempotency_key,
+        job_id=make_memory_job_id(_PROCEDURAL_CANDIDATE_JOB_TYPE, idempotency_key),
+        session_id=str(session_id),
+        priority=80,
+    )
+
+
+def enqueue_procedural_candidate_generation_job(
+    *,
+    session_id: str,
+    source_episode_id: str,
+    source_episode_title: str,
+    source_episode_importance: float,
+    primary_provider: str,
+    primary_model_name: str,
+    secondary_provider: str,
+    secondary_model_name: str,
+    source_episode_ids: Optional[Sequence[str]] = None,
+    queue: Optional["SQLiteMemoryJobQueue"] = None,
+) -> EnqueueResult:
+    spec = build_procedural_candidate_generation_job_spec(
+        session_id=session_id,
+        source_episode_id=source_episode_id,
+        source_episode_title=source_episode_title,
+        source_episode_importance=source_episode_importance,
+        primary_provider=primary_provider,
+        primary_model_name=primary_model_name,
+        secondary_provider=secondary_provider,
+        secondary_model_name=secondary_model_name,
+        source_episode_ids=source_episode_ids,
     )
     target_queue = queue if queue is not None else SQLiteMemoryJobQueue()
     return target_queue.enqueue_spec(spec)
@@ -750,6 +887,7 @@ def enqueue_post_turn_memory_jobs(
         return []
     target_queue = queue if queue is not None else SQLiteMemoryJobQueue()
     return target_queue.enqueue_many(specs)
+
 
 
 

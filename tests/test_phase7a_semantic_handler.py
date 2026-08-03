@@ -94,7 +94,7 @@ def test_semantic_candidate_handler_registered_and_other_real_handlers_preserved
     assert isinstance(registry["semantic_candidate_extraction"], SemanticCandidateExtractionJobHandler)
     assert registry["summary_generation"].__class__.__name__ == "SummaryGenerationJobHandler"
     assert registry["episode_generation"].__class__.__name__ == "EpisodeGenerationJobHandler"
-    assert registry["procedural_candidate_generation"].__class__.__name__ == "NoOpMemoryJobHandler"
+    assert registry["procedural_candidate_generation"].__class__.__name__ == "ProceduralCandidateGenerationJobHandler"
     assert registry["semantic_consolidation"].__class__.__name__ == "SemanticConsolidationJobHandler"
     assert registry["procedural_consolidation"].__class__.__name__ == "NoOpMemoryJobHandler"
     assert registry["skill_promotion"].__class__.__name__ == "NoOpMemoryJobHandler"
@@ -198,4 +198,5 @@ def test_handler_parses_fenced_json_and_tolerates_minimal_payload(temp_paths, mo
     assert _count(db_path, "pending_fact_candidates") == 1
     assert minimal.success is True
     assert minimal.result["processed"] is False
+
 

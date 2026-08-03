@@ -1,7 +1,7 @@
 ﻿import json
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Mapping, Protocol
+from typing import Any, Dict, List, Mapping, Optional, Protocol
 
 
 ALL_MEMORY_JOB_TYPES = (
@@ -525,6 +525,177 @@ class SemanticConsolidationJobHandler:
         )
 
 
+def _first_candidate_match_id(matches: Any) -> Optional[str]:
+    for match in matches:
+        candidate_id = str(getattr(match, "candidate_id", ""))
+        if candidate_id:
+            return candidate_id
+    return None
+
+
+def _enqueue_procedural_candidate_for_episode(record: Any, payload: Mapping[str, Any]) -> Dict[str, Any]:
+    try:
+        from src.memory.jobs import enqueue_procedural_candidate_generation_job
+
+        models = payload.get("models") if isinstance(payload.get("models"), Mapping) else {}
+        result = enqueue_procedural_candidate_generation_job(
+            session_id=str(record.session_id),
+            source_episode_id=str(record.id),
+            source_episode_title=str(record.title),
+            source_episode_importance=float(record.importance),
+            primary_provider=str(models.get("primary_provider") or "openai"),
+            primary_model_name=str(models.get("primary_model_name") or "gpt-4o-mini"),
+            secondary_provider=str(models.get("secondary_provider") or "openai"),
+            secondary_model_name=str(models.get("secondary_model_name") or "gpt-4o-mini"),
+            source_episode_ids=[str(record.id)],
+        )
+        return {
+            "procedural_candidate_enqueue_attempted": True,
+            "procedural_candidate_job_id": result.job_id,
+            "procedural_candidate_job_inserted": result.inserted,
+        }
+    except Exception as exc:
+        return {
+            "procedural_candidate_enqueue_attempted": True,
+            "procedural_candidate_enqueue_failed": True,
+            "procedural_candidate_enqueue_error_type": type(exc).__name__,
+        }
+
+
+@dataclass(frozen=True)
+class ProceduralCandidateGenerationJobHandler:
+    job_type: str = "procedural_candidate_generation"
+
+    def handle(self, job: Mapping[str, Any], payload: Mapping[str, Any]) -> JobHandlerResult:
+        if not isinstance(payload, Mapping):
+            return JobHandlerResult(False, {"handler": self.job_type, "job_type": self.job_type, "processed": False, "phase": "8B", "message": "Payload must be a JSON object"}, retryable=False)
+        if payload.get("schema_version") != 1:
+            return JobHandlerResult(False, {"handler": self.job_type, "job_type": self.job_type, "processed": False, "phase": "8B", "message": "Payload schema_version must be 1"}, retryable=False)
+        procedural = payload.get("procedural_candidate_generation")
+        if not isinstance(procedural, Mapping) or procedural.get("schema_version") != 1:
+            return JobHandlerResult(False, {"handler": self.job_type, "job_type": self.job_type, "processed": False, "phase": "8B", "message": "Payload is missing Phase 8B procedural_candidate_generation object"}, retryable=False)
+        if procedural.get("create_skill_files") is not False or procedural.get("promotion_allowed") is not False:
+            return JobHandlerResult(False, {"handler": self.job_type, "job_type": self.job_type, "processed": False, "phase": "8B", "message": "Phase 8B payload must disable skill file creation and promotion"}, retryable=False)
+
+        from src.memory.episode_store import StructuredEpisodeRepository
+        from src.memory.procedural_candidates import SkillCandidateWrite, ProceduralSkillCandidateStore
+        from src.memory.procedural_dedup import ProceduralDedupInput, ProceduralDedupService
+
+        source_episode_id = str(procedural.get("source_episode_id") or "")
+        if not source_episode_id:
+            return JobHandlerResult(False, {"handler": self.job_type, "job_type": self.job_type, "processed": False, "phase": "8B", "message": "source_episode_id is required"}, retryable=False)
+
+        candidate_store = ProceduralSkillCandidateStore()
+        job_id = str(job.get("id") or "")
+        existing = candidate_store.get_by_source_job_id(job_id) if job_id else None
+        if existing is not None:
+            return JobHandlerResult(True, {"handler": self.job_type, "job_type": self.job_type, "processed": False, "phase": "8B", "message": "Procedural candidate already exists for job", "candidate_id": existing.id, "dedup_action": "REUSED", "status": existing.status, "occurrences": existing.occurrences})
+
+        episode = StructuredEpisodeRepository().get_by_id(source_episode_id)
+        if episode is None:
+            return JobHandlerResult(False, {"handler": self.job_type, "job_type": self.job_type, "processed": False, "phase": "8B", "message": "Source structured episode was not found"}, retryable=False)
+
+        route = _resolve_secondary_route(payload)
+        if not getattr(route, "available", False) or getattr(route, "llm", None) is None:
+            return JobHandlerResult(False, {"handler": self.job_type, "job_type": self.job_type, "processed": False, "phase": "8B", "message": "Secondary LLM unavailable"}, retryable=True)
+
+        prompt = (
+            "Generate one reusable procedural skill candidate from this structured episode, or return {\"candidate\":null}. "
+            "Return only JSON with candidate fields: title, description, trigger_description, workflow_category, preferred_tools, tags, confidence, workflow. "
+            "Workflow must be an array of steps with order, instruction, and optional tool_hint. "
+            "Do not approve, promote, write SKILL.md files, write active skills, or decide HITL approvals.\n\n"
+            f"Episode title: {episode.title}\n"
+            f"Episode summary: {episode.summary}\n"
+            f"Goals: {episode.goals}\n"
+            f"Decisions: {episode.decisions}\n"
+            f"Artifacts: {episode.artifacts}\n"
+            f"Topics: {episode.topics}\n"
+        )
+        try:
+            response = route.llm.invoke(prompt)
+            parsed = _extract_json_value(str(getattr(response, "content", response)))
+        except Exception as exc:
+            return JobHandlerResult(False, {"handler": self.job_type, "job_type": self.job_type, "processed": False, "phase": "8B", "message": "Procedural candidate LLM output could not be parsed", "error_type": type(exc).__name__}, retryable=True)
+        if not isinstance(parsed, Mapping):
+            return JobHandlerResult(False, {"handler": self.job_type, "job_type": self.job_type, "processed": False, "phase": "8B", "message": "Procedural candidate LLM output must be an object"}, retryable=True)
+        raw_candidate = parsed.get("candidate")
+        if raw_candidate is None:
+            return JobHandlerResult(True, {"handler": self.job_type, "job_type": self.job_type, "processed": False, "phase": "8B", "message": "No reusable procedural candidate found", "candidate_id": None})
+        if not isinstance(raw_candidate, Mapping):
+            return JobHandlerResult(False, {"handler": self.job_type, "job_type": self.job_type, "processed": False, "phase": "8B", "message": "candidate must be an object or null"}, retryable=True)
+
+        try:
+            candidate_write = SkillCandidateWrite(
+                title=str(raw_candidate.get("title") or ""),
+                description=str(raw_candidate.get("description") or ""),
+                trigger_description=str(raw_candidate.get("trigger_description") or ""),
+                workflow=raw_candidate.get("workflow") or [],
+                preferred_tools=raw_candidate.get("preferred_tools") or [],
+                tags=raw_candidate.get("tags") or [],
+                workflow_category=raw_candidate.get("workflow_category"),
+                confidence=float(raw_candidate.get("confidence", 0.5)),
+                source_episode_ids=[source_episode_id],
+                source_job_id=job_id or None,
+            )
+            dedup_service = ProceduralDedupService(candidate_store=candidate_store)
+            decision, matches = dedup_service.decide(
+                ProceduralDedupInput(
+                    incoming=candidate_write,
+                    source_episode_id=source_episode_id,
+                    source_job_id=job_id or None,
+                    llm_route_payload=payload,
+                ),
+                route,
+            )
+        except Exception as exc:
+            return JobHandlerResult(False, {"handler": self.job_type, "job_type": self.job_type, "processed": False, "phase": "8B", "message": "Procedural candidate validation or dedup failed", "error_type": type(exc).__name__}, retryable=True)
+
+        try:
+            candidate = None
+            if decision.action == "NEW":
+                from src.memory.procedural_candidates import make_skill_candidate_id
+
+                candidate = candidate_store.apply_new(candidate_write, make_skill_candidate_id(candidate_write))
+            elif decision.action == "DUPLICATE":
+                target_id = decision.target_candidate_id or _first_candidate_match_id(matches)
+                if target_id and str(target_id).startswith("active_skill:"):
+                    return JobHandlerResult(True, {"handler": self.job_type, "job_type": self.job_type, "processed": False, "phase": "8B", "message": "Candidate duplicates an active skill", "candidate_id": None, "dedup_action": "DUPLICATE", "duplicate_active_skill_id": target_id})
+                target = candidate_store.get_by_id(str(target_id)) if target_id else None
+                if target is None:
+                    return JobHandlerResult(False, {"handler": self.job_type, "job_type": self.job_type, "processed": False, "phase": "8B", "message": "DUPLICATE decision target was not found"}, retryable=True)
+                candidate = candidate_store.apply_duplicate(target, candidate_write)
+            elif decision.action == "UPDATE":
+                target_id = decision.target_candidate_id or _first_candidate_match_id(matches)
+                if target_id and str(target_id).startswith("active_skill:"):
+                    return JobHandlerResult(True, {"handler": self.job_type, "job_type": self.job_type, "processed": False, "phase": "8B", "message": "Candidate matches an active skill; active skills are read-only in Phase 8B", "candidate_id": None, "dedup_action": "DUPLICATE", "duplicate_active_skill_id": target_id})
+                target = candidate_store.get_by_id(str(target_id)) if target_id else None
+                if target is None:
+                    return JobHandlerResult(False, {"handler": self.job_type, "job_type": self.job_type, "processed": False, "phase": "8B", "message": "UPDATE decision target was not found"}, retryable=True)
+                candidate = candidate_store.apply_update(target, candidate_write)
+            elif decision.action == "MERGE":
+                ids = [candidate_id for candidate_id in ([decision.target_candidate_id] + list(decision.merged_candidate_ids)) if candidate_id and not str(candidate_id).startswith("active_skill:")]
+                targets = [record for candidate_id in ids if (record := candidate_store.get_by_id(str(candidate_id))) is not None]
+                candidate = candidate_store.apply_merge(targets, candidate_write)
+            else:
+                return JobHandlerResult(False, {"handler": self.job_type, "job_type": self.job_type, "processed": False, "phase": "8B", "message": "Unknown procedural dedup action"}, retryable=True)
+        except Exception as exc:
+            return JobHandlerResult(False, {"handler": self.job_type, "job_type": self.job_type, "processed": False, "phase": "8B", "message": "Failed to apply procedural dedup decision", "error_type": type(exc).__name__}, retryable=True)
+
+        return JobHandlerResult(
+            True,
+            {
+                "handler": self.job_type,
+                "job_type": self.job_type,
+                "processed": True,
+                "phase": "8B",
+                "message": "Procedural skill candidate recorded",
+                "candidate_id": candidate.id,
+                "dedup_action": decision.action,
+                "status": candidate.status,
+                "occurrences": candidate.occurrences,
+            },
+        )
+
 @dataclass(frozen=True)
 class EpisodeGenerationJobHandler:
     job_type: str = "episode_generation"
@@ -556,7 +727,9 @@ class EpisodeGenerationJobHandler:
         job_id = str(job.get("id") or "")
         existing = repository.get_by_source_job_id(job_id) if job_id else None
         if existing is not None:
-            return JobHandlerResult(True, {"handler": "episode_generation", "job_type": self.job_type, "processed": False, "phase": "6B", "message": "Structured episode already exists for job", "structured_episode_id": existing.id, "action": existing.action})
+            result_payload = {"handler": "episode_generation", "job_type": self.job_type, "processed": False, "phase": "6B", "message": "Structured episode already exists for job", "structured_episode_id": existing.id, "action": existing.action}
+            result_payload.update(_enqueue_procedural_candidate_for_episode(existing, payload))
+            return JobHandlerResult(True, result_payload)
 
         from src.memory.summary_blocks import SummaryBlockRepository
 
@@ -615,21 +788,20 @@ class EpisodeGenerationJobHandler:
         except Exception as exc:
             return JobHandlerResult(False, {"handler": "episode_generation", "job_type": self.job_type, "processed": False, "phase": "6B", "message": "Failed to append structured episode", "error_type": type(exc).__name__}, retryable=False)
 
-        return JobHandlerResult(
-            True,
-            {
-                "handler": "episode_generation",
-                "job_type": self.job_type,
-                "processed": True,
-                "phase": "6B",
-                "message": "Structured episode appended",
-                "structured_episode_id": record.id,
-                "action": record.action,
-                "parent_episode_id": record.parent_episode_id,
-                "related_episode_ids": list(continuation.get("related_episode_ids") or []),
-                "trigger_reason": episodic.get("trigger_reason"),
-            },
-        )
+        result_payload = {
+            "handler": "episode_generation",
+            "job_type": self.job_type,
+            "processed": True,
+            "phase": "6B",
+            "message": "Structured episode appended",
+            "structured_episode_id": record.id,
+            "action": record.action,
+            "parent_episode_id": record.parent_episode_id,
+            "related_episode_ids": list(continuation.get("related_episode_ids") or []),
+            "trigger_reason": episodic.get("trigger_reason"),
+        }
+        result_payload.update(_enqueue_procedural_candidate_for_episode(record, payload))
+        return JobHandlerResult(True, result_payload)
 
 @dataclass(frozen=True)
 class SummaryGenerationJobHandler:
@@ -829,9 +1001,13 @@ def build_default_handler_registry() -> Dict[str, MemoryJobHandler]:
     registry = {job_type: NoOpMemoryJobHandler(job_type=job_type) for job_type in ALL_MEMORY_JOB_TYPES}
     registry["semantic_candidate_extraction"] = SemanticCandidateExtractionJobHandler()
     registry["semantic_consolidation"] = SemanticConsolidationJobHandler()
+    registry["procedural_candidate_generation"] = ProceduralCandidateGenerationJobHandler()
     registry["episode_generation"] = EpisodeGenerationJobHandler()
     registry["summary_generation"] = SummaryGenerationJobHandler()
     return registry
+
+
+
 
 
 
