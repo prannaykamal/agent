@@ -89,3 +89,14 @@ Run the complete verified test suite (**181 tests passed/skipped, 100% success r
 python -m pytest tests/
 ```
 
+
+---
+
+## Memory Architecture Runbooks
+
+- **[Memory Architecture](docs/memory-architecture.md)**: final primary/secondary LLM split, durable memory jobs, summaries, structured episodes, semantic consolidation, procedural skills, retrieval, observability, table ownership, and legacy compatibility.
+- **[Operator Runbook](docs/operator-runbook.md)**: backend/frontend startup, explicit worker operation, health checks, retrieval trace, semantic/procedural review, approval workflows, backup/restore, and incident recovery.
+- **[Developer Testing Guide](docs/developer-testing.md)**: focused regression commands, fixture guidance, deterministic worker testing, fake LLM guidance, and static architecture scans.
+- **[Memory Observability API](docs/api-memory-observability.md)**: read-only observability endpoints, request parameters, example responses, redaction rules, and privacy boundaries.
+- **[Memory Failure Recovery](docs/memory-failure-recovery.md)**: queue, worker, secondary LLM, consolidation, approval, skill reload, retrieval, and DB recovery playbooks.
+- **[Legacy Memory Backfill](docs/legacy-memory-backfill.md)**: documentation-only dry-run strategy for future optional legacy data backfill.
