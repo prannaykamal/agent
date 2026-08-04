@@ -18,6 +18,9 @@ from src.memory.short_term import estimate_tokens, log_raw_turn, get_raw_turns
 from src.memory.summary_blocks import prepare_short_term_context_for_chat
 
 from src.memory.retrieval_gate import should_retrieve_memory
+from src.memory.context_assembler import ContextAssemblyOptions, assemble_retrieved_memory_context
+from src.memory.retrieval_planner import build_retrieval_plan
+from src.memory.retrieval_sources import retrieve_all_sources
 from src.memory.semantic import search_facts_top_k, extract_and_save_facts
 from src.memory.episodic import search_episodes_fts, log_episode
 from src.memory.procedural import match_procedural_skills
@@ -131,20 +134,15 @@ def node_manage_memory(state: AgentState) -> dict:
         "summary_status": context.status,
         "pending_summary_job_id": context.pending_summary_job_id,
     }
-def node_retrieval_gate(state: AgentState) -> dict:
-    """Node: Runs Retrieval Gate and injects long-term memory if triggered."""
-    messages = list(state.get("messages", []))
-    last_user_msg = next((m.content for m in reversed(messages) if isinstance(m, HumanMessage)), "")
 
-    needs_retrieval = should_retrieve_memory(str(last_user_msg))
-    retrieved_items: List[Dict[str, Any]] = []
+def _legacy_retrieval_gate_fallback(messages: List[BaseMessage], query: str) -> dict:
+    """Best-effort legacy retrieval path used only if Phase 9B retrieval fails globally."""
+    try:
+        facts = search_facts_top_k(query=query, k=3)
+        episodes = search_episodes_fts(query=query, limit=2)
+        skills = match_procedural_skills(query=query)
 
-    if needs_retrieval and last_user_msg:
-        query_str = str(last_user_msg)
-        facts = search_facts_top_k(query=query_str, k=3)
-        episodes = search_episodes_fts(query=query_str, limit=2)
-        skills = match_procedural_skills(query=query_str)
-
+        retrieved_items: List[Dict[str, Any]] = []
         memory_blocks = []
         if facts:
             fact_str = "\n".join(f"- [{f['category']}] {f['fact_text']}" for f in facts)
@@ -165,11 +163,67 @@ def node_retrieval_gate(state: AgentState) -> dict:
             context_block = "[Retrieved Long-Term Memory]\n" + "\n\n".join(memory_blocks)
             messages.append(SystemMessage(content=context_block))
 
-    return {
-        "messages": messages,
-        "retrieval_triggered": needs_retrieval,
-        "retrieved_memories": retrieved_items
-    }
+        return {
+            "messages": messages,
+            "retrieval_triggered": bool(memory_blocks),
+            "retrieved_memories": retrieved_items,
+        }
+    except Exception:
+        return {
+            "messages": messages,
+            "retrieval_triggered": False,
+            "retrieved_memories": [],
+        }
+
+
+def node_retrieval_gate(state: AgentState) -> dict:
+    """Node: Runs Retrieval Gate and injects long-term memory if triggered."""
+    messages = list(state.get("messages", []))
+    last_user_msg = next((m.content for m in reversed(messages) if isinstance(m, HumanMessage)), "")
+
+    needs_retrieval = should_retrieve_memory(str(last_user_msg))
+    if not needs_retrieval or not last_user_msg:
+        return {
+            "messages": messages,
+            "retrieval_triggered": False,
+            "retrieved_memories": [],
+        }
+
+    query_str = str(last_user_msg)
+    try:
+        plan = build_retrieval_plan(
+            query=query_str,
+            session_id=state.get("session_id", "default_session"),
+            provider=state.get("provider", "openai"),
+            model_name=state.get("model_name", "gpt-4o-mini"),
+            messages=messages,
+            gate_allows_retrieval=needs_retrieval,
+        )
+        if not plan.should_retrieve or plan.retrieval_request is None:
+            return {
+                "messages": messages,
+                "retrieval_triggered": False,
+                "retrieved_memories": [],
+            }
+
+        bundle = retrieve_all_sources(plan.retrieval_request)
+        assembled = assemble_retrieved_memory_context(
+            bundle,
+            ContextAssemblyOptions(
+                total_token_budget=plan.total_token_budget,
+                budget_by_kind=plan.budget_by_kind,
+            ),
+        )
+        if assembled.block_text:
+            messages.append(SystemMessage(content=assembled.block_text))
+
+        return {
+            "messages": messages,
+            "retrieval_triggered": bool(assembled.block_text),
+            "retrieved_memories": assembled.legacy_retrieved_items,
+        }
+    except Exception:
+        return _legacy_retrieval_gate_fallback(messages, query_str)
 
 def node_agent(state: AgentState) -> dict:
     """Node: Invokes Primary LLM bound with tools and advances loop step."""
