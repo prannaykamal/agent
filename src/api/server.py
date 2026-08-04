@@ -23,7 +23,7 @@ from src.memory.procedural import (
     sync_skill_md
 )
 from src.memory.short_term import get_raw_turns
-from src.hitl.approval_engine import create_approval_request, get_all_approval_requests
+from src.hitl.approval_engine import create_approval_request, get_all_approval_requests, process_approval_decision
 
 from src.harness.graph import agent_app, resume_graph_after_approval
 from src.harness.models import get_model_catalog
@@ -45,6 +45,7 @@ from src.mcp_gateway.calendar import (
 
 from src.config import SOUL_PATH, SKILL_PATH, MEMORY_PATH
 from src.memory.config import load_memory_config
+from src.memory.skill_promotion import ProceduralSkillApprovalRepository, process_procedural_skill_approval_decision
 from src.startup import ensure_system_initialized
 from src.personal_os.backup import export_agent_backup, restore_agent_backup
 
@@ -702,9 +703,34 @@ def api_get_approvals():
 def api_approval_decision(request_id: str, req: DecisionRequest):
     if req.decision not in ("APPROVED", "REJECTED"):
         raise HTTPException(status_code=400, detail="Decision must be APPROVED or REJECTED.")
+
+    procedural_link = ProceduralSkillApprovalRepository().get_by_approval_request_id(request_id)
+    if procedural_link is not None:
+        try:
+            processed = process_approval_decision(request_id, req.decision)
+            procedural_result = process_procedural_skill_approval_decision(
+                approval_request_id=request_id,
+                decision=req.decision,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        status = str(req.decision).upper()
+        tool_name = str(processed.get("tool_name") or "procedural_skill_promotion")
+        message = procedural_result.message or f"Procedural skill approval {status}."
+        return {
+            "request_id": request_id,
+            "status": status,
+            "tool_name": tool_name,
+            "tool_result": message,
+            "response": message,
+            "message": message,
+            "procedural_skill_approval": procedural_result.to_dict(),
+        }
+
     res = resume_graph_after_approval(request_id=request_id, decision=req.decision)
     return res
-
 # --- System Backup & Restore Endpoints ---
 
 class RestoreRequest(BaseModel):

@@ -1,4 +1,4 @@
-﻿import json
+import json
 import sqlite3
 
 import pytest
@@ -67,6 +67,16 @@ def test_every_memory_job_type_has_registered_handler_and_later_phase_jobs_are_n
             continue
         if job_type == "procedural_candidate_generation":
             assert handler.__class__.__name__ == "ProceduralCandidateGenerationJobHandler"
+            result = handler.handle(
+                job={"id": f"job-{job_type}", "job_type": job_type},
+                payload={"schema_version": 1},
+            )
+            assert result.success is False
+            assert result.retryable is False
+            assert result.result["processed"] is False
+            continue
+        if job_type == "skill_promotion":
+            assert handler.__class__.__name__ == "SkillPromotionJobHandler"
             result = handler.handle(
                 job={"id": f"job-{job_type}", "job_type": job_type},
                 payload={"schema_version": 1},

@@ -107,7 +107,7 @@ def test_handler_registered_and_later_procedural_jobs_remain_noop():
 
     assert isinstance(registry["procedural_candidate_generation"], ProceduralCandidateGenerationJobHandler)
     assert registry["procedural_consolidation"].__class__.__name__ == "NoOpMemoryJobHandler"
-    assert registry["skill_promotion"].__class__.__name__ == "NoOpMemoryJobHandler"
+    assert registry["skill_promotion"].__class__.__name__ == "SkillPromotionJobHandler"
     assert registry["summary_generation"].__class__.__name__ == "SummaryGenerationJobHandler"
     assert registry["episode_generation"].__class__.__name__ == "EpisodeGenerationJobHandler"
 

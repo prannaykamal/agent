@@ -324,6 +324,29 @@ class ProceduralSkillCandidateStore:
         finally:
             conn.close()
 
+    def list_ready_for_promotion(self, limit: int = 100) -> List[SkillCandidateRecord]:
+        return self.list_by_status("READY_FOR_PROMOTION", limit=limit)
+
+    def transition_ready_to_waiting(self, candidate_id: str) -> SkillCandidateRecord:
+        return self._transition_status(
+            candidate_id,
+            expected_status="READY_FOR_PROMOTION",
+            next_status="WAITING_FOR_APPROVAL",
+        )
+
+    def transition_waiting_to_promoted(self, candidate_id: str) -> SkillCandidateRecord:
+        return self._transition_status(
+            candidate_id,
+            expected_status="WAITING_FOR_APPROVAL",
+            next_status="PROMOTED",
+        )
+
+    def transition_waiting_to_rejected(self, candidate_id: str) -> SkillCandidateRecord:
+        return self._transition_status(
+            candidate_id,
+            expected_status="WAITING_FOR_APPROVAL",
+            next_status="REJECTED",
+        )
     def list_recent(self, limit: int = 100) -> List[SkillCandidateRecord]:
         conn = get_connection(self.db_path)
         try:
@@ -559,6 +582,24 @@ class ProceduralSkillCandidateStore:
             raise RuntimeError("Updated skill candidate could not be read back")
         return record
 
+    def _transition_status(
+        self,
+        candidate_id: str,
+        *,
+        expected_status: SkillCandidateStatus,
+        next_status: SkillCandidateStatus,
+    ) -> SkillCandidateRecord:
+        existing = self.get_by_id(candidate_id)
+        if existing is None:
+            raise SkillCandidateValidationError("id", "candidate does not exist")
+        if existing.status == next_status:
+            return existing
+        if existing.status != expected_status:
+            raise SkillCandidateValidationError(
+                "status",
+                f"cannot transition {existing.status} to {next_status}; expected {expected_status}",
+            )
+        return self.update_status(candidate_id, next_status)
     @staticmethod
     def _row_to_record(row: Any) -> SkillCandidateRecord:
         return SkillCandidateRecord(
@@ -597,3 +638,4 @@ def _merge_workflow(*workflows: Sequence[Mapping[str, Any]]) -> List[Dict[str, A
             seen.add(key)
             merged.append({"order": len(merged) + 1, "instruction": instruction, "tool_hint": _normalize_optional_text(step.get("tool_hint"))})
     return merged
+

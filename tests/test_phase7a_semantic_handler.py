@@ -1,4 +1,4 @@
-﻿import json
+import json
 import sqlite3
 from types import SimpleNamespace
 
@@ -97,7 +97,7 @@ def test_semantic_candidate_handler_registered_and_other_real_handlers_preserved
     assert registry["procedural_candidate_generation"].__class__.__name__ == "ProceduralCandidateGenerationJobHandler"
     assert registry["semantic_consolidation"].__class__.__name__ == "SemanticConsolidationJobHandler"
     assert registry["procedural_consolidation"].__class__.__name__ == "NoOpMemoryJobHandler"
-    assert registry["skill_promotion"].__class__.__name__ == "NoOpMemoryJobHandler"
+    assert registry["skill_promotion"].__class__.__name__ == "SkillPromotionJobHandler"
 
 
 def test_llm_candidates_write_only_pending_candidates(temp_paths, monkeypatch):

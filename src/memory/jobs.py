@@ -15,6 +15,7 @@ PHASE_5B_SUMMARY_PAYLOAD_SCHEMA_VERSION = 1
 PHASE_6B_EPISODE_PAYLOAD_SCHEMA_VERSION = 1
 PHASE_7C_SEMANTIC_CONSOLIDATION_PAYLOAD_SCHEMA_VERSION = 1
 PHASE_8B_PROCEDURAL_CANDIDATE_PAYLOAD_SCHEMA_VERSION = 1
+PHASE_8C_SKILL_PROMOTION_PAYLOAD_SCHEMA_VERSION = 1
 MEMORY_JOB_STATUS_QUEUED = "QUEUED"
 MEMORY_JOB_STATUS_RUNNING = "RUNNING"
 MEMORY_JOB_STATUS_RETRYING = "RETRYING"
@@ -27,11 +28,13 @@ SUMMARY_GENERATION_SOURCE = "graph.short_term_budget"
 EPISODE_GENERATION_SOURCE = "graph.episode_detector"
 SEMANTIC_CONSOLIDATION_SOURCE = "memory.semantic_consolidation_trigger"
 PROCEDURAL_CANDIDATE_GENERATION_SOURCE = "memory.episode_generation"
+SKILL_PROMOTION_SOURCE = "memory.procedural_promotion"
 PHASE_3A_CREATED_BY = "phase_3a_enqueue"
 PHASE_5B_CREATED_BY = "phase_5b_summary_enqueue"
 PHASE_6B_CREATED_BY = "phase_6b_episode_enqueue"
 PHASE_7C_CREATED_BY = "phase_7c_semantic_consolidation_enqueue"
 PHASE_8B_CREATED_BY = "phase_8b_procedural_candidate_enqueue"
+PHASE_8C_CREATED_BY = "phase_8c_skill_promotion_enqueue"
 
 _HITL_PAUSE_PREFIX = "[HUMAN APPROVAL REQUIRED"
 _SEMANTIC_JOB_TYPE: MemoryJobType = "semantic_candidate_extraction"
@@ -39,6 +42,7 @@ _EPISODE_JOB_TYPE: MemoryJobType = "episode_generation"
 _SUMMARY_JOB_TYPE: MemoryJobType = "summary_generation"
 _SEMANTIC_CONSOLIDATION_JOB_TYPE: MemoryJobType = "semantic_consolidation"
 _PROCEDURAL_CANDIDATE_JOB_TYPE: MemoryJobType = "procedural_candidate_generation"
+_SKILL_PROMOTION_JOB_TYPE: MemoryJobType = "skill_promotion"
 
 
 @dataclass(frozen=True)
@@ -744,6 +748,115 @@ def enqueue_procedural_candidate_generation_job(
     target_queue = queue if queue is not None else SQLiteMemoryJobQueue()
     return target_queue.enqueue_spec(spec)
 
+def make_skill_promotion_idempotency_key(
+    *,
+    session_id: str,
+    candidate_ids: Optional[Sequence[str]] = None,
+    trigger_type: str,
+    approval_policy: str = "hitl_required",
+    window_key: Optional[str] = None,
+    payload_schema_version: int = PHASE_8C_SKILL_PROMOTION_PAYLOAD_SCHEMA_VERSION,
+) -> str:
+    candidate_id_list = sorted({str(candidate_id) for candidate_id in (candidate_ids or []) if str(candidate_id).strip()})
+    canonical_input = {
+        "schema_version": payload_schema_version,
+        "job_type": _SKILL_PROMOTION_JOB_TYPE,
+        "session_id": str(session_id),
+        "candidate_ids": candidate_id_list,
+        "trigger_type": str(trigger_type),
+        "approval_policy": str(approval_policy),
+        "window_key": str(window_key or "default"),
+    }
+    digest = _short_hash(canonical_json(canonical_input), 16)
+    session_hash = _short_hash(str(session_id), 12)
+    return f"memq:v1:{_SKILL_PROMOTION_JOB_TYPE}:{session_hash}:{digest}"
+
+
+def build_skill_promotion_payload(
+    *,
+    session_id: str,
+    trigger_type: str,
+    candidate_ids: Optional[Sequence[str]] = None,
+    max_candidates: int = 10,
+    approval_policy: str = "hitl_required",
+    window_key: Optional[str] = None,
+) -> Dict[str, Any]:
+    candidate_id_list = sorted({str(candidate_id) for candidate_id in (candidate_ids or []) if str(candidate_id).strip()})
+    return {
+        "schema_version": PHASE_8C_SKILL_PROMOTION_PAYLOAD_SCHEMA_VERSION,
+        "job_type": _SKILL_PROMOTION_JOB_TYPE,
+        "source": SKILL_PROMOTION_SOURCE,
+        "session_id": str(session_id),
+        "skill_promotion": {
+            "schema_version": PHASE_8C_SKILL_PROMOTION_PAYLOAD_SCHEMA_VERSION,
+            "trigger_type": str(trigger_type),
+            "candidate_ids": candidate_id_list,
+            "max_candidates": int(max_candidates),
+            "approval_policy": str(approval_policy),
+            "window_key": window_key,
+            "create_skill_files_before_approval": False,
+            "activate_after_approval": True,
+            "procedural_consolidation_required": False,
+        },
+        "created_by": PHASE_8C_CREATED_BY,
+    }
+
+
+def build_skill_promotion_job_spec(
+    *,
+    session_id: str,
+    trigger_type: str,
+    candidate_ids: Optional[Sequence[str]] = None,
+    max_candidates: int = 10,
+    approval_policy: str = "hitl_required",
+    window_key: Optional[str] = None,
+) -> MemoryJobSpec:
+    payload = build_skill_promotion_payload(
+        session_id=session_id,
+        trigger_type=trigger_type,
+        candidate_ids=candidate_ids,
+        max_candidates=max_candidates,
+        approval_policy=approval_policy,
+        window_key=window_key,
+    )
+    payload_details = payload["skill_promotion"]
+    idempotency_key = make_skill_promotion_idempotency_key(
+        session_id=session_id,
+        candidate_ids=payload_details["candidate_ids"],
+        trigger_type=trigger_type,
+        approval_policy=approval_policy,
+        window_key=window_key,
+    )
+    return MemoryJobSpec(
+        job_type=_SKILL_PROMOTION_JOB_TYPE,
+        payload=payload,
+        idempotency_key=idempotency_key,
+        job_id=make_memory_job_id(_SKILL_PROMOTION_JOB_TYPE, idempotency_key),
+        session_id=str(session_id),
+        priority=80,
+    )
+
+
+def enqueue_skill_promotion_job(
+    *,
+    session_id: str,
+    trigger_type: str,
+    candidate_ids: Optional[Sequence[str]] = None,
+    max_candidates: int = 10,
+    approval_policy: str = "hitl_required",
+    window_key: Optional[str] = None,
+    queue: Optional["SQLiteMemoryJobQueue"] = None,
+) -> EnqueueResult:
+    spec = build_skill_promotion_job_spec(
+        session_id=session_id,
+        trigger_type=trigger_type,
+        candidate_ids=candidate_ids,
+        max_candidates=max_candidates,
+        approval_policy=approval_policy,
+        window_key=window_key,
+    )
+    target_queue = queue if queue is not None else SQLiteMemoryJobQueue()
+    return target_queue.enqueue_spec(spec)
 def _build_episode_spec_from_detector(base_payload: Dict[str, Any]) -> Optional[MemoryJobSpec]:
     try:
         from src.memory.episode_continuation import decide_episode_continuation

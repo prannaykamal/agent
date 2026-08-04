@@ -106,7 +106,7 @@ def test_semantic_consolidation_handler_registered_and_other_handlers_preserved(
     assert registry["summary_generation"].__class__.__name__ == "SummaryGenerationJobHandler"
     assert registry["episode_generation"].__class__.__name__ == "EpisodeGenerationJobHandler"
     assert registry["procedural_consolidation"].__class__.__name__ == "NoOpMemoryJobHandler"
-    assert registry["skill_promotion"].__class__.__name__ == "NoOpMemoryJobHandler"
+    assert registry["skill_promotion"].__class__.__name__ == "SkillPromotionJobHandler"
 
 
 def test_secondary_unavailable_returns_candidates_to_pending(temp_paths, monkeypatch):

@@ -804,6 +804,104 @@ class EpisodeGenerationJobHandler:
         return JobHandlerResult(True, result_payload)
 
 @dataclass(frozen=True)
+class SkillPromotionJobHandler:
+    job_type: str = "skill_promotion"
+
+    def handle(self, job: Mapping[str, Any], payload: Mapping[str, Any]) -> JobHandlerResult:
+        if not isinstance(payload, Mapping):
+            return JobHandlerResult(False, {"handler": self.job_type, "job_type": self.job_type, "processed": False, "phase": "8C", "message": "Payload must be a JSON object"}, retryable=False)
+        if payload.get("schema_version") != 1:
+            return JobHandlerResult(False, {"handler": self.job_type, "job_type": self.job_type, "processed": False, "phase": "8C", "message": "Payload schema_version must be 1"}, retryable=False)
+        promotion = payload.get("skill_promotion")
+        if not isinstance(promotion, Mapping) or promotion.get("schema_version") != 1:
+            return JobHandlerResult(False, {"handler": self.job_type, "job_type": self.job_type, "processed": False, "phase": "8C", "message": "Payload is missing Phase 8C skill_promotion object"}, retryable=False)
+        if promotion.get("approval_policy") != "hitl_required":
+            return JobHandlerResult(False, {"handler": self.job_type, "job_type": self.job_type, "processed": False, "phase": "8C", "message": "skill_promotion approval_policy must be hitl_required"}, retryable=False)
+        if promotion.get("create_skill_files_before_approval") is not False or promotion.get("activate_after_approval") is not True:
+            return JobHandlerResult(False, {"handler": self.job_type, "job_type": self.job_type, "processed": False, "phase": "8C", "message": "Phase 8C promotion must require approval before skill file creation"}, retryable=False)
+
+        from src.memory.procedural_candidates import ProceduralSkillCandidateStore
+        from src.memory.skill_promotion import (
+            ProceduralSkillApprovalRepository,
+            create_procedural_skill_approval_request,
+            select_candidates_for_skill_promotion,
+        )
+        from src.memory.skill_store import SkillVersionStore
+
+        raw_candidate_ids = promotion.get("candidate_ids") or []
+        candidate_ids = [str(candidate_id) for candidate_id in raw_candidate_ids] if isinstance(raw_candidate_ids, list) else []
+        max_candidates = int(promotion.get("max_candidates") or 10)
+        session_id = str(payload.get("session_id") or job.get("session_id") or "procedural_memory")
+
+        candidate_store = ProceduralSkillCandidateStore()
+        approval_repo = ProceduralSkillApprovalRepository()
+        version_store = SkillVersionStore()
+        candidates = select_candidates_for_skill_promotion(
+            candidate_store=candidate_store,
+            approval_repo=approval_repo,
+            version_store=version_store,
+            candidate_ids=candidate_ids,
+            max_candidates=max_candidates,
+        )
+        if not candidates:
+            return JobHandlerResult(
+                True,
+                {
+                    "handler": self.job_type,
+                    "job_type": self.job_type,
+                    "processed": False,
+                    "phase": "8C",
+                    "message": "No READY_FOR_PROMOTION candidates selected",
+                    "approval_request_ids": [],
+                    "candidate_ids": [],
+                },
+            )
+
+        approvals = []
+        errors = []
+        for candidate in candidates:
+            try:
+                result = create_procedural_skill_approval_request(
+                    candidate=candidate,
+                    session_id=session_id,
+                    candidate_store=candidate_store,
+                    approval_repo=approval_repo,
+                )
+                approvals.append(result)
+            except Exception as exc:
+                errors.append({"candidate_id": candidate.id, "error_type": type(exc).__name__, "message": str(exc)})
+
+        if errors and not approvals:
+            return JobHandlerResult(
+                False,
+                {
+                    "handler": self.job_type,
+                    "job_type": self.job_type,
+                    "processed": False,
+                    "phase": "8C",
+                    "message": "Failed to create procedural skill approval requests",
+                    "errors": errors,
+                },
+                retryable=True,
+            )
+
+        return JobHandlerResult(
+            True,
+            {
+                "handler": self.job_type,
+                "job_type": self.job_type,
+                "processed": True,
+                "phase": "8C",
+                "message": "Procedural skill approval requests created",
+                "approval_request_ids": [item.approval.approval_request_id for item in approvals],
+                "candidate_ids": [item.candidate.id for item in approvals],
+                "reused_count": sum(1 for item in approvals if item.reused),
+                "error_count": len(errors),
+                "errors": errors,
+            },
+            retryable=bool(errors),
+        )
+@dataclass(frozen=True)
 class SummaryGenerationJobHandler:
     job_type: str = "summary_generation"
 
@@ -1003,6 +1101,7 @@ def build_default_handler_registry() -> Dict[str, MemoryJobHandler]:
     registry["semantic_consolidation"] = SemanticConsolidationJobHandler()
     registry["procedural_candidate_generation"] = ProceduralCandidateGenerationJobHandler()
     registry["episode_generation"] = EpisodeGenerationJobHandler()
+    registry["skill_promotion"] = SkillPromotionJobHandler()
     registry["summary_generation"] = SummaryGenerationJobHandler()
     return registry
 
