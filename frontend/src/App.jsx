@@ -3,6 +3,7 @@ import OverviewCockpit from './components/OverviewCockpit.jsx';
 import ChatCockpit from './components/ChatCockpit.jsx';
 import LoopCockpit from './components/LoopCockpit.jsx';
 import MemoryCockpit from './components/MemoryCockpit.jsx';
+import MemoryObservabilityCockpit from './components/MemoryObservabilityCockpit.jsx';
 import ApprovalInbox from './components/ApprovalInbox.jsx';
 import ToolsCockpit from './components/ToolsCockpit.jsx';
 import ScheduledCockpit from './components/ScheduledCockpit.jsx';
@@ -38,6 +39,7 @@ export default function App() {
             { id: "loop", label: "🔁 Loop Timeline", component: LoopCockpit },
             { id: "tasks", label: "📋 Task & Sub-Agents", component: TaskBoard },
             { id: "memory", label: "🧠 Memory", component: MemoryCockpit },
+            { id: "memory_ops", label: "Memory Ops", component: MemoryObservabilityCockpit },
             { id: "approvals", label: "🛡️ Approvals", component: ApprovalInbox },
             { id: "tools", label: "🧰 Tools Catalog", component: ToolsCockpit },
             { id: "scheduled", label: "⏱️ Scheduled Jobs", component: ScheduledCockpit },
@@ -74,6 +76,7 @@ export default function App() {
         {activeTab === "loop" && <LoopCockpit activeSessionId={currentSessionId} />}
         {activeTab === "tasks" && <TaskBoard />}
         {activeTab === "memory" && <MemoryCockpit />}
+        {activeTab === "memory_ops" && <MemoryObservabilityCockpit />}
         {activeTab === "approvals" && <ApprovalInbox />}
         {activeTab === "tools" && <ToolsCockpit />}
         {activeTab === "scheduled" && <ScheduledCockpit />}

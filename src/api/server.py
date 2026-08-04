@@ -46,6 +46,17 @@ from src.mcp_gateway.calendar import (
 from src.config import SOUL_PATH, SKILL_PATH, MEMORY_PATH
 from src.memory.config import load_memory_config
 from src.memory.skill_promotion import ProceduralSkillApprovalRepository, process_procedural_skill_approval_decision
+from src.memory.observability import (
+    get_dead_letter_observability,
+    get_jobs_observability,
+    get_memory_health_summary,
+    get_observability_overview,
+    get_procedural_observability,
+    get_retrieval_trace,
+    get_semantic_observability,
+    get_skill_observability,
+    get_worker_observability,
+)
 from src.startup import ensure_system_initialized
 from src.personal_os.backup import export_agent_backup, restore_agent_backup
 
@@ -94,6 +105,14 @@ class ScheduledJobRequest(BaseModel):
     cron_or_timestamp: str
     task_payload: str
 
+class RetrievalTraceRequest(BaseModel):
+    query: str
+    session_id: Optional[str] = None
+    provider: Optional[str] = "openai"
+    model_name: Optional[str] = "gpt-4o-mini"
+    include_candidates: bool = True
+    include_prompt_block: bool = False
+    max_candidates: int = 20
 ALLOWED_DATA_TABLES = [
     "episodes", "facts", "skills", "checkpoints", "approval_requests",
     "sub_agents", "tasks", "scheduled_jobs", "resource_locks", "events_log",
@@ -335,6 +354,79 @@ def api_get_full_memory(query: Optional[str] = None):
         "skill_md": skill_content,
         "memory_md": memory_content
     }
+
+# --- Memory Observability Endpoints ---
+
+@app.get("/api/memory/observability/health")
+def api_memory_observability_health(stale_after_seconds: int = 120):
+    return get_memory_health_summary(stale_after_seconds=stale_after_seconds)
+
+@app.get("/api/memory/observability/jobs")
+def api_memory_observability_jobs(
+    session_id: Optional[str] = None,
+    status: Optional[str] = None,
+    job_type: Optional[str] = None,
+    limit: int = 50,
+    include_payload: bool = False,
+):
+    return get_jobs_observability(
+        session_id=session_id,
+        status=status,
+        job_type=job_type,
+        limit=limit,
+        include_payload=include_payload,
+    )
+
+@app.get("/api/memory/observability/workers")
+def api_memory_observability_workers(
+    stale_after_seconds: int = 120,
+    include_host_metadata: bool = False,
+):
+    return get_worker_observability(
+        stale_after_seconds=stale_after_seconds,
+        include_host_metadata=include_host_metadata,
+    )
+
+@app.get("/api/memory/observability/dead-letter")
+def api_memory_observability_dead_letter(limit: int = 50, include_details: bool = False):
+    return get_dead_letter_observability(limit=limit, include_details=include_details)
+
+@app.post("/api/memory/observability/retrieval/trace")
+def api_memory_observability_retrieval_trace(req: RetrievalTraceRequest):
+    if not req.query.strip():
+        raise HTTPException(status_code=400, detail="query must be non-empty")
+    try:
+        return get_retrieval_trace(
+            query=req.query,
+            session_id=req.session_id,
+            provider=req.provider,
+            model_name=req.model_name,
+            include_candidates=req.include_candidates,
+            include_prompt_block=req.include_prompt_block,
+            max_candidates=req.max_candidates,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+@app.get("/api/memory/observability/semantic")
+def api_memory_observability_semantic(
+    session_id: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 100,
+):
+    return get_semantic_observability(session_id=session_id, status=status, limit=limit)
+
+@app.get("/api/memory/observability/procedural")
+def api_memory_observability_procedural(status: Optional[str] = None, limit: int = 100):
+    return get_procedural_observability(status=status, limit=limit)
+
+@app.get("/api/memory/observability/skills")
+def api_memory_observability_skills(include_archived: bool = False):
+    return get_skill_observability(include_archived=include_archived)
+
+@app.get("/api/memory/observability/overview")
+def api_memory_observability_overview():
+    return get_observability_overview()
 
 # --- Procedural Skills Endpoints ---
 
