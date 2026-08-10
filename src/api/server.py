@@ -586,6 +586,27 @@ def api_get_tools():
         "mcp_tools": mcp_tools
     }
 
+
+@app.get("/api/tools/personal-os/status")
+def api_personal_os_status():
+    from src.personal_os.observability import get_personal_os_status
+
+    return get_personal_os_status()
+
+
+@app.get("/api/tools/personal-os/actions")
+def api_personal_os_actions():
+    from src.personal_os.observability import get_personal_os_actions
+
+    return {"actions": get_personal_os_actions()}
+
+
+@app.get("/api/tools/personal-os/audit")
+def api_personal_os_audit(limit: int = 50):
+    from src.personal_os.observability import get_personal_os_audit
+
+    return get_personal_os_audit(limit=limit)
+
 # --- Tasks Endpoints ---
 
 @app.get("/api/tasks")

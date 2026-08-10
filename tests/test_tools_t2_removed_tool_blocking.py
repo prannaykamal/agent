@@ -87,4 +87,4 @@ def test_t2_api_browser_and_github_routes_are_removed_after_t3(temp_db):
 def test_t2_non_removed_tool_risk_still_works():
     assert classify_tool_risk("search_web")[0] == "Low"
     assert classify_tool_risk("email_send")[0] == "High"
-    assert classify_tool_risk("spawn_agent")[0] == "Medium"
+    assert classify_tool_risk("spawn_agent")[0] == "High"

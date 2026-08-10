@@ -57,15 +57,17 @@ def test_event_bus_tools(temp_db):
     assert "published to topic 'task.completed'" in pub_res
 
     sub_res = subscribe_event.invoke({"topic": "task.completed", "handler": "email_notifier"})
-    assert "Subscribed handler 'email_notifier'" in sub_res
+    assert "[Personal OS Tool Blocked]" in sub_res
+    assert "subscribe_event" in sub_res
 
 def test_context_tools(temp_db):
     acq_res = acquire_context.invoke({"query_or_topic": "quarterly_reports"})
-    assert "[Personal OS Context Acquired]" in acq_res
-    ctx_id = acq_res.split("ID '")[1].split("' loaded")[0]
+    assert "[Personal OS Tool Blocked]" in acq_res
+    assert "acquire_context" in acq_res
 
-    rel_res = release_context.invoke({"context_id": ctx_id})
-    assert "released from working memory" in rel_res
+    rel_res = release_context.invoke({"context_id": "ctx_legacy"})
+    assert "[Personal OS Tool Blocked]" in rel_res
+    assert "release_context" in rel_res
 
 def test_checkpointing_tools(temp_db):
     chk_res = checkpoint.invoke({"task_id": "task_xyz"})
@@ -77,18 +79,24 @@ def test_checkpointing_tools(temp_db):
 
 def test_execution_control_tools():
     sleep_res = sleep.invoke({"duration_seconds": 1})
-    assert "Agent slept for" in sleep_res
+    assert "[Personal OS Tool Blocked]" in sleep_res
+    assert "sleep" in sleep_res
 
     wake_res = wake.invoke({"agent_id": "agent_main"})
-    assert "woken up successfully" in wake_res
+    assert "[Personal OS Tool Blocked]" in wake_res
+    assert "wake" in wake_res
 
 def test_personal_os_registry():
     tools = get_all_personal_os_tools()
-    assert len(tools) == 22
+    assert len(tools) == 17
     names = [t.name for t in tools]
     assert "create_task" in names
     assert "spawn_agent" in names
     assert "lock_resource" in names
     assert "publish_event" in names
     assert "checkpoint" in names
-    assert "sleep" in names
+    assert "sleep" not in names
+    assert "wake" not in names
+    assert "subscribe_event" not in names
+    assert "acquire_context" not in names
+    assert "release_context" not in names

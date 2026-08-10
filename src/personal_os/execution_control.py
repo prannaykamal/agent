@@ -1,14 +1,20 @@
-import time
 from langchain_core.tools import tool
+
+
+def _deprecated_execution_control_message(tool_name: str) -> str:
+    return (
+        f"[Personal OS Tool Blocked] '{tool_name}' is deprecated synthetic execution control. "
+        "Use explicit task state, worker controls, or future scheduler behavior instead. No execution occurred."
+    )
+
 
 @tool
 def sleep(duration_seconds: int = 5) -> str:
-    """Idles agent harness execution until specified duration elapses or event occurs."""
-    capped_duration = min(max(duration_seconds, 1), 60)
-    time.sleep(1) # Simulated sleep tick for prompt response responsiveness
-    return f"[Personal OS Execution Control] Agent slept for {capped_duration} seconds. Resuming turn."
+    """Deprecated synthetic execution-control tool retained as a blocked compatibility wrapper."""
+    return _deprecated_execution_control_message("sleep")
+
 
 @tool
 def wake(agent_id: str) -> str:
-    """Immediately wakes an idled or sleeping agent harness process."""
-    return f"[Personal OS Execution Control] Agent process '{agent_id}' woken up successfully."
+    """Deprecated synthetic execution-control tool retained as a blocked compatibility wrapper."""
+    return _deprecated_execution_control_message("wake")

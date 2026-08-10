@@ -2,6 +2,7 @@ import uuid
 import json
 from langchain_core.tools import tool
 from src.db import get_connection
+from src.personal_os.audit import log_personal_os_action
 
 @tool
 def checkpoint(task_id: str) -> str:
@@ -20,6 +21,12 @@ def checkpoint(task_id: str) -> str:
     )
     conn.commit()
     conn.close()
+    log_personal_os_action(
+        tool_name="checkpoint",
+        action="PERSONAL_OS_CHECKPOINT_CREATED",
+        payload={"task_id": task_id},
+        target_resource=checkpoint_id,
+    )
     return f"[Personal OS Checkpoint] State snapshot saved with ID '{checkpoint_id}' for task '{task_id}'."
 
 @tool

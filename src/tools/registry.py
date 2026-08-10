@@ -23,6 +23,12 @@ def get_removed_tool_metadata() -> List[ToolMetadata]:
     return _get_removed_tool_metadata()
 
 
+def get_deprecated_personal_os_tool_metadata() -> List[ToolMetadata]:
+    from src.personal_os.registry import get_personal_os_tool_metadata as _get_metadata
+
+    return [item for item in _get_metadata(include_deprecated=True) if item.implementation_type.value == "removed"]
+
+
 def get_bindable_tool_metadata() -> List[ToolMetadata]:
     """Returns metadata for currently bindable active tools.
 
@@ -34,8 +40,8 @@ def get_bindable_tool_metadata() -> List[ToolMetadata]:
 
 
 def get_unified_tool_metadata() -> List[ToolMetadata]:
-    """Returns active metadata plus T1 removed-target metadata."""
-    return get_bindable_tool_metadata() + get_removed_tool_metadata()
+    """Returns active metadata plus removed/deprecated target metadata."""
+    return get_bindable_tool_metadata() + get_removed_tool_metadata() + get_deprecated_personal_os_tool_metadata()
 
 
 def get_tool_metadata_by_id(tool_id: str) -> Optional[ToolMetadata]:
@@ -56,7 +62,7 @@ def get_tool_metadata_by_legacy_name(legacy_name: str) -> Optional[ToolMetadata]
     for item in get_bindable_tool_metadata():
         if item.legacy_name == clean_name:
             return item
-    for item in get_removed_tool_metadata():
+    for item in get_removed_tool_metadata() + get_deprecated_personal_os_tool_metadata():
         if item.legacy_name == clean_name:
             return item
     return None

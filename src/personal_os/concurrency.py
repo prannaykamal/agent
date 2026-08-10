@@ -1,6 +1,7 @@
 import sqlite3
 from langchain_core.tools import tool
 from src.db import get_connection
+from src.personal_os.audit import log_personal_os_action
 
 @tool
 def lock_resource(resource_uri: str) -> str:
@@ -16,6 +17,12 @@ def lock_resource(resource_uri: str) -> str:
             (resource_uri,)
         )
         conn.commit()
+        log_personal_os_action(
+            tool_name="lock_resource",
+            action="PERSONAL_OS_RESOURCE_LOCKED",
+            payload={"resource_uri": resource_uri},
+            target_resource=resource_uri,
+        )
         return f"[Personal OS Lock Acquired] Resource '{resource_uri}' locked successfully."
     except sqlite3.IntegrityError:
         cursor.execute("SELECT locked_by, locked_at FROM resource_locks WHERE resource_uri = ?", (resource_uri,))
@@ -36,4 +43,10 @@ def unlock_resource(resource_uri: str) -> str:
 
     if affected == 0:
         return f"[Personal OS Lock Warning] Resource '{resource_uri}' was not locked."
+    log_personal_os_action(
+        tool_name="unlock_resource",
+        action="PERSONAL_OS_RESOURCE_UNLOCKED",
+        payload={"resource_uri": resource_uri},
+        target_resource=resource_uri,
+    )
     return f"[Personal OS Lock Released] Resource '{resource_uri}' unlocked successfully."

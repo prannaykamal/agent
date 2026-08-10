@@ -1,6 +1,7 @@
 import uuid
 from langchain_core.tools import tool
 from src.db import get_connection
+from src.personal_os.audit import log_personal_os_action
 
 @tool
 def schedule_job(cron_or_timestamp: str, task_payload: str) -> str:
@@ -18,6 +19,12 @@ def schedule_job(cron_or_timestamp: str, task_payload: str) -> str:
 
     conn.commit()
     conn.close()
+    log_personal_os_action(
+        tool_name="schedule_job",
+        action="PERSONAL_OS_SCHEDULE_CREATED",
+        payload={"cron_or_timestamp": cron_or_timestamp, "task_payload": task_payload},
+        target_resource=job_id,
+    )
     return f"[Personal OS Scheduled Job] Job '{job_id}' registered for schedule '{cron_or_timestamp}'."
 
 @tool
@@ -39,6 +46,12 @@ def cancel_job(job_id: str) -> str:
 
     if affected == 0:
         return f"[Personal OS Scheduler Error] Job '{job_id}' not found."
+    log_personal_os_action(
+        tool_name="cancel_job",
+        action="PERSONAL_OS_SCHEDULE_CANCELLED",
+        payload={"job_id": job_id},
+        target_resource=job_id,
+    )
     return f"[Personal OS Scheduler] Job '{job_id}' successfully cancelled."
 
 @tool

@@ -1,6 +1,7 @@
 from typing import Tuple, Dict, Any, Optional
 
 from src.tools.removed_tools import is_removed_tool_name
+from src.personal_os.policy import get_personal_os_policy
 
 # Deterministic High-Risk Tool Registry & Justifications
 HIGH_RISK_TOOLS: Dict[str, str] = {
@@ -34,6 +35,10 @@ def classify_tool_risk(tool_name: str, tool_args: Optional[Dict[str, Any]] = Non
 
     if is_removed_tool_name(clean_name):
         return "Blocked", "Removed tool: blocked by the tools architecture migration"
+
+    personal_os_policy = get_personal_os_policy(clean_name)
+    if personal_os_policy is not None:
+        return personal_os_policy.risk_class.value, personal_os_policy.reason
 
     if clean_name in HIGH_RISK_TOOLS:
         return "High", HIGH_RISK_TOOLS[clean_name]

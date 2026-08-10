@@ -29,7 +29,7 @@ def test_tool_based_risk_classification():
     assert classify_tool_risk("github_merge")[0] == "Blocked"
 
     # Medium, Low, and blocked removed tools
-    assert classify_tool_risk("spawn_agent")[0] == "Medium"
+    assert classify_tool_risk("spawn_agent")[0] == "High"
     assert classify_tool_risk("search_web")[0] == "Low"
     assert classify_tool_risk("run_code")[0] == "Blocked"
 

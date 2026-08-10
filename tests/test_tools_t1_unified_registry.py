@@ -21,7 +21,7 @@ def test_t1_personal_os_tools_have_local_metadata():
     assert by_name["create_task"].implementation_type == ImplementationType.LOCAL
     assert by_name["create_task"].provider == "personal_os"
     assert by_name["heartbeat"].category == "health"
-    assert by_name["schedule_job"].risk_class == RiskClass.MEDIUM
+    assert by_name["schedule_job"].risk_class == RiskClass.HIGH
 
 
 def test_t1_mcp_gateway_tools_have_transitional_mcp_metadata():

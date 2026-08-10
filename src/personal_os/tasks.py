@@ -4,6 +4,7 @@ from typing import Optional
 from pathlib import Path
 from langchain_core.tools import tool
 from src.db import get_connection
+from src.personal_os.audit import log_personal_os_action
 
 @tool
 def create_task(title: str, description: str = "", priority: str = "Medium") -> str:
@@ -20,6 +21,12 @@ def create_task(title: str, description: str = "", priority: str = "Medium") -> 
     )
     conn.commit()
     conn.close()
+    log_personal_os_action(
+        tool_name="create_task",
+        action="PERSONAL_OS_TASK_CREATED",
+        payload={"title": title, "description": description, "priority": priority},
+        target_resource=task_id,
+    )
     return f"[Personal OS Task Created] ID: {task_id} | Title: '{title}' | Priority: {priority}"
 
 @tool
@@ -41,6 +48,12 @@ def update_task(task_id: str, status: str = "IN_PROGRESS", progress: int = 50) -
 
     if affected == 0:
         return f"[Personal OS Task Error] Task '{task_id}' not found."
+    log_personal_os_action(
+        tool_name="update_task",
+        action="PERSONAL_OS_TASK_UPDATED",
+        payload={"task_id": task_id, "status": status, "progress": progress},
+        target_resource=task_id,
+    )
     return f"[Personal OS Task Updated] Task '{task_id}' status set to '{status}' ({progress}% progress)."
 
 @tool
@@ -62,6 +75,12 @@ def cancel_task(task_id: str) -> str:
 
     if affected == 0:
         return f"[Personal OS Task Error] Task '{task_id}' not found."
+    log_personal_os_action(
+        tool_name="cancel_task",
+        action="PERSONAL_OS_TASK_CANCELLED",
+        payload={"task_id": task_id},
+        target_resource=task_id,
+    )
     return f"[Personal OS Task Cancelled] Task '{task_id}' has been cancelled."
 
 @tool
