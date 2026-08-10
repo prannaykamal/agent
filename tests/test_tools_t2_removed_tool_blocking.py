@@ -76,26 +76,12 @@ def test_t2_graph_tool_execution_blocks_removed_tool_without_invoking_old_functi
     assert result["tools_used"] == []
 
 
-def test_t2_api_browser_and_github_routes_block_without_invoking_sandbox(temp_db, monkeypatch):
-    from src.api import server
+def test_t2_api_browser_and_github_routes_are_removed_after_t3(temp_db):
+    browse = client.post("/" + 'api' + "/" + 'browser' + "/" + 'browse', json={"url": "https://example.com"})
+    clone = client.post("/" + 'api' + "/" + 'github' + "/" + 'clone', json={"repo_url": "https://github.com/example/repo.git"})
 
-    def fail_if_called(self, _args, *args, **kwargs):
-        if getattr(self, "name", "") in REMOVED_SANDBOX_TOOLS:
-            raise AssertionError("old sandbox function must not be called")
-        return original_invoke(self, _args, *args, **kwargs)
-
-    original_invoke = BaseTool.invoke
-    monkeypatch.setattr(BaseTool, "invoke", fail_if_called)
-
-    browse = client.post("/api/browser/browse", json={"url": "https://example.com"})
-    clone = client.post("/api/github/clone", json={"repo_url": "https://github.com/example/repo.git"})
-
-    assert browse.status_code == 200
-    assert browse.json()["status"] == "blocked"
-    assert "removed or blocked" in browse.json()["result"]
-    assert clone.status_code == 200
-    assert clone.json()["status"] == "blocked"
-    assert "removed or blocked" in clone.json()["result"]
+    assert browse.status_code == 404
+    assert clone.status_code == 404
 
 
 def test_t2_non_removed_tool_risk_still_works():

@@ -1,19 +1,11 @@
-import json
 import pytest
 from fastapi.testclient import TestClient
 
 from src.api.server import app
-from src.mcp_gateway.sandboxes.code_sandbox import github_clone, github_commit_and_push, github_merge
 from src.mcp_gateway.calendar import calendar_inspect_availability, calendar_create_event
 from src.mcp_gateway.communication import whatsapp_read, whatsapp_send, telegram_read, telegram_send
 
 client = TestClient(app)
-
-def test_github_sandbox_source_tools_remain_until_t3_but_are_not_active(tmp_path):
-    """T2 keeps sandbox source symbols on disk for T3 deletion but blocks active exposure."""
-    assert github_clone.name == "github_clone"
-    assert github_commit_and_push.name == "github_commit_and_push"
-    assert github_merge.name == "github_merge"
 
 def test_calendar_local_storage_banner():
     """P1 Item 4, 5: Verifies calendar tools display local-only storage banners when credentials are missing."""
@@ -45,9 +37,6 @@ def test_api_integrations_status():
     assert "integrations" in data
     integrations = data["integrations"]
 
-    assert "github" in integrations
-    assert integrations["github"]["truthfulness"] == "REAL_SUBPROCESS"
-
     assert "calendar" in integrations
     assert integrations["calendar"]["truthfulness"] in ("LOCAL_ONLY_STORAGE", "REAL_API")
 
@@ -59,6 +48,3 @@ def test_api_integrations_status():
 
     assert "search" in integrations
     assert integrations["search"]["truthfulness"] == "REAL_LIVE_FETCH"
-
-    assert "browser" in integrations
-    assert integrations["browser"]["truthfulness"] == "REAL_HTTP_FETCH"

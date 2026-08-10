@@ -26,8 +26,8 @@ def get_removed_tool_metadata() -> List[ToolMetadata]:
 def get_bindable_tool_metadata() -> List[ToolMetadata]:
     """Returns metadata for currently bindable active tools.
 
-    T2 removes browser/code sandbox tools from active binding while preserving
-    removed-target metadata for observability and T3 deletion tracking.
+    Removed-target entries stay available for observability while active
+    binding only includes current supported tool implementations.
     """
     active = get_personal_os_tool_metadata() + get_mcp_gateway_tool_metadata()
     return [item for item in active if not is_removed_tool_name(item.legacy_name)]

@@ -16,7 +16,6 @@ from src.mcp_gateway.communication import (
     telegram_send
 )
 from src.mcp_gateway.search import search_web
-from src.mcp_gateway.sandboxes.browser_sandbox import safe_browse_url
 
 @pytest.fixture
 def temp_db(tmp_path, monkeypatch):
@@ -65,6 +64,3 @@ def test_live_web_search(temp_db):
     res = search_web.invoke({"query": "Python 3.12", "max_results": 2})
     assert "Python" in res
     assert "Source:" in res
-
-def test_browser_sandbox_source_remains_until_t3(temp_db):
-    assert safe_browse_url.name == "safe_browse_url"

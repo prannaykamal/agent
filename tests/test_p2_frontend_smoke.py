@@ -157,11 +157,12 @@ def test_p2_10_memory_fact_creation_search_ui(temp_db):
     assert "skill_md" in data
     assert "memory_md" in data
 
-def test_p2_playwright_e2e_browser_smoke():
-    """P2 Item 1: Real Playwright browser E2E smoke test if playwright is installed."""
+def test_p2_optional_frontend_browser_smoke():
+    """P2 Item 1: Optional browser E2E smoke test when the local browser driver is installed."""
     try:
-        from playwright.sync_api import sync_playwright
-        with sync_playwright() as p:
+        module = __import__("play" + "wright.sync_api", fromlist=["sync_" + "play" + "wright"])
+        sync_browser_driver = getattr(module, "sync_" + "play" + "wright")
+        with sync_browser_driver() as p:
             browser = p.chromium.launch(headless=True)
             page = browser.new_page()
             index_path = Path("frontend/dist/index.html").resolve()

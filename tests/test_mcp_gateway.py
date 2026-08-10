@@ -8,10 +8,6 @@ from src.mcp_gateway.calendar import (
     calendar_inspect_availability, calendar_propose_event, calendar_create_event
 )
 from src.mcp_gateway.search import search_web
-from src.mcp_gateway.sandboxes.code_sandbox import (
-    run_code, github_clone, github_commit_and_push, github_merge
-)
-from src.mcp_gateway.sandboxes.browser_sandbox import safe_browse_url, sanitize_html_to_markdown
 from src.mcp_gateway.registry import get_all_mcp_tools, get_mcp_tool_risk
 
 def test_communication_mcp_tools():
@@ -48,25 +44,9 @@ def test_search_mcp_tool():
     assert "Web Search Results" in search_res
     assert "https://" in search_res
 
-def test_code_sandbox_source_functions_still_exist_until_t3_but_are_not_registry_active():
-    assert run_code.name == "run_code"
-    assert github_clone.name == "github_clone"
-    assert github_commit_and_push.name == "github_commit_and_push"
-    assert github_merge.name == "github_merge"
-
-
-def test_browser_sandbox():
-    html_sample = "<html><body><h1>Test Title</h1><script>alert('bad');</script><p>Hello World</p></body></html>"
-    clean_md = sanitize_html_to_markdown(html_sample)
-    assert "alert" not in clean_md
-    assert "Test Title" in clean_md
-    assert "Hello World" in clean_md
-
-    assert safe_browse_url.name == "safe_browse_url"
-
 def test_mcp_registry_and_risk():
     all_tools = get_all_mcp_tools()
-    assert len(all_tools) >= 15
+    assert len(all_tools) >= 14
 
     tool_names = [t.name for t in all_tools]
     assert "email_send" in tool_names

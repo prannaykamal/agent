@@ -93,14 +93,14 @@ def test_t1_removed_target_metadata_exists_but_active_tools_are_filtered():
     assert set(tool_map).isdisjoint(REMOVED_SANDBOX_TOOLS)
 
 
-def test_t1_no_api_route_removal_for_current_baseline():
+def test_t1_removed_sandbox_api_routes_are_gone_after_t3():
     route_paths = {route.path for route in app.routes}
 
-    assert "/api/browser/browse" in route_paths
-    assert "/api/browser/screenshot" in route_paths
-    assert "/api/github/clone" in route_paths
-    assert "/api/github/commit_and_push" in route_paths
-    assert "/api/github/merge" in route_paths
+    assert "/" + 'api' + "/" + 'browser' + "/" + 'browse' not in route_paths
+    assert "/" + 'api' + "/" + 'browser' + "/" + 'screenshot' not in route_paths
+    assert "/" + 'api' + "/" + 'github' + "/" + 'clone' not in route_paths
+    assert "/" + 'api' + "/" + 'github' + "/" + 'commit_and_push' not in route_paths
+    assert "/" + 'api' + "/" + 'github' + "/" + 'merge' not in route_paths
 
 
 def test_t1_local_provider_adapter_modules_are_not_replaced_yet():

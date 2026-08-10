@@ -1,7 +1,6 @@
 import pytest
 from pathlib import Path
 from src.db import init_db, get_connection
-from src.mcp_gateway.sandboxes.code_sandbox import run_code
 from src.hitl.classifier import classify_tool_risk
 from src.hitl.approval_engine import (
     create_approval_request, process_approval_decision, generate_payload_preview
@@ -17,11 +16,6 @@ def temp_db(tmp_path, monkeypatch):
     monkeypatch.setattr("src.config.MEMORY_PATH", mem_file)
     init_db(db_file)
     return db_file
-
-def test_run_code_source_remains_until_t3_but_policy_blocks_it():
-    """T2 keeps run_code source available for T3 deletion but blocks approval/execution policy."""
-    assert run_code.name == "run_code"
-    assert classify_tool_risk("run_code")[0] == "Blocked"
 
 def test_hitl_expanded_high_risk_classification():
     """P6 Item 5: Verifies expanded high-risk approval classification."""
@@ -51,10 +45,6 @@ def test_approval_payload_previews():
     assert "[Calendar Preview]" in prev_cal
     assert "Strategy Sync" in prev_cal
 
-    prev_merge = generate_payload_preview("github_merge", {"source_branch": "feature/ui", "target_branch": "main"})
-    assert "[GitHub Merge Preview]" in prev_merge
-    assert "feature/ui" in prev_merge
-
 def test_duplicate_approval_protection(temp_db):
     """P6 Item 7: Verifies approving or rejecting a request twice is blocked."""
     req = create_approval_request(
@@ -79,11 +69,11 @@ def test_audit_logger(temp_db):
     """P6 Item 4: Verifies audit log entries are recorded in SQLite audit_logs table."""
     audit_evt = log_audit_event(
         session_id="sess_p6",
-        tool_name="github_merge",
+        tool_name="bank_transfer",
         risk_level="High",
         action="HITL_APPROVED",
-        tool_args={"source_branch": "feature/security"},
-        details="Operator approved git merge",
+        tool_args={"amount": 100},
+        details="Operator approved bank transfer",
         db_path=temp_db
     )
     assert audit_evt["action"] == "HITL_APPROVED"
@@ -93,5 +83,5 @@ def test_audit_logger(temp_db):
     cursor.execute("SELECT * FROM audit_logs WHERE session_id = 'sess_p6'")
     rows = cursor.fetchall()
     assert len(rows) >= 1
-    assert rows[0]["tool_name"] == "github_merge"
+    assert rows[0]["tool_name"] == "bank_transfer"
     conn.close()

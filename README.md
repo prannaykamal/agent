@@ -14,7 +14,7 @@ An autonomous, multi-provider AI Assistant and Agent Cockpit built with **LangGr
   - **Semantic Memory**: FTS5 Top-K keyword search & auto-synced `.agent/MEMORY.md`.
   - **Episodic Memory**: FTS5 session history & Secondary LLM structured JSON summaries.
   - **Procedural Memory**: Interactive skills manager & auto-synced `.agent/SKILL.md`.
-- **Human-In-The-Loop (HITL) Tool Safety**: Deterministic risk classifier & approval engine for high-risk tool operations (`bank_transfer`, `delete_database`, `production_deploy`, `github_merge`, `calendar_create_event`).
+- **Human-In-The-Loop (HITL) Tool Safety**: Deterministic risk classifier & approval engine for high-risk tool operations (`bank_transfer`, `delete_database`, `production_deploy`, `calendar_create_event`).
 - **Native Personal OS Tools & MCP Gateway**: 22 native Personal OS system tools + Live MCP Stdio/SSE protocol transport adapters.
 - **Glassmorphism Web Cockpit**: Interactive React + Vite control panel with dark mode visuals and live telemetry tabs (Overview, Loop Timeline, Data Inspector, Memory, Tools, Scheduled Jobs, Tasks).
 
@@ -44,7 +44,6 @@ XAI_API_KEY=your_xai_api_key_here
 ```bash
 pip install -r requirements.txt
 pip install -e .
-python -m playwright install chromium
 ```
 
 
@@ -82,7 +81,7 @@ For complete system architecture diagrams, 21-table database schema specificatio
 
 ## 🧪 Running Automated Tests
 
-Run the complete verified test suite (**181 tests passed/skipped, 100% success rate** covering multi-provider models, REST API endpoints, memory systems, Personal OS tools, MCP gateway, HITL approvals, database migrations, background worker, system backup/restore, sandboxes, provider capability matrix, product polish, documentation, and GitHub clone sandbox truthfulness):
+Run the complete verified test suite (**181 tests passed/skipped, 100% success rate** covering multi-provider models, REST API endpoints, memory systems, Personal OS tools, MCP gateway, HITL approvals, database migrations, background worker, system backup/restore, provider capability matrix, product polish, and documentation):
 
 
 ```bash

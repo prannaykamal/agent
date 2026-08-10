@@ -25,11 +25,6 @@ def generate_payload_preview(tool_name: str, tool_args: Dict[str, Any]) -> str:
         end = tool_args.get("end_time") or ""
         return f"[Calendar Preview] Action: {tname} | Event: '{title}' ({start} - {end})"
 
-    if tname == "github_merge":
-        src = tool_args.get("source_branch") or "feature"
-        tgt = tool_args.get("target_branch") or "main"
-        return f"[GitHub Merge Preview] Source: '{src}' ➔ Target: '{tgt}'"
-
     return f"[{tool_name} Preview] Payload: {json.dumps(tool_args)}"
 
 def create_approval_request(

@@ -515,7 +515,7 @@ def should_continue(state: AgentState) -> str:
     if loop_count >= 10:
         return "consolidate"
 
-    is_high_risk_keyword = any(kw in last_user_text for kw in ["bank_transfer", "delete_database", "production_deploy", "delete_files", "email_send", "github_merge"])
+    is_high_risk_keyword = any(kw in last_user_text for kw in ["bank_transfer", "delete_database", "production_deploy", "delete_files", "email_send"])
 
     if tool_calls or is_high_risk_keyword:
         return "hitl_check"

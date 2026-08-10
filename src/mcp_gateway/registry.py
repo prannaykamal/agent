@@ -11,10 +11,6 @@ from src.mcp_gateway.calendar import (
     calendar_update_event, calendar_delete_event
 )
 from src.mcp_gateway.search import search_web
-from src.mcp_gateway.sandboxes.code_sandbox import (
-    run_code, github_clone, github_commit_and_push, github_merge
-)
-from src.mcp_gateway.sandboxes.browser_sandbox import safe_browse_url, capture_screenshot
 from src.tools.removed_tools import is_removed_tool_name
 from src.tools.registry_types import (
     AvailabilityStatus,
@@ -39,20 +35,12 @@ TOOL_RISK_MAP: Dict[str, str] = {
     "calendar_update_event": "Low",
     "calendar_delete_event": "Low",
     "search_web": "Low",
-    "run_code": "Low",
-    "github_clone": "Low",
-    "safe_browse_url": "Low",
-    "capture_screenshot": "Low",
 
-    # Medium Risk (Internal updates / scheduling non-critical)
-    "github_commit_and_push": "Medium",
-
-    # High Risk (Irreversible side-effects / external messages / payments / merges)
+    # High Risk (Irreversible side-effects / external messages / payments)
     "email_send": "High",
     "whatsapp_send": "High",
     "telegram_send": "High",
     "calendar_create_event": "High",
-    "github_merge": "High",
 }
 
 ALL_MCP_TOOLS: List[BaseTool] = [
@@ -65,10 +53,6 @@ ALL_MCP_TOOLS: List[BaseTool] = [
     calendar_update_event, calendar_delete_event,
     # Search
     search_web,
-    # Code Sandbox & GitHub
-    run_code, github_clone, github_commit_and_push, github_merge,
-    # Browser Sandbox
-    safe_browse_url, capture_screenshot
 ]
 
 
@@ -79,8 +63,7 @@ def get_all_mcp_tools() -> List[BaseTool]:
     """
     Returns currently active MCP gateway tools for LangChain/LangGraph binding.
 
-    T2 filters browser/code sandbox tools from active exposure. The sandbox
-    modules still exist on disk until T3 cleanup.
+    T3 keeps removed local execution tools out of runtime exposure.
     """
     live_tools = load_live_mcp_tools()
     active_static_tools = [tool for tool in ALL_MCP_TOOLS if not is_removed_tool_name(tool.name)]
@@ -120,12 +103,6 @@ _MCP_GATEWAY_TOOL_CATEGORIES: Dict[str, str] = {
     "calendar_update_event": "google_calendar_legacy_adapter",
     "calendar_delete_event": "google_calendar_legacy_adapter",
     "search_web": "search_legacy_adapter",
-    "run_code": "code_sandbox",
-    "github_clone": "code_sandbox",
-    "github_commit_and_push": "code_sandbox",
-    "github_merge": "code_sandbox",
-    "safe_browse_url": "browser_sandbox",
-    "capture_screenshot": "browser_sandbox",
 }
 
 _EXTERNAL_SIDE_EFFECT_TOOLS = {
@@ -136,14 +113,9 @@ _EXTERNAL_SIDE_EFFECT_TOOLS = {
     "calendar_update_event",
     "calendar_delete_event",
     "search_web",
-    "safe_browse_url",
-    "capture_screenshot",
-    "github_clone",
-    "github_commit_and_push",
-    "github_merge",
 }
 
-_DESTRUCTIVE_TOOLS = {"calendar_delete_event", "github_merge", "run_code"}
+_DESTRUCTIVE_TOOLS = {"calendar_delete_event"}
 
 
 def get_mcp_gateway_tool_metadata() -> List[ToolMetadata]:
@@ -173,7 +145,7 @@ def get_mcp_gateway_tool_metadata() -> List[ToolMetadata]:
                 input_schema=schema_from_langchain_tool(tool),
                 output_schema_hint="text",
                 observability_metadata={
-                    "migration_phase": "T2",
+                    "migration_phase": "T3",
                     "active_legacy_tool": True,
                     "legacy_local_adapter_backed": True,
                     "provider_managed_target": True,

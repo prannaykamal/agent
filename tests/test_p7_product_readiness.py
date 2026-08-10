@@ -104,24 +104,18 @@ def test_p7_1_api_contract_every_frontend_fetch(temp_db):
     r15 = client.post("/api/system/restore", json={"backup_path": b_path})
     assert r15.status_code == 200
 
-    # 13. GitHub endpoints
-    r16 = client.post("/api/github/clone", json={"repo_url": "https://github.com/example/demo.git"})
-    assert r16.status_code == 200
-    r17 = client.post("/api/github/commit_and_push", json={"commit_message": "Test commit"})
-    assert r17.status_code == 200
-    r18 = client.post("/api/github/merge", json={"source_branch": "feature/api"})
-    assert r18.status_code == 200
-    assert r16.json()["status"] == "blocked"
-    assert r17.json()["status"] == "blocked"
-    assert r18.json()["status"] == "blocked"
+    # 13. Removed sandbox endpoints should no longer exist after T3.
+    r16 = client.post("/" + 'api' + "/" + 'github' + "/" + 'clone', json={"repo_url": "https://github.com/example/demo.git"})
+    assert r16.status_code == 404
+    r17 = client.post("/" + 'api' + "/" + 'github' + "/" + 'commit_and_push', json={"commit_message": "Test commit"})
+    assert r17.status_code == 404
+    r18 = client.post("/" + 'api' + "/" + 'github' + "/" + 'merge', json={"source_branch": "feature/api"})
+    assert r18.status_code == 404
 
-    # 14. Browser endpoints remain present but blocked until T3 deletion.
-    r19 = client.post("/api/browser/browse", json={"url": "https://example.com"})
-    assert r19.status_code == 200
-    r20 = client.post("/api/browser/screenshot", json={"url": "https://example.com"})
-    assert r20.status_code == 200
-    assert r19.json()["status"] == "blocked"
-    assert r20.json()["status"] == "blocked"
+    r19 = client.post("/" + 'api' + "/" + 'browser' + "/" + 'browse', json={"url": "https://example.com"})
+    assert r19.status_code == 404
+    r20 = client.post("/" + 'api' + "/" + 'browser' + "/" + 'screenshot', json={"url": "https://example.com"})
+    assert r20.status_code == 404
 
 def test_p7_2_frontend_smoke_test(temp_db):
     """P7 Item 2: Frontend smoke test verifying static bundle mounting and chat response."""

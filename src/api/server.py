@@ -28,11 +28,6 @@ from src.hitl.approval_engine import create_approval_request, get_all_approval_r
 from src.harness.graph import agent_app, resume_graph_after_approval
 from src.harness.models import get_model_catalog
 from src.harness.llm_router import normalize_provider
-from src.mcp_gateway.sandboxes.code_sandbox import (
-    github_clone, github_commit_and_push, github_merge
-)
-from src.mcp_gateway.sandboxes.browser_sandbox import safe_browse_url, capture_screenshot
-
 from src.mcp_gateway.search_adapters import perform_web_search
 
 from src.mcp_gateway.communication import (
@@ -46,7 +41,6 @@ from src.mcp_gateway.calendar import (
 from src.config import SOUL_PATH, SKILL_PATH, MEMORY_PATH
 from src.memory.config import load_memory_config
 from src.memory.skill_promotion import ProceduralSkillApprovalRepository, process_procedural_skill_approval_decision
-from src.tools.removed_tools import get_removed_tool_blocked_message
 from src.memory.observability import (
     get_dead_letter_observability,
     get_jobs_observability,
@@ -574,77 +568,8 @@ def api_search_web(q: str, max_results: int = 5):
     results = perform_web_search(query=q.strip(), max_results=max_results)
     return {"query": q, "results": results, "total_results": len(results)}
 
-# --- Browser Endpoints ---
-
-class BrowseRequest(BaseModel):
-    url: str
-
-class ScreenshotRequest(BaseModel):
-    url: str
-    save_path: Optional[str] = ""
-
-@app.post("/api/browser/browse")
-def api_browser_browse(req: BrowseRequest):
-    if not req.url.strip():
-        raise HTTPException(status_code=400, detail="URL cannot be empty.")
-    res = get_removed_tool_blocked_message("safe_browse_url")
-    return {"status": "blocked", "url": req.url, "result": res}
-
-@app.post("/api/browser/screenshot")
-def api_browser_screenshot(req: ScreenshotRequest):
-    if not req.url.strip():
-        raise HTTPException(status_code=400, detail="URL cannot be empty.")
-    res = get_removed_tool_blocked_message("capture_screenshot")
-    return {"status": "blocked", "url": req.url, "result": res}
-
-# --- GitHub Endpoints ---
-
-class GitHubCloneRequest(BaseModel):
-    repo_url: str
-    target_dir: Optional[str] = ""
-
-class GitHubCommitRequest(BaseModel):
-    commit_message: str
-    branch: Optional[str] = "main"
-    repo_dir: Optional[str] = ""
-
-class GitHubMergeRequest(BaseModel):
-    source_branch: str
-    target_branch: Optional[str] = "main"
-    repo_dir: Optional[str] = ""
-
-@app.post("/api/github/clone")
-def api_github_clone(req: GitHubCloneRequest):
-    if not req.repo_url.strip():
-        raise HTTPException(status_code=400, detail="repo_url cannot be empty.")
-    res = get_removed_tool_blocked_message("github_clone")
-    return {"status": "blocked", "result": res}
-
-@app.post("/api/github/commit_and_push")
-def api_github_commit_and_push(req: GitHubCommitRequest):
-    if not req.commit_message.strip():
-        raise HTTPException(status_code=400, detail="commit_message cannot be empty.")
-    res = get_removed_tool_blocked_message("github_commit_and_push")
-    return {"status": "blocked", "result": res}
-
-@app.post("/api/github/merge")
-def api_github_merge(req: GitHubMergeRequest):
-    if not req.source_branch.strip():
-        raise HTTPException(status_code=400, detail="source_branch cannot be empty.")
-    args = {
-        "source_branch": req.source_branch.strip(),
-        "target_branch": req.target_branch or "main",
-        "repo_dir": req.repo_dir or ""
-    }
-    res = get_removed_tool_blocked_message("github_merge")
-    return {
-        "status": "blocked",
-        "result": res,
-        "message": res
-    }
-
-
 # --- Tools Endpoints ---
+
 
 
 
@@ -847,13 +772,6 @@ def api_get_integrations_status():
 
     return {
         "integrations": {
-            "github": {
-                "name": "GitHub CLI Tooling",
-                "status": "AVAILABLE",
-                "mode": "git_cli",
-                "description": "Real git subprocess CLI operations inside workspace repo.",
-                "truthfulness": "REAL_SUBPROCESS"
-            },
             "calendar": {
                 "name": "Calendar Subsystem",
                 "status": "GOOGLE_SYNC" if gcal_active else "LOCAL_ONLY",
@@ -895,13 +813,6 @@ def api_get_integrations_status():
                 "mode": "tavily" if tavily_active else "duckduckgo",
                 "description": "Tavily REST API" if tavily_active else "DuckDuckGo HTML Search",
                 "truthfulness": "REAL_LIVE_FETCH"
-            },
-            "browser": {
-                "name": "Headless Browser Sandbox",
-                "status": "AVAILABLE",
-                "mode": "playwright_or_http",
-                "description": "Playwright headless Chrome or HTTP page fetch with HTML sanitizer",
-                "truthfulness": "REAL_HTTP_FETCH"
             }
         }
     }

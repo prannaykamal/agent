@@ -2,77 +2,51 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SCAN_ROOTS = [
-    REPO_ROOT / "src",
-    REPO_ROOT / "frontend",
-    REPO_ROOT / "tests",
-    REPO_ROOT / "docs",
+RUNTIME_SCAN_ROOTS = [REPO_ROOT / "src", REPO_ROOT / "frontend"]
+TEST_SCAN_ROOT = REPO_ROOT / "tests"
+
+DELETED_MODULE_REFERENCES = [
+    "src.mcp_gateway." + "sand" + "boxes.browser_" + "sandbox",
+    "src.mcp_gateway." + "sand" + "boxes.code_" + "sandbox",
 ]
-SCAN_FILES = [
-    REPO_ROOT / "README.md",
-    REPO_ROOT / "pyproject.toml",
-    REPO_ROOT / "requirements.txt",
-]
-
-BASELINE_REFERENCES_TO_REMOVE_LATER = [
-    "browser_sandbox",
-    "code_sandbox",
-    "safe_browse_url",
-    "capture_screenshot",
-    "run_code",
-    "github_clone",
-    "github_commit_and_push",
-    "github_merge",
-    "/api/browser",
-    "/api/github",
-]
+REMOVED_ROUTE_REFERENCES = ["/api/" + "browser", "/api/" + "github"]
 
 
-def _iter_text_files():
-    for root in SCAN_ROOTS:
-        if not root.exists():
-            continue
-        for path in root.rglob("*"):
-            if path.is_file() and "__pycache__" not in path.parts:
-                yield path
-
-    for path in SCAN_FILES:
-        if path.exists():
+def _iter_text_files(root: Path):
+    if not root.exists():
+        return
+    for path in root.rglob("*"):
+        if path.is_file() and "__pycache__" not in path.parts:
             yield path
 
 
-def _repo_text_corpus() -> str:
-    chunks = []
-    for path in _iter_text_files():
-        try:
-            chunks.append(path.read_text(encoding="utf-8", errors="ignore"))
-        except OSError:
-            continue
-    return "\n".join(chunks)
+def test_t0_static_scan_runtime_no_longer_imports_deleted_sandbox_modules():
+    violations = []
+    for root in RUNTIME_SCAN_ROOTS:
+        for path in _iter_text_files(root):
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            for needle in DELETED_MODULE_REFERENCES:
+                if needle in text:
+                    violations.append((path.relative_to(REPO_ROOT).as_posix(), needle))
+    assert violations == []
 
 
-def test_t0_migration_baseline_static_scan_confirms_current_sandbox_references_exist():
-    corpus = _repo_text_corpus()
+def test_t0_static_scan_frontend_has_no_removed_route_calls():
+    violations = []
+    for root in [REPO_ROOT / "frontend" / "src"]:
+        for path in _iter_text_files(root):
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            for needle in REMOVED_ROUTE_REFERENCES:
+                if needle in text:
+                    violations.append((path.relative_to(REPO_ROOT).as_posix(), needle))
+    assert violations == []
 
-    missing = [needle for needle in BASELINE_REFERENCES_TO_REMOVE_LATER if needle not in corpus]
 
-    # Expected current-state baseline only. Phase T3 should invert this test.
-    assert missing == []
-
-
-def test_t0_migration_baseline_static_scan_can_name_reference_sources():
-    reference_sources = {}
-    for needle in BASELINE_REFERENCES_TO_REMOVE_LATER:
-        matches = []
-        for path in _iter_text_files():
-            try:
-                text = path.read_text(encoding="utf-8", errors="ignore")
-            except OSError:
-                continue
+def test_t0_static_scan_tests_do_not_import_deleted_sandbox_modules():
+    violations = []
+    for path in _iter_text_files(TEST_SCAN_ROOT):
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for needle in DELETED_MODULE_REFERENCES:
             if needle in text:
-                matches.append(path.relative_to(REPO_ROOT).as_posix())
-        reference_sources[needle] = matches
-
-    assert all(reference_sources[needle] for needle in BASELINE_REFERENCES_TO_REMOVE_LATER)
-    assert "src/mcp_gateway/sandboxes/browser_sandbox.py" in reference_sources["safe_browse_url"]
-    assert "src/mcp_gateway/sandboxes/code_sandbox.py" in reference_sources["run_code"]
+                violations.append((path.relative_to(REPO_ROOT).as_posix(), needle))
+    assert violations == []

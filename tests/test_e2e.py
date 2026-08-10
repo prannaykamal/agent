@@ -9,7 +9,6 @@ from src.personal_os.tasks import create_task
 from src.personal_os.concurrency import lock_resource, unlock_resource
 from src.personal_os.event_bus import publish_event
 from src.mcp_gateway.search import search_web
-from src.mcp_gateway.sandboxes.code_sandbox import run_code
 from src.hitl.approval_engine import get_pending_approvals
 from src.harness.graph import agent_app, resume_graph_after_approval
 
@@ -78,9 +77,6 @@ def test_e2e_personal_os_and_mcp_tools(temp_db):
     # Web search MCP tool
     search_res = search_web.invoke({"query": "LangGraph tutorial"})
     assert "Web Search Results" in search_res
-
-    # Code sandbox source remains on disk until T3, but is no longer active in T2.
-    assert run_code.name == "run_code"
 
 def test_e2e_hitl_approval_pause_and_resume(temp_db):
     db_path = temp_db["db"]

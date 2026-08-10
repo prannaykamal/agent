@@ -54,12 +54,9 @@ ASTRA categorizes tool features into three distinct operational modes:
 | **Email Reading** | REAL / LOCAL | `IMAPEmailAdapter` or SQLite | `IMAP_HOST`, `IMAP_USER`, `IMAP_PASS` |
 | **Email Transmit** | REAL / LOCAL | `SMTPEmailAdapter` (Gated HITL) | `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS` |
 | **Web Search** | REAL / LOCAL | Tavily API / DuckDuckGo | `TAVILY_API_KEY` (Optional: fallback to DDG) |
-| **Headless Browser** | REAL | Playwright Chromium Engine | `python -m playwright install chromium` |
 | **Telegram Messaging**| REAL / LOCAL | Telegram Bot API / SQLite | `TELEGRAM_BOT_TOKEN` |
 | **WhatsApp Messaging**| REAL / LOCAL | Meta Graph API / SQLite | `WHATSAPP_API_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` |
 | **Google Calendar** | REAL / LOCAL | Google Calendar v3 API / SQLite | `GOOGLE_CALENDAR_TOKEN` |
-| **GitHub Git Tools** | REAL | Local Git CLI Subprocess | System `git` binary installed |
-| **Code Sandbox** | REAL | Isolated Python/Bash Script Exec | Local Python 3.10+ (`.agent/scratch/`) |
 | **Task Management** | LOCAL-ONLY | SQLite `tasks` table | None |
 | **Sub-Agent Spawn** | REAL / LOCAL | LangChain Async Sub-Agent | None |
 | **System Backup** | REAL | Zip compressed archive | None |
@@ -229,14 +226,7 @@ TAVILY_API_KEY=tvly-...
 ```
 *(If `TAVILY_API_KEY` is omitted, search tools fall back automatically to free DuckDuckGo web search).*
 
-### 4. Playwright Headless Browser Engine
-Install Python dependencies and Chromium browser binaries:
-```bash
-pip install -r requirements.txt
-python -m playwright install chromium
-```
-
-### 5. Telegram Bot & WhatsApp Cloud API
+### 4. Telegram Bot & WhatsApp Cloud API
 ```ini
 TELEGRAM_BOT_TOKEN=123456789:ABCdefGHI...
 TELEGRAM_TEST_CHAT_ID=987654321
@@ -245,7 +235,7 @@ WHATSAPP_API_TOKEN=EAAG...
 WHATSAPP_PHONE_NUMBER_ID=10987654321
 ```
 
-### 6. Google Calendar v3 API
+### 5. Google Calendar v3 API
 ```ini
 GOOGLE_CALENDAR_TOKEN=ya29.a0A...
 ```
@@ -258,5 +248,3 @@ GOOGLE_CALENDAR_TOKEN=ya29.a0A...
    - ASTRA is designed for single-user desktop or personal server deployment. Multi-tenant auth/isolation is not enabled.
 2. **SQLite Write Lock Boundaries**:
    - SQLite uses file-level locking during write transactions. High-concurrency simultaneous API calls may encounter brief database busy locks.
-3. **Headless Browser OS Requirements**:
-   - Playwright browser execution requires Linux/macOS/Windows desktop libraries. Headless environments without graphics/X11 libraries require `playwright install-deps`.

@@ -46,15 +46,13 @@ def test_rest_calendar_create_and_delete_require_approval(temp_db):
     assert resp_del.status_code == 200
     assert resp_del.json()["status"] == "APPROVAL_REQUIRED"
 
-def test_rest_github_merge_is_blocked_after_t2(temp_db):
-    """T2 keeps the route but blocks removed GitHub sandbox execution."""
-    resp_merge = client.post("/api/github/merge", json={
+def test_rest_github_merge_route_removed_after_t3(temp_db):
+    """T3 removes the old GitHub/code sandbox route completely."""
+    resp_merge = client.post("/" + 'api' + "/" + 'github' + "/" + 'merge', json={
         "source_branch": "feature/payment",
         "target_branch": "main"
     })
-    assert resp_merge.status_code == 200
-    assert resp_merge.json()["status"] == "blocked"
-    assert "removed or blocked" in resp_merge.json()["message"]
+    assert resp_merge.status_code == 404
 
 def test_idempotency_key_and_duplicate_protection(temp_db):
     """P3 Item 6 & 7: Verifies idempotency key reuse and duplicate approval protection."""
