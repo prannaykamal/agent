@@ -2,6 +2,7 @@ import json
 
 from src.tools.mcp_invocation import MCPInvocationStatus, invoke_provider_tool
 from src.tools.mcp_provider_registry import clear_mcp_provider_discovery_cache
+from src.tools.policy import ToolCallerSource
 
 
 class FakeMCPClient:
@@ -37,6 +38,8 @@ def test_t7_invocation_boundary_uses_mcp_tools_call(tmp_path):
         arguments={"to": "user@example.com"},
         config_path=config,
         client_factory=lambda _provider: client,
+        source=ToolCallerSource.APPROVAL_RESUME,
+        approval_context={"approved": True},
     )
 
     assert result.status == MCPInvocationStatus.SUCCEEDED

@@ -2,7 +2,7 @@ import json
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from src.mcp_gateway.protocol.client import MCPClient
 from src.mcp_gateway.protocol.transports.sse import SSEMCPTransport
@@ -12,6 +12,8 @@ from src.tools.mcp_provider_registry import (
     MCPClientFactory,
     get_mcp_provider_results,
 )
+from src.tools.policy import ToolCallerSource, ToolPolicyDecisionType, evaluate_tool_policy
+from src.tools.registry_types import ToolMetadata
 
 
 class MCPInvocationStatus(str, Enum):
@@ -20,6 +22,10 @@ class MCPInvocationStatus(str, Enum):
     TOOL_UNAVAILABLE = "TOOL_UNAVAILABLE"
     VALIDATION_ERROR = "VALIDATION_ERROR"
     APPROVAL_REQUIRED = "APPROVAL_REQUIRED"
+    POLICY_DENIED = "POLICY_DENIED"
+    REMOVED_TOOL = "REMOVED_TOOL"
+    INVOCATION_FAILED_RETRYABLE = "INVOCATION_FAILED_RETRYABLE"
+    INVOCATION_FAILED_TERMINAL = "INVOCATION_FAILED_TERMINAL"
     INVOCATION_FAILED = "INVOCATION_FAILED"
 
 
@@ -55,6 +61,10 @@ class MCPInvocationResult:
             return f"[{label} Unavailable]: Required MCP tool is not available from the configured provider."
         if self.status == MCPInvocationStatus.VALIDATION_ERROR:
             return f"[{label} Validation Error]: {self.error}"
+        if self.status == MCPInvocationStatus.APPROVAL_REQUIRED:
+            return f"[{label} Approval Required]: {self.error or 'HITL approval is required before this MCP action can execute.'}"
+        if self.status in (MCPInvocationStatus.POLICY_DENIED, MCPInvocationStatus.REMOVED_TOOL):
+            return f"[{label} Blocked]: {self.error or 'Tool execution was blocked by policy.'}"
         return f"[{label} Invocation Failed]: {self.error or 'MCP provider invocation failed.'}"
 
 
@@ -103,6 +113,26 @@ def _redacted_audit_metadata(provider_id: str, tool_name: str, arguments: Dict[s
     }
 
 
+def _raw_tool_name(metadata: ToolMetadata) -> str:
+    return str(metadata.observability_metadata.get("raw_tool_name") or metadata.legacy_name)
+
+
+def _policy_failure_result(provider_id: str, tool_name: str, decision: Any) -> MCPInvocationResult:
+    if decision.decision == ToolPolicyDecisionType.APPROVAL_REQUIRED:
+        status = MCPInvocationStatus.APPROVAL_REQUIRED
+    elif decision.decision == ToolPolicyDecisionType.BLOCKED and decision.reason_code == "removed_tool":
+        status = MCPInvocationStatus.REMOVED_TOOL
+    else:
+        status = MCPInvocationStatus.POLICY_DENIED
+    return MCPInvocationResult(
+        status=status,
+        provider_id=provider_id,
+        tool_name=tool_name,
+        error=decision.reason,
+        audit_metadata={"policy_decision": decision.to_dict()},
+    )
+
+
 def invoke_mcp_tool(
     provider_id: str,
     tool_name: str,
@@ -110,6 +140,9 @@ def invoke_mcp_tool(
     *,
     config_path: Optional[Path] = None,
     client_factory: Optional[MCPClientFactory] = None,
+    source: ToolCallerSource | str = ToolCallerSource.API,
+    approval_context: Optional[Dict[str, Any]] = None,
+    metadata: Optional[ToolMetadata] = None,
 ) -> MCPInvocationResult:
     client = None
     try:
@@ -117,6 +150,35 @@ def invoke_mcp_tool(
         provider_result = next((result for result in provider_results if result.provider.provider_id == provider_id), None)
         if provider_result is None or provider_result.provider.discovery_status != MCPDiscoveryStatus.DISCOVERED:
             return MCPInvocationResult(status=MCPInvocationStatus.PROVIDER_UNAVAILABLE, provider_id=provider_id)
+
+        metadata = metadata or next(
+            (
+                item
+                for item in provider_result.tools
+                if _raw_tool_name(item) == tool_name or item.legacy_name == tool_name
+            ),
+            None,
+        )
+        if metadata is not None:
+            validation_error = _validate_arguments(metadata.input_schema, arguments)
+            if validation_error:
+                return MCPInvocationResult(
+                    status=MCPInvocationStatus.VALIDATION_ERROR,
+                    provider_id=provider_id,
+                    tool_name=tool_name,
+                    error=validation_error,
+                )
+            policy = evaluate_tool_policy(
+                metadata.legacy_name,
+                arguments,
+                source=source,
+                approval_context=approval_context,
+                metadata=metadata,
+            )
+            if policy.blocked or policy.requires_approval:
+                return _policy_failure_result(provider_id, tool_name, policy)
+        else:
+            return MCPInvocationResult(status=MCPInvocationStatus.TOOL_UNAVAILABLE, provider_id=provider_id, tool_name=tool_name)
 
         client = client_factory(provider_result.provider) if client_factory else _build_invocation_client(provider_result.provider)
         content = client.call_tool(name=tool_name, arguments=arguments)
@@ -129,7 +191,7 @@ def invoke_mcp_tool(
         )
     except Exception as exc:
         return MCPInvocationResult(
-            status=MCPInvocationStatus.INVOCATION_FAILED,
+            status=MCPInvocationStatus.INVOCATION_FAILED_TERMINAL,
             provider_id=provider_id,
             tool_name=tool_name,
             error=str(exc)[:240],
@@ -150,6 +212,8 @@ def invoke_provider_tool(
     *,
     config_path: Optional[Path] = None,
     client_factory: Optional[MCPClientFactory] = None,
+    source: ToolCallerSource | str = ToolCallerSource.API,
+    approval_context: Optional[Dict[str, Any]] = None,
 ) -> MCPInvocationResult:
     results = get_mcp_provider_results(config_path=config_path, refresh=True, client_factory=client_factory)
     for provider_id in provider_ids:
@@ -157,7 +221,7 @@ def invoke_provider_tool(
         if provider_result is None or provider_result.provider.discovery_status != MCPDiscoveryStatus.DISCOVERED:
             continue
         for metadata in provider_result.tools:
-            raw_tool_name = str(metadata.observability_metadata.get("raw_tool_name") or "")
+            raw_tool_name = _raw_tool_name(metadata)
             if not _matches_tool_hint(raw_tool_name, tool_hints):
                 continue
             validation_error = _validate_arguments(metadata.input_schema, arguments)
@@ -168,12 +232,24 @@ def invoke_provider_tool(
                     tool_name=raw_tool_name,
                     error=validation_error,
                 )
+            policy = evaluate_tool_policy(
+                metadata.legacy_name,
+                arguments,
+                source=source,
+                approval_context=approval_context,
+                metadata=metadata,
+            )
+            if policy.blocked or policy.requires_approval:
+                return _policy_failure_result(provider_id, raw_tool_name, policy)
             return invoke_mcp_tool(
                 provider_id,
                 raw_tool_name,
                 arguments,
                 config_path=config_path,
                 client_factory=client_factory,
+                source=source,
+                approval_context=approval_context,
+                metadata=metadata,
             )
 
     configured_provider = next((result for result in results if result.provider.provider_id in provider_ids and result.provider.is_configured), None)

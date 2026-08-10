@@ -1,4 +1,4 @@
-﻿import os
+import os
 import json
 import uuid
 from typing import List, Dict, Any, Optional
@@ -28,6 +28,8 @@ from src.memory.procedural import match_procedural_skills
 from src.hitl.classifier import classify_tool_risk
 from src.hitl.approval_engine import create_approval_request, process_approval_decision, get_approval_request
 from src.tools.removed_tools import get_removed_tool_blocked_message, is_removed_tool_name
+from src.tools.invocation import invoke_registered_tool
+from src.tools.policy import ToolCallerSource, evaluate_tool_policy
 from src.personal_os.checkpointing import checkpoint, restore_checkpoint
 from src.harness.models import get_primary_llm
 from src.harness.llm_router import resolve_primary_llm
@@ -409,26 +411,23 @@ def node_tools(state: AgentState) -> dict:
         targs = call.get("args", {})
         tcall_id = call.get("id", f"call_{uuid.uuid4().hex[:6]}")
 
-        risk_level, _ = classify_tool_risk(tname)
-        if risk_level == "Blocked" or is_removed_tool_name(tname):
-            result_str = get_removed_tool_blocked_message(tname)
+        invocation = invoke_registered_tool(
+            tname,
+            targs,
+            tool_map,
+            source=ToolCallerSource.CHAT,
+            approval_context={"approved": approval_status == "APPROVED"},
+        )
+        policy_decision = invocation.policy_decision
+        risk_level = policy_decision.risk_class.value if policy_decision else "Blocked"
+        result_str = invocation.to_text()
+
+        if policy_decision and policy_decision.reason_code == "removed_tool":
             _log_removed_tool_block(session_id, tname, targs, result_str)
-        elif risk_level == "High" and approval_status != "APPROVED":
-            result_str = f"Direct execution of high-risk tool '{tname}' blocked. Human-In-The-Loop approval is required."
-        else:
-            if tname not in tools_used:
-                tools_used.append(tname)
 
-            target_tool = tool_map.get(tname)
-            if target_tool:
-                try:
-                    res = target_tool.invoke(targs)
-                    result_str = str(res)
-                except Exception as ex:
-                    result_str = f"Tool execution error: {str(ex)}"
-            else:
-                result_str = f"Tool '{tname}' not found in registry."
-
+        attempted_nonblocked_tool = policy_decision and not policy_decision.blocked and not policy_decision.requires_approval
+        if (invocation.ok or attempted_nonblocked_tool) and tname not in tools_used:
+            tools_used.append(tname)
         if risk_level in ("Medium", "High", "Blocked"):
             try:
                 from src.hitl.audit_logger import log_audit_event
@@ -558,6 +557,47 @@ def resume_graph_after_approval(request_id: str, decision: str) -> Dict[str, Any
             "message": blocked_message,
         }
 
+    if str(decision or "").upper().strip() == "APPROVED":
+        raw_existing_args = (existing_request or {}).get("tool_args_json", "{}")
+        try:
+            existing_tool_args = json.loads(raw_existing_args) if isinstance(raw_existing_args, str) else raw_existing_args
+        except Exception:
+            existing_tool_args = {}
+        if isinstance(existing_tool_args, dict):
+            policy_args = {key: value for key, value in existing_tool_args.items() if key != "_tool_call_id"}
+        else:
+            policy_args = {}
+        preflight = evaluate_tool_policy(
+            existing_tool_name,
+            policy_args,
+            source=ToolCallerSource.APPROVAL_RESUME,
+            approval_context={"approved": True, "request_id": request_id},
+        )
+        if preflight.blocked or preflight.unavailable or preflight.requires_approval:
+            blocked_message = f"Approval resume blocked for tool '{existing_tool_name}'. Reason: {preflight.reason}"
+            try:
+                processed = process_approval_decision(request_id, "REJECTED")
+            except Exception:
+                processed = existing_request or {"tool_name": existing_tool_name, "session_id": "default_session"}
+            _log_removed_tool_block(processed.get("session_id", "default_session"), existing_tool_name, policy_args, blocked_message)
+            log_loop_event(
+                session_id=processed.get("session_id", "default_session"),
+                step_index=99,
+                step_type="HITL_BLOCKED",
+                reasoning=f"Approval resume blocked by policy for '{existing_tool_name}'",
+                tool_name=existing_tool_name,
+                tool_args=policy_args,
+                tool_result=blocked_message,
+            )
+            return {
+                "request_id": request_id,
+                "status": "UNAVAILABLE" if preflight.unavailable else "BLOCKED",
+                "tool_name": existing_tool_name,
+                "tool_result": blocked_message,
+                "response": blocked_message,
+                "message": blocked_message,
+            }
+
     processed = process_approval_decision(request_id, decision)
     checkpoint_id = processed.get("checkpoint_id", "")
     tool_name = processed.get("tool_name", "")
@@ -583,17 +623,22 @@ def resume_graph_after_approval(request_id: str, decision: str) -> Dict[str, Any
             history_messages.append(AIMessage(content=content))
 
     _, tool_map = get_registered_tools()
-    target_tool = tool_map.get(tool_name)
 
     if decision.upper() == "APPROVED":
-        if target_tool:
-            try:
-                tool_output = str(target_tool.invoke(tool_args))
-            except Exception as e:
-                tool_output = f"Executed with result: {str(e)}"
-        else:
+        policy_args = tool_args if isinstance(tool_args, dict) else {}
+        invocation = invoke_registered_tool(
+            tool_name,
+            policy_args,
+            tool_map,
+            source=ToolCallerSource.APPROVAL_RESUME,
+            approval_context={"approved": True, "request_id": request_id},
+        )
+        if invocation.ok:
+            tool_output = invocation.to_text()
+        elif invocation.policy_decision and invocation.policy_decision.metadata.get("legacy_hitl_demo_tool"):
             tool_output = f"Tool '{tool_name}' executed successfully upon human approval."
-
+        else:
+            tool_output = invocation.to_text()
         log_loop_event(
             session_id=session_id,
             step_index=99,

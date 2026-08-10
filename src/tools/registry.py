@@ -45,6 +45,20 @@ def get_bindable_tool_metadata() -> List[ToolMetadata]:
     ]
 
 
+
+def get_all_tool_metadata_for_policy() -> List[ToolMetadata]:
+    """Returns active, unavailable, removed, and deprecated metadata for policy checks."""
+    active_or_unavailable = get_personal_os_tool_metadata() + get_mcp_gateway_tool_metadata()
+    removed = get_removed_tool_metadata() + get_deprecated_personal_os_tool_metadata()
+    seen: set[tuple[str, str]] = set()
+    result: List[ToolMetadata] = []
+    for item in active_or_unavailable + removed:
+        key = (item.tool_id, item.legacy_name)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(item)
+    return result
 def get_unified_tool_metadata() -> List[ToolMetadata]:
     """Returns active metadata plus removed/deprecated target metadata."""
     return get_bindable_tool_metadata() + get_removed_tool_metadata() + get_deprecated_personal_os_tool_metadata()
@@ -74,6 +88,13 @@ def get_tool_metadata_by_legacy_name(legacy_name: str) -> Optional[ToolMetadata]
     return None
 
 
+
+def get_tool_metadata_for_policy_by_legacy_name(legacy_name: str) -> Optional[ToolMetadata]:
+    clean_name = str(legacy_name or "").strip()
+    for item in get_all_tool_metadata_for_policy():
+        if item.legacy_name == clean_name:
+            return item
+    return None
 def get_unified_tool_metadata_by_id() -> Dict[str, ToolMetadata]:
     return {item.tool_id: item for item in get_unified_tool_metadata()}
 

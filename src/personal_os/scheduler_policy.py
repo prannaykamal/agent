@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Any
+from typing import Any, Dict
 
-from src.hitl.classifier import classify_tool_risk
-from src.personal_os.policy import get_personal_os_policy
+from src.tools.policy import ToolCallerSource, ToolPolicyDecisionType, evaluate_tool_policy
 from src.tools.registry_types import ApprovalPolicy
 
 DIRECT_LOCAL_READ_TOOLS = {"heartbeat", "list_tasks", "get_agent_status", "restore_checkpoint"}
@@ -25,31 +24,52 @@ class SchedulerPolicyDecision:
 
 
 def approval_policy_for_target(target_tool_id: str) -> str:
-    clean = str(target_tool_id or "").strip()
-    personal_policy = get_personal_os_policy(clean)
-    if personal_policy is not None:
-        return personal_policy.approval_policy.value
-    risk, _ = classify_tool_risk(clean)
-    if risk == "High":
+    decision = evaluate_tool_policy(target_tool_id, {}, source=ToolCallerSource.SCHEDULER)
+    if decision.decision == ToolPolicyDecisionType.UNAVAILABLE and decision.risk_class.value == "High":
         return ApprovalPolicy.APPROVAL_REQUIRED.value
-    if risk == "Medium":
-        return ApprovalPolicy.CONFIRMATION_RECOMMENDED.value
-    if risk == "Blocked":
-        return ApprovalPolicy.BLOCKED.value
-    return ApprovalPolicy.NO_APPROVAL_NEEDED.value
+    return decision.approval_policy.value
 
 
 def decide_scheduler_execution(target_tool_id: str, target_payload: Dict[str, Any] | None = None) -> SchedulerPolicyDecision:
     clean = str(target_tool_id or "").strip()
-    personal_policy = get_personal_os_policy(clean)
-    if personal_policy is not None:
-        if clean in DIRECT_LOCAL_READ_TOOLS and personal_policy.allowed:
-            return SchedulerPolicyDecision(clean, personal_policy.risk_class.value, personal_policy.approval_policy.value, True, False, False, "Read-only local Personal OS action may execute directly.")
-        if personal_policy.approval_policy == ApprovalPolicy.BLOCKED:
-            return SchedulerPolicyDecision(clean, personal_policy.risk_class.value, personal_policy.approval_policy.value, False, False, False, personal_policy.reason)
-        return SchedulerPolicyDecision(clean, personal_policy.risk_class.value, personal_policy.approval_policy.value, False, True, False, "Scheduled Personal OS write/lifecycle action requires HITL approval before execution.")
+    decision = evaluate_tool_policy(clean, target_payload or {}, source=ToolCallerSource.SCHEDULER)
 
-    risk, reason = classify_tool_risk(clean)
-    if risk == "Blocked":
-        return SchedulerPolicyDecision(clean, risk, ApprovalPolicy.BLOCKED.value, False, False, False, reason)
-    return SchedulerPolicyDecision(clean, risk, ApprovalPolicy.APPROVAL_REQUIRED.value, False, True, True, "Provider or non-local scheduled tool calls are approval-gated/deferred in T5; provider behavior is not executed by cron.")
+    if decision.blocked:
+        return SchedulerPolicyDecision(
+            clean,
+            decision.risk_class.value,
+            decision.approval_policy.value,
+            False,
+            False,
+            False,
+            decision.reason,
+        )
+
+    if clean in DIRECT_LOCAL_READ_TOOLS and decision.can_execute_directly:
+        return SchedulerPolicyDecision(
+            clean,
+            decision.risk_class.value,
+            decision.approval_policy.value,
+            True,
+            False,
+            False,
+            "Read-only local Personal OS action may execute directly.",
+        )
+
+    provider_deferred = decision.provider_managed or decision.provider not in ("", "personal_os")
+    requires_approval = decision.requires_approval or decision.risk_class.value in ("High", "Medium") or provider_deferred
+    approval_policy = ApprovalPolicy.APPROVAL_REQUIRED.value if requires_approval else decision.approval_policy.value
+    reason = (
+        "Provider or non-local scheduled tool calls are approval-gated/deferred; provider behavior is not executed by cron without policy approval."
+        if provider_deferred
+        else "Scheduled Personal OS write/lifecycle action requires HITL approval before execution."
+    )
+    return SchedulerPolicyDecision(
+        clean,
+        decision.risk_class.value,
+        approval_policy,
+        False,
+        requires_approval,
+        provider_deferred,
+        reason,
+    )

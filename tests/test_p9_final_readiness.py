@@ -122,9 +122,10 @@ def test_p9_gate_7_and_8_high_risk_tool_pause_and_approval_resumption(isolated_e
     req_id = res_pause.get("pending_approval_id")
     assert req_id is not None
 
-    # Gate 8: Human approval resumes execution
+    # T8: approval resume revalidates provider availability and fails closed when Gmail MCP is unavailable.
     res_resume = resume_graph_after_approval(request_id=req_id, decision="APPROVED")
-    assert res_resume.get("status") == "APPROVED"
+    assert res_resume.get("status") == "UNAVAILABLE"
+    assert "unavailable" in res_resume.get("message", "").lower()
 
 def test_p9_gate_9_scheduled_worker_processes_due_jobs(isolated_env):
     """Gate 9: Scheduled worker processes due jobs."""

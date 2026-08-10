@@ -187,7 +187,7 @@ def test_p7_4_fake_llm_high_risk_tool_hitl_pause(temp_db, monkeypatch):
     conn.close()
 
 def test_p7_5_approval_resume_final_model_answer(temp_db, monkeypatch):
-    """P7 Item 5: Approval-resume test proving final model answer happens after approval."""
+    """T8: Approval resume revalidates unavailable MCP provider and fails closed."""
     fake_high_risk_call = AIMessage(
         content="",
         tool_calls=[{"name": "calendar_create_event", "args": {"title": "Client Call", "start_time": "2026-08-01 14:00", "end_time": "2026-08-01 15:00"}, "id": "call_resume_1"}]
@@ -211,10 +211,10 @@ def test_p7_5_approval_resume_final_model_answer(temp_db, monkeypatch):
     paused_state = agent_app.invoke(init_state)
     req_id = paused_state["pending_approval_id"]
 
-    # Resume graph after approval
+    # T8 revalidates provider availability before execution; unavailable Calendar MCP fails closed.
     res_resume = resume_graph_after_approval(request_id=req_id, decision="APPROVED")
-    assert res_resume["status"] == "APPROVED"
-    assert res_resume["response"] == "Calendar event 'Client Call' has been successfully created after approval."
+    assert res_resume["status"] == "UNAVAILABLE"
+    assert "unavailable" in res_resume["message"].lower()
 
 def test_p7_6_scheduled_job_real_tool_function(temp_db):
     """P7 Item 6: Scheduled job test using the real schedule_job() function."""

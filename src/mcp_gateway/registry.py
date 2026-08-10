@@ -23,8 +23,8 @@ from src.tools.registry_types import (
     schema_from_langchain_tool,
 )
 
-# Tool Risk Classification Metadata Mapping
-TOOL_RISK_MAP: Dict[str, str] = {
+# Provider-managed MCP compatibility metadata overlay
+_MCP_POLICY_OVERLAY_RISK: Dict[str, str] = {
     # Low Risk (Read-only / local / safe)
     "email_read": "Low",
     "email_search": "Low",
@@ -108,7 +108,7 @@ def get_mcp_tool_risk(tool_name: str) -> str:
     """Returns the risk level for a tool by name, including T2 blocked tools."""
     if is_removed_tool_name(tool_name):
         return "Blocked"
-    return TOOL_RISK_MAP.get(tool_name, "Low")
+    return _MCP_POLICY_OVERLAY_RISK.get(tool_name, "Low")
 
 def get_mcp_tool_catalog() -> List[Dict[str, Any]]:
     """Returns catalog metadata for all registered MCP gateway tools."""
