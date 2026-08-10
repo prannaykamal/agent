@@ -12,6 +12,7 @@ from src.mcp_gateway.calendar import (
 )
 from src.mcp_gateway.search import search_web
 from src.tools.removed_tools import is_removed_tool_name
+from src.tools.mcp_provider_registry import get_provider_managed_mcp_tool_metadata
 from src.tools.registry_types import (
     AvailabilityStatus,
     ImplementationType,
@@ -119,7 +120,7 @@ _DESTRUCTIVE_TOOLS = {"calendar_delete_event"}
 
 
 def get_mcp_gateway_tool_metadata() -> List[ToolMetadata]:
-    """Returns transitional metadata for active MCP gateway/local adapter tools."""
+    """Returns transitional local-adapter metadata plus discovered provider-managed MCP metadata."""
     metadata: List[ToolMetadata] = []
     for tool in ALL_MCP_TOOLS:
         if is_removed_tool_name(tool.name):
@@ -153,5 +154,6 @@ def get_mcp_gateway_tool_metadata() -> List[ToolMetadata]:
                 },
             )
         )
+    metadata.extend(get_provider_managed_mcp_tool_metadata(refresh=False))
     return metadata
 

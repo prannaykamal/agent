@@ -46,6 +46,39 @@ The following target providers are not validated in the current config:
 
 Before implementation phases replace local adapters, each provider must be manually validated with safe credentials and a safe test account/environment.
 
+
+## Phase T6 Provider Status Foundation
+
+Phase T6 adds a local provider-managed MCP discovery and status boundary without replacing the legacy local adapters. The target providers are represented by stable provider IDs:
+
+- `search_tavily`
+- `search_duckduckgo`
+- `google_calendar`
+- `whatsapp`
+- `telegram`
+- `gmail`
+
+The local system now treats missing target provider configuration as an unavailable, non-fatal state. App startup, `/api/tools`, chat, Personal OS, cron, and memory workers must continue when these providers are not configured.
+
+Read-only status endpoints:
+
+- `GET /api/tools/mcp/providers`
+- `GET /api/tools/mcp/providers/{provider_id}`
+- `POST /api/tools/mcp/providers/{provider_id}/discover` for explicit metadata refresh only
+
+The status layer exposes provider IDs, display names, enabled/configured state, transport type, credential status, discovery status, availability status, expected tool hints, discovery timestamps, redacted errors, and discovered provider-managed tool metadata when available. It must not expose secrets or raw credentials.
+
+Discovery rules:
+
+- Load target entries from `.agent/mcp_config.json` only.
+- Connect through MCP transports only (`stdio` and `sse` are currently discoverable by the local bridge; `http`, `app_connector`, and `unknown` require manual/provider validation until supported safely).
+- Call MCP `tools/list` only during explicit discovery/refresh flows in code or tests.
+- Normalize discovered MCP tools into provider-managed `ToolMetadata`.
+- Mark failed providers unavailable without affecting other providers.
+- Do not call provider action tools such as send/create/update/delete during discovery.
+
+T6 still requires manual validation for real providers because no real Tavily, DuckDuckGo, Google Calendar, WhatsApp, Telegram, or Gmail MCP server is configured in the current workspace.
+
 ## Provider Checklist Template
 
 For each provider, validate:

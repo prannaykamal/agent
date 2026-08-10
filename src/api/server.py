@@ -612,6 +612,33 @@ def api_get_tools():
     }
 
 
+@app.get("/api/tools/mcp/providers")
+def api_get_mcp_provider_statuses():
+    from src.tools.mcp_provider_registry import get_mcp_provider_statuses
+
+    return {"providers": get_mcp_provider_statuses(include_config=False)}
+
+
+@app.get("/api/tools/mcp/providers/{provider_id}")
+def api_get_mcp_provider_status(provider_id: str):
+    from src.tools.mcp_provider_registry import get_mcp_provider_status
+
+    status = get_mcp_provider_status(provider_id, include_config=False)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Unknown MCP provider")
+    return status
+
+
+@app.post("/api/tools/mcp/providers/{provider_id}/discover")
+def api_discover_mcp_provider(provider_id: str):
+    from src.tools.mcp_provider_registry import get_mcp_provider_status
+
+    status = get_mcp_provider_status(provider_id, refresh=True, include_config=False)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Unknown MCP provider")
+    return status
+
+
 @app.get("/api/tools/personal-os/status")
 def api_personal_os_status():
     from src.personal_os.observability import get_personal_os_status
