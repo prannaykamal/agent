@@ -18,30 +18,26 @@ def temp_db(tmp_path, monkeypatch):
     init_db(db_file)
     return db_file
 
-def test_run_code_dev_only_and_boundaries():
-    """P6 Items 1, 2, 3: Verifies run_code dev-only isolation, scratch boundary enforcement, and output limits."""
-    # Output size truncation test
-    large_print_code = "print('A' * 5000)"
-    res_large = run_code.invoke({"code": large_print_code, "language": "python"})
-    assert "DEV-ONLY" in res_large
-    assert "Output Truncated" in res_large
-
-
-    # Script size limit test (1MB limit)
-    oversized_code = "# " + "X" * (1024 * 1024 + 100)
-    res_oversized = run_code.invoke({"code": oversized_code, "language": "python"})
-    assert "exceeds maximum limit" in res_oversized
+def test_run_code_source_remains_until_t3_but_policy_blocks_it():
+    """T2 keeps run_code source available for T3 deletion but blocks approval/execution policy."""
+    assert run_code.name == "run_code"
+    assert classify_tool_risk("run_code")[0] == "Blocked"
 
 def test_hitl_expanded_high_risk_classification():
     """P6 Item 5: Verifies expanded high-risk approval classification."""
     high_risk_tools = [
         "calendar_create_event", "calendar_delete_event",
         "email_send", "whatsapp_send", "telegram_send",
-        "github_merge", "production_deploy", "bank_transfer", "spend_money", "delete_database"
+        "production_deploy", "bank_transfer", "spend_money", "delete_database"
     ]
     for tool_name in high_risk_tools:
         risk, reason = classify_tool_risk(tool_name)
         assert risk == "High", f"Tool '{tool_name}' should be classified as High risk."
+        assert len(reason) > 0
+
+    for tool_name in ["github_merge", "github_commit_and_push", "run_code", "safe_browse_url", "capture_screenshot", "github_clone"]:
+        risk, reason = classify_tool_risk(tool_name)
+        assert risk == "Blocked"
         assert len(reason) > 0
 
 def test_approval_payload_previews():
@@ -63,9 +59,9 @@ def test_duplicate_approval_protection(temp_db):
     """P6 Item 7: Verifies approving or rejecting a request twice is blocked."""
     req = create_approval_request(
         session_id="sess_p6",
-        tool_name="github_merge",
-        tool_args={"source_branch": "feature/login"},
-        reason="Merge login feature",
+        tool_name="bank_transfer",
+        tool_args={"amount": 100},
+        reason="Transfer money",
         db_path=temp_db
     )
     req_id = req["request_id"]

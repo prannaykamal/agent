@@ -5,7 +5,7 @@ from src.api.server import app
 from src.db import init_db
 
 
-EXPECTED_SANDBOX_ACTIVE_IN_T1 = {
+REMOVED_SANDBOX_TOOLS = {
     "safe_browse_url",
     "capture_screenshot",
     "run_code",
@@ -41,14 +41,14 @@ def test_t1_get_all_personal_os_tools_still_returns_current_tools():
     assert "heartbeat" in names
 
 
-def test_t1_get_all_mcp_tools_still_returns_current_gateway_tools_and_sandboxes():
+def test_t1_get_all_mcp_tools_returns_current_gateway_tools_without_removed_sandboxes():
     from src.mcp_gateway.registry import get_all_mcp_tools
 
     names = {tool.name for tool in get_all_mcp_tools()}
 
     assert "search_web" in names
     assert "email_send" in names
-    assert EXPECTED_SANDBOX_ACTIVE_IN_T1 <= names
+    assert names.isdisjoint(REMOVED_SANDBOX_TOOLS)
 
 
 def test_t1_get_registered_tools_still_returns_active_graph_bindable_tools():
@@ -60,7 +60,7 @@ def test_t1_get_registered_tools_still_returns_active_graph_bindable_tools():
     assert tool_map
     assert "create_task" in names
     assert "search_web" in names
-    assert EXPECTED_SANDBOX_ACTIVE_IN_T1 <= names
+    assert names.isdisjoint(REMOVED_SANDBOX_TOOLS)
 
 
 def test_t1_api_tools_response_shape_remains_compatible(temp_db):
@@ -74,24 +74,23 @@ def test_t1_api_tools_response_shape_remains_compatible(temp_db):
     assert all({"name", "description", "risk_level"} <= set(item.keys()) for item in data["mcp_tools"])
 
 
-def test_t1_api_tools_still_lists_sandbox_tools_as_current_baseline_active(temp_db):
+def test_t1_api_tools_excludes_removed_sandbox_tools_after_t2(temp_db):
     response = client.get("/api/tools")
     data = response.json()
     mcp_names = {tool["name"] for tool in data["mcp_tools"]}
 
-    # T1 only introduces removed-target metadata. Active exposure changes begin in T2.
-    assert EXPECTED_SANDBOX_ACTIVE_IN_T1 <= mcp_names
+    assert mcp_names.isdisjoint(REMOVED_SANDBOX_TOOLS)
 
 
-def test_t1_removed_target_metadata_does_not_delete_or_block_active_tools():
+def test_t1_removed_target_metadata_exists_but_active_tools_are_filtered():
     from src.tools.registry import get_removed_tool_metadata
     from src.harness.graph import get_registered_tools
 
     removed_names = {item.legacy_name for item in get_removed_tool_metadata()}
     _, tool_map = get_registered_tools()
 
-    assert EXPECTED_SANDBOX_ACTIVE_IN_T1 <= removed_names
-    assert EXPECTED_SANDBOX_ACTIVE_IN_T1 <= set(tool_map)
+    assert REMOVED_SANDBOX_TOOLS <= removed_names
+    assert set(tool_map).isdisjoint(REMOVED_SANDBOX_TOOLS)
 
 
 def test_t1_no_api_route_removal_for_current_baseline():

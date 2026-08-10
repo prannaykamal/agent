@@ -89,22 +89,20 @@ def test_t0_migration_baseline_local_adapter_mcp_tools_are_currently_present():
     assert BASELINE_LOCAL_ADAPTER_MCP_TOOLS <= tool_names
 
 
-def test_t0_migration_baseline_browser_sandbox_tools_currently_exposed_to_remove_later():
+def test_t0_migration_baseline_browser_sandbox_tools_no_longer_active_after_t2():
     from src.mcp_gateway.registry import get_all_mcp_tools
 
     tool_names = {tool.name for tool in get_all_mcp_tools()}
 
-    # Expected current-state baseline only. T3 should invert this assertion.
-    assert BASELINE_BROWSER_SANDBOX_TOOLS_TO_REMOVE <= tool_names
+    assert tool_names.isdisjoint(BASELINE_BROWSER_SANDBOX_TOOLS_TO_REMOVE)
 
 
-def test_t0_migration_baseline_code_sandbox_tools_currently_exposed_to_remove_later():
+def test_t0_migration_baseline_code_sandbox_tools_no_longer_active_after_t2():
     from src.mcp_gateway.registry import get_all_mcp_tools
 
     tool_names = {tool.name for tool in get_all_mcp_tools()}
 
-    # Expected current-state baseline only. T3 should invert this assertion.
-    assert BASELINE_CODE_SANDBOX_TOOLS_TO_REMOVE <= tool_names
+    assert tool_names.isdisjoint(BASELINE_CODE_SANDBOX_TOOLS_TO_REMOVE)
 
 
 def test_t0_migration_baseline_api_tools_shape_and_groups_are_unchanged(temp_db):
@@ -129,6 +127,5 @@ def test_t0_migration_baseline_api_tools_includes_current_groups_and_sandbox_tar
     assert BASELINE_PERSONAL_OS_TOOLS <= personal_os_names
     assert BASELINE_LOCAL_ADAPTER_MCP_TOOLS <= mcp_names
 
-    # Expected current-state baseline only. These are target-for-removal later.
-    assert BASELINE_BROWSER_SANDBOX_TOOLS_TO_REMOVE <= mcp_names
-    assert BASELINE_CODE_SANDBOX_TOOLS_TO_REMOVE <= mcp_names
+    assert mcp_names.isdisjoint(BASELINE_BROWSER_SANDBOX_TOOLS_TO_REMOVE)
+    assert mcp_names.isdisjoint(BASELINE_CODE_SANDBOX_TOOLS_TO_REMOVE)

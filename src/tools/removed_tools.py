@@ -17,6 +17,9 @@ REMOVED_CODE_SANDBOX_LEGACY_NAMES = (
     "github_commit_and_push",
     "github_merge",
 )
+REMOVED_TOOL_LEGACY_NAMES = frozenset(
+    REMOVED_BROWSER_SANDBOX_LEGACY_NAMES + REMOVED_CODE_SANDBOX_LEGACY_NAMES
+)
 
 
 def _removed_metadata(
@@ -102,6 +105,25 @@ REMOVED_TOOL_METADATA: List[ToolMetadata] = [
 
 
 def get_removed_tool_metadata() -> List[ToolMetadata]:
-    """Returns T1 removed-target metadata without disabling current legacy tools."""
+    """Returns metadata for tools targeted for removal by the tools migration."""
     return list(REMOVED_TOOL_METADATA)
+
+
+def is_removed_tool_name(tool_name: str) -> bool:
+    """Returns whether a legacy tool name is blocked by the T2 removed-tool policy."""
+    return str(tool_name or "").strip() in REMOVED_TOOL_LEGACY_NAMES
+
+
+def get_removed_tool_blocked_message(tool_name: str) -> str:
+    """Returns a safe user-facing block message without invoking the removed tool."""
+    clean_name = str(tool_name or "").strip() or "<unknown>"
+    metadata = next(
+        (item for item in REMOVED_TOOL_METADATA if item.legacy_name == clean_name),
+        None,
+    )
+    reason = metadata.removal_reason if metadata else "This tool has been removed."
+    return (
+        f"Tool '{clean_name}' is removed or blocked by the tools architecture migration. "
+        f"{reason} No execution occurred."
+    )
 

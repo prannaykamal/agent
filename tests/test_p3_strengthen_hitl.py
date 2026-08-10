@@ -46,14 +46,15 @@ def test_rest_calendar_create_and_delete_require_approval(temp_db):
     assert resp_del.status_code == 200
     assert resp_del.json()["status"] == "APPROVAL_REQUIRED"
 
-def test_rest_github_merge_requires_approval(temp_db):
-    """P3 Item 4: Verifies POST /api/github/merge returns APPROVAL_REQUIRED."""
+def test_rest_github_merge_is_blocked_after_t2(temp_db):
+    """T2 keeps the route but blocks removed GitHub sandbox execution."""
     resp_merge = client.post("/api/github/merge", json={
         "source_branch": "feature/payment",
         "target_branch": "main"
     })
     assert resp_merge.status_code == 200
-    assert resp_merge.json()["status"] == "APPROVAL_REQUIRED"
+    assert resp_merge.json()["status"] == "blocked"
+    assert "removed or blocked" in resp_merge.json()["message"]
 
 def test_idempotency_key_and_duplicate_protection(temp_db):
     """P3 Item 6 & 7: Verifies idempotency key reuse and duplicate approval protection."""
@@ -92,8 +93,8 @@ def test_hitl_audit_logs_recorded(temp_db):
     """P3 Item 8: Verifies audit logs record creation, decisions, tool executions, and blocked attempts."""
     req_info = create_approval_request(
         session_id="sess_audit",
-        tool_name="github_merge",
-        tool_args={"source_branch": "feat"},
+        tool_name="bank_transfer",
+        tool_args={"amount": 50},
         reason="Audit test",
         db_path=temp_db
     )

@@ -79,9 +79,8 @@ def test_e2e_personal_os_and_mcp_tools(temp_db):
     search_res = search_web.invoke({"query": "LangGraph tutorial"})
     assert "Web Search Results" in search_res
 
-    # Code sandbox execution
-    run_res = run_code.invoke({"code": "print(10 * 10)", "language": "python"})
-    assert "100" in run_res
+    # Code sandbox source remains on disk until T3, but is no longer active in T2.
+    assert run_code.name == "run_code"
 
 def test_e2e_hitl_approval_pause_and_resume(temp_db):
     db_path = temp_db["db"]

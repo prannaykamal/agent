@@ -27,6 +27,7 @@ from src.memory.procedural import match_procedural_skills
 
 from src.hitl.classifier import classify_tool_risk
 from src.hitl.approval_engine import create_approval_request, process_approval_decision, get_approval_request
+from src.tools.removed_tools import get_removed_tool_blocked_message, is_removed_tool_name
 from src.personal_os.checkpointing import checkpoint, restore_checkpoint
 from src.harness.models import get_primary_llm
 from src.harness.llm_router import resolve_primary_llm
@@ -42,6 +43,21 @@ def get_registered_tools():
     tools = get_all_personal_os_tools() + get_all_mcp_tools()
     tool_map = {t.name: t for t in tools}
     return tools, tool_map
+
+
+def _log_removed_tool_block(session_id: str, tool_name: str, tool_args: Any, details: str) -> None:
+    try:
+        from src.hitl.audit_logger import log_audit_event
+        log_audit_event(
+            session_id=session_id,
+            tool_name=tool_name,
+            risk_level="Blocked",
+            action="REMOVED_TOOL_BLOCKED",
+            tool_args=tool_args if isinstance(tool_args, dict) else {},
+            details=details[:500],
+        )
+    except Exception:
+        pass
 
 def log_loop_event(session_id: str, step_index: int, step_type: str, reasoning: str = "", tool_name: str = "", tool_args: Any = None, tool_result: str = "") -> Dict[str, Any]:
     """Logs a loop step event into SQLite loop_events, tool_calls, and tool_results tables."""
@@ -394,7 +410,10 @@ def node_tools(state: AgentState) -> dict:
         tcall_id = call.get("id", f"call_{uuid.uuid4().hex[:6]}")
 
         risk_level, _ = classify_tool_risk(tname)
-        if risk_level == "High" and approval_status != "APPROVED":
+        if risk_level == "Blocked" or is_removed_tool_name(tname):
+            result_str = get_removed_tool_blocked_message(tname)
+            _log_removed_tool_block(session_id, tname, targs, result_str)
+        elif risk_level == "High" and approval_status != "APPROVED":
             result_str = f"Direct execution of high-risk tool '{tname}' blocked. Human-In-The-Loop approval is required."
         else:
             if tname not in tools_used:
@@ -410,7 +429,7 @@ def node_tools(state: AgentState) -> dict:
             else:
                 result_str = f"Tool '{tname}' not found in registry."
 
-        if risk_level in ("Medium", "High"):
+        if risk_level in ("Medium", "High", "Blocked"):
             try:
                 from src.hitl.audit_logger import log_audit_event
                 log_audit_event(
@@ -506,6 +525,39 @@ def should_continue(state: AgentState) -> str:
 
 def resume_graph_after_approval(request_id: str, decision: str) -> Dict[str, Any]:
     """Resumes or aborts graph execution after human approval decision ('APPROVED' or 'REJECTED'). Preserves full conversation state."""
+    existing_request = get_approval_request(request_id)
+    existing_tool_name = str((existing_request or {}).get("tool_name") or "")
+    if str(decision or "").upper().strip() == "APPROVED" and is_removed_tool_name(existing_tool_name):
+        blocked_message = get_removed_tool_blocked_message(existing_tool_name)
+        try:
+            processed = process_approval_decision(request_id, "REJECTED")
+        except Exception:
+            processed = existing_request or {"tool_name": existing_tool_name, "session_id": "default_session"}
+        session_id = processed.get("session_id", "default_session")
+        raw_args = processed.get("tool_args_json", "{}")
+        try:
+            tool_args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+        except Exception:
+            tool_args = {}
+        _log_removed_tool_block(session_id, existing_tool_name, tool_args, blocked_message)
+        log_loop_event(
+            session_id=session_id,
+            step_index=99,
+            step_type="HITL_BLOCKED",
+            reasoning=f"Approval resume blocked removed tool '{existing_tool_name}'",
+            tool_name=existing_tool_name,
+            tool_args=tool_args,
+            tool_result=blocked_message,
+        )
+        return {
+            "request_id": request_id,
+            "status": "BLOCKED",
+            "tool_name": existing_tool_name,
+            "tool_result": blocked_message,
+            "response": blocked_message,
+            "message": blocked_message,
+        }
+
     processed = process_approval_decision(request_id, decision)
     checkpoint_id = processed.get("checkpoint_id", "")
     tool_name = processed.get("tool_name", "")

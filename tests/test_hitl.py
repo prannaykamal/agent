@@ -26,12 +26,12 @@ def test_tool_based_risk_classification():
     assert classify_tool_risk("whatsapp_send")[0] == "High"
     assert classify_tool_risk("telegram_send")[0] == "High"
     assert classify_tool_risk("delete_files")[0] == "High"
-    assert classify_tool_risk("github_merge")[0] == "High"
+    assert classify_tool_risk("github_merge")[0] == "Blocked"
 
-    # Medium & Low Risk Tools
+    # Medium, Low, and blocked removed tools
     assert classify_tool_risk("spawn_agent")[0] == "Medium"
     assert classify_tool_risk("search_web")[0] == "Low"
-    assert classify_tool_risk("run_code")[0] == "Low"
+    assert classify_tool_risk("run_code")[0] == "Blocked"
 
 def test_approval_request_lifecycle(temp_db):
     req = create_approval_request("sess_01", "bank_transfer", {"amount": 500}, "Transfer money to vendor", "chk_123", db_path=temp_db)

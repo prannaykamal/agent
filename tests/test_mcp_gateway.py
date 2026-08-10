@@ -48,17 +48,11 @@ def test_search_mcp_tool():
     assert "Web Search Results" in search_res
     assert "https://" in search_res
 
-def test_code_sandbox():
-    python_code = "print(2 + 2)"
-    run_res = run_code.invoke({"code": python_code, "language": "python"})
-    assert "[Code Sandbox Output - Exit Code: 0]" in run_res
-    assert "4" in run_res
-
-    clone_res = github_clone.invoke({"repo_url": "https://github.com/example/repo.git"})
-    assert "status" in clone_res or "GitHub" in clone_res
-
-    merge_res = github_merge.invoke({"source_branch": "feature/ai", "target_branch": "main"})
-    assert "status" in merge_res or "GitHub" in merge_res
+def test_code_sandbox_source_functions_still_exist_until_t3_but_are_not_registry_active():
+    assert run_code.name == "run_code"
+    assert github_clone.name == "github_clone"
+    assert github_commit_and_push.name == "github_commit_and_push"
+    assert github_merge.name == "github_merge"
 
 
 def test_browser_sandbox():
@@ -68,9 +62,7 @@ def test_browser_sandbox():
     assert "Test Title" in clean_md
     assert "Hello World" in clean_md
 
-    browse_res = safe_browse_url.invoke({"url": "https://example.com/docs"})
-    assert "[Browser Sandbox Content" in browse_res
-    assert "https://example.com/docs" in browse_res
+    assert safe_browse_url.name == "safe_browse_url"
 
 def test_mcp_registry_and_risk():
     all_tools = get_all_mcp_tools()
@@ -80,11 +72,16 @@ def test_mcp_registry_and_risk():
     assert "email_send" in tool_names
     assert "calendar_create_event" in tool_names
     assert "search_web" in tool_names
-    assert "run_code" in tool_names
+    assert "run_code" not in tool_names
+    assert "github_clone" not in tool_names
+    assert "github_commit_and_push" not in tool_names
+    assert "github_merge" not in tool_names
+    assert "safe_browse_url" not in tool_names
+    assert "capture_screenshot" not in tool_names
 
     assert get_mcp_tool_risk("email_send") == "High"
     assert get_mcp_tool_risk("whatsapp_send") == "High"
     assert get_mcp_tool_risk("calendar_create_event") == "High"
-    assert get_mcp_tool_risk("github_merge") == "High"
+    assert get_mcp_tool_risk("github_merge") == "Blocked"
     assert get_mcp_tool_risk("search_web") == "Low"
-    assert get_mcp_tool_risk("run_code") == "Low"
+    assert get_mcp_tool_risk("run_code") == "Blocked"

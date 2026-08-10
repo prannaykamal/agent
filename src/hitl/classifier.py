@@ -1,5 +1,7 @@
 from typing import Tuple, Dict, Any, Optional
 
+from src.tools.removed_tools import is_removed_tool_name
+
 # Deterministic High-Risk Tool Registry & Justifications
 HIGH_RISK_TOOLS: Dict[str, str] = {
     "bank_transfer": "Financial transaction: Initiates monetary transfer",
@@ -27,9 +29,13 @@ def classify_tool_risk(tool_name: str, tool_args: Optional[Dict[str, Any]] = Non
     Evaluates tool risk level STRICTLY based on tool name and parameters—never based on LLM outputs.
     
     Returns:
-        Tuple of (risk_level, reason) where risk_level is 'High', 'Medium', or 'Low'.
+        Tuple of (risk_level, reason) where risk_level is 'High', 'Medium', 'Low',
+        or 'Blocked' for removed tools.
     """
     clean_name = tool_name.strip().lower()
+
+    if is_removed_tool_name(clean_name):
+        return "Blocked", "Removed tool: browser/code sandbox tools are blocked by the tools architecture migration"
 
     if clean_name in HIGH_RISK_TOOLS:
         return "High", HIGH_RISK_TOOLS[clean_name]

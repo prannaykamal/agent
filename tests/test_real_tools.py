@@ -66,6 +66,5 @@ def test_live_web_search(temp_db):
     assert "Python" in res
     assert "Source:" in res
 
-def test_browser_sandbox_fetch(temp_db):
-    res = safe_browse_url.invoke({"url": "https://example.com"})
-    assert "Browser Sandbox Content" in res
+def test_browser_sandbox_source_remains_until_t3(temp_db):
+    assert safe_browse_url.name == "safe_browse_url"

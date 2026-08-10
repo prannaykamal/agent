@@ -111,12 +111,17 @@ def test_p7_1_api_contract_every_frontend_fetch(temp_db):
     assert r17.status_code == 200
     r18 = client.post("/api/github/merge", json={"source_branch": "feature/api"})
     assert r18.status_code == 200
+    assert r16.json()["status"] == "blocked"
+    assert r17.json()["status"] == "blocked"
+    assert r18.json()["status"] == "blocked"
 
-    # 14. Browser endpoints
+    # 14. Browser endpoints remain present but blocked until T3 deletion.
     r19 = client.post("/api/browser/browse", json={"url": "https://example.com"})
     assert r19.status_code == 200
     r20 = client.post("/api/browser/screenshot", json={"url": "https://example.com"})
     assert r20.status_code == 200
+    assert r19.json()["status"] == "blocked"
+    assert r20.json()["status"] == "blocked"
 
 def test_p7_2_frontend_smoke_test(temp_db):
     """P7 Item 2: Frontend smoke test verifying static bundle mounting and chat response."""

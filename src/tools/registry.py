@@ -1,7 +1,10 @@
 from typing import Dict, List, Optional
 
 from src.tools.registry_types import ToolMetadata
-from src.tools.removed_tools import get_removed_tool_metadata as _get_removed_tool_metadata
+from src.tools.removed_tools import (
+    get_removed_tool_metadata as _get_removed_tool_metadata,
+    is_removed_tool_name,
+)
 
 
 def get_personal_os_tool_metadata() -> List[ToolMetadata]:
@@ -21,13 +24,13 @@ def get_removed_tool_metadata() -> List[ToolMetadata]:
 
 
 def get_bindable_tool_metadata() -> List[ToolMetadata]:
-    """
-    Returns metadata for currently bindable active tools.
+    """Returns metadata for currently bindable active tools.
 
-    T1 intentionally preserves legacy active exposure, including sandbox tools.
-    Removed-target metadata is reported separately and is not used to block tools yet.
+    T2 removes browser/code sandbox tools from active binding while preserving
+    removed-target metadata for observability and T3 deletion tracking.
     """
-    return get_personal_os_tool_metadata() + get_mcp_gateway_tool_metadata()
+    active = get_personal_os_tool_metadata() + get_mcp_gateway_tool_metadata()
+    return [item for item in active if not is_removed_tool_name(item.legacy_name)]
 
 
 def get_unified_tool_metadata() -> List[ToolMetadata]:
@@ -47,8 +50,7 @@ def get_tool_metadata_by_legacy_name(legacy_name: str) -> Optional[ToolMetadata]
     """
     Returns the active metadata for a legacy tool name when present.
 
-    Some T1 removed-target entries intentionally share legacy names with active sandbox
-    tools. Active metadata wins until T2 removes or blocks active exposure.
+    Removed-target metadata is returned for sandbox tools after T2 filtering.
     """
     clean_name = str(legacy_name or "").strip()
     for item in get_bindable_tool_metadata():

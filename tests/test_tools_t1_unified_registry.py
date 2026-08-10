@@ -80,31 +80,32 @@ def test_t1_every_unified_metadata_entry_has_stable_required_fields():
         }
 
 
-def test_t1_bindable_metadata_preserves_current_active_sandbox_baseline():
+def test_t1_bindable_metadata_excludes_removed_targets_after_t2():
     from src.tools.registry import get_bindable_tool_metadata
 
     by_name = {item.legacy_name: item for item in get_bindable_tool_metadata()}
 
-    # T1 metadata only: sandbox tools are still active until T2/T3.
-    assert by_name["safe_browse_url"].implementation_type == ImplementationType.MCP
-    assert by_name["capture_screenshot"].implementation_type == ImplementationType.MCP
-    assert by_name["run_code"].implementation_type == ImplementationType.MCP
-    assert by_name["github_merge"].implementation_type == ImplementationType.MCP
+    assert "search_web" in by_name
+    assert "email_send" in by_name
+    assert "safe_browse_url" not in by_name
+    assert "capture_screenshot" not in by_name
+    assert "run_code" not in by_name
+    assert "github_merge" not in by_name
 
 
-def test_t1_metadata_lookup_helpers_return_active_metadata_before_removed_target_metadata():
+def test_t1_metadata_lookup_helpers_return_removed_metadata_for_removed_targets_after_t2():
     from src.tools.registry import (
         get_tool_metadata_by_id,
         get_tool_metadata_by_legacy_name,
         get_unified_tool_metadata_by_id,
     )
 
-    active_run_code = get_tool_metadata_by_legacy_name("run_code")
+    run_code_metadata = get_tool_metadata_by_legacy_name("run_code")
     removed_run_code = get_tool_metadata_by_id("removed.code.run_code")
     by_id = get_unified_tool_metadata_by_id()
 
-    assert active_run_code is not None
-    assert active_run_code.implementation_type == ImplementationType.MCP
+    assert run_code_metadata is not None
+    assert run_code_metadata.implementation_type == ImplementationType.REMOVED
     assert removed_run_code is not None
     assert removed_run_code.implementation_type == ImplementationType.REMOVED
     assert by_id[removed_run_code.tool_id] == removed_run_code

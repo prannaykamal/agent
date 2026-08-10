@@ -17,28 +17,21 @@ def temp_db(tmp_path, monkeypatch):
 
 client = TestClient(app)
 
-def test_safe_browse_url_title_and_metadata(temp_db):
-    """Verifies safe_browse_url extracts title, URL, and clean markdown text."""
-    res_text = safe_browse_url.invoke({"url": "https://example.com"})
-    assert "Title:" in res_text
-    assert "URL: https://example.com" in res_text
-    assert "[Browser Sandbox" in res_text
-
-def test_capture_screenshot_tool(temp_db, tmp_path):
-    """Verifies capture_screenshot creates PNG screenshot image file on disk."""
-    out_png = str(tmp_path / "shot_test.png")
-    res = capture_screenshot.invoke({"url": "https://example.com", "save_path": out_png})
-    assert "Saved screenshot" in res
-    assert os.path.exists(out_png)
-    assert os.path.getsize(out_png) > 0
+def test_browser_sandbox_source_tools_remain_until_t3(temp_db):
+    """T2 keeps browser sandbox source symbols on disk for later T3 deletion."""
+    assert safe_browse_url.name == "safe_browse_url"
+    assert capture_screenshot.name == "capture_screenshot"
 
 def test_browser_rest_api_endpoints(temp_db, tmp_path):
     """Verifies REST API endpoints POST /api/browser/browse and POST /api/browser/screenshot."""
     resp_browse = client.post("/api/browser/browse", json={"url": "https://example.com"})
     assert resp_browse.status_code == 200
-    assert "Title:" in resp_browse.json()["result"]
+    assert resp_browse.json()["status"] == "blocked"
+    assert "removed or blocked" in resp_browse.json()["result"]
 
     out_png = str(tmp_path / "api_shot.png")
     resp_shot = client.post("/api/browser/screenshot", json={"url": "https://example.com", "save_path": out_png})
     assert resp_shot.status_code == 200
-    assert "Saved screenshot" in resp_shot.json()["result"]
+    assert resp_shot.json()["status"] == "blocked"
+    assert "removed or blocked" in resp_shot.json()["result"]
+    assert not os.path.exists(out_png)

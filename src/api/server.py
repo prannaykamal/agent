@@ -46,6 +46,7 @@ from src.mcp_gateway.calendar import (
 from src.config import SOUL_PATH, SKILL_PATH, MEMORY_PATH
 from src.memory.config import load_memory_config
 from src.memory.skill_promotion import ProceduralSkillApprovalRepository, process_procedural_skill_approval_decision
+from src.tools.removed_tools import get_removed_tool_blocked_message
 from src.memory.observability import (
     get_dead_letter_observability,
     get_jobs_observability,
@@ -586,15 +587,15 @@ class ScreenshotRequest(BaseModel):
 def api_browser_browse(req: BrowseRequest):
     if not req.url.strip():
         raise HTTPException(status_code=400, detail="URL cannot be empty.")
-    res = safe_browse_url.invoke({"url": req.url.strip()})
-    return {"status": "success", "url": req.url, "result": res}
+    res = get_removed_tool_blocked_message("safe_browse_url")
+    return {"status": "blocked", "url": req.url, "result": res}
 
 @app.post("/api/browser/screenshot")
 def api_browser_screenshot(req: ScreenshotRequest):
     if not req.url.strip():
         raise HTTPException(status_code=400, detail="URL cannot be empty.")
-    res = capture_screenshot.invoke({"url": req.url.strip(), "save_path": req.save_path or ""})
-    return {"status": "success", "url": req.url, "result": res}
+    res = get_removed_tool_blocked_message("capture_screenshot")
+    return {"status": "blocked", "url": req.url, "result": res}
 
 # --- GitHub Endpoints ---
 
@@ -616,19 +617,15 @@ class GitHubMergeRequest(BaseModel):
 def api_github_clone(req: GitHubCloneRequest):
     if not req.repo_url.strip():
         raise HTTPException(status_code=400, detail="repo_url cannot be empty.")
-    res = github_clone.invoke({"repo_url": req.repo_url.strip(), "target_dir": req.target_dir or ""})
-    return {"status": "success", "result": res}
+    res = get_removed_tool_blocked_message("github_clone")
+    return {"status": "blocked", "result": res}
 
 @app.post("/api/github/commit_and_push")
 def api_github_commit_and_push(req: GitHubCommitRequest):
     if not req.commit_message.strip():
         raise HTTPException(status_code=400, detail="commit_message cannot be empty.")
-    res = github_commit_and_push.invoke({
-        "commit_message": req.commit_message.strip(),
-        "branch": req.branch or "main",
-        "repo_dir": req.repo_dir or ""
-    })
-    return {"status": "success", "result": res}
+    res = get_removed_tool_blocked_message("github_commit_and_push")
+    return {"status": "blocked", "result": res}
 
 @app.post("/api/github/merge")
 def api_github_merge(req: GitHubMergeRequest):
@@ -639,16 +636,11 @@ def api_github_merge(req: GitHubMergeRequest):
         "target_branch": req.target_branch or "main",
         "repo_dir": req.repo_dir or ""
     }
-    app_req = create_approval_request(
-        session_id="rest_api_github",
-        tool_name="github_merge",
-        tool_args=args,
-        reason=f"Direct REST API call to merge branch '{req.source_branch}'"
-    )
+    res = get_removed_tool_blocked_message("github_merge")
     return {
-        "status": "APPROVAL_REQUIRED",
-        "approval_request": app_req,
-        "message": f"GitHub branch merge of '{req.source_branch}' into '{req.target_branch or 'main'}' is classified as High Risk and requires human authorization."
+        "status": "blocked",
+        "result": res,
+        "message": res
     }
 
 

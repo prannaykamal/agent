@@ -15,6 +15,7 @@ from src.mcp_gateway.sandboxes.code_sandbox import (
     run_code, github_clone, github_commit_and_push, github_merge
 )
 from src.mcp_gateway.sandboxes.browser_sandbox import safe_browse_url, capture_screenshot
+from src.tools.removed_tools import is_removed_tool_name
 from src.tools.registry_types import (
     AvailabilityStatus,
     ImplementationType,
@@ -76,14 +77,20 @@ from src.mcp_gateway.mcp_bridge import load_live_mcp_tools
 
 def get_all_mcp_tools() -> List[BaseTool]:
     """
-    Returns all registered MCP gateway tools for LangChain/LangGraph binding,
-    combining native tools with live MCP tools loaded from Stdio/SSE servers.
+    Returns currently active MCP gateway tools for LangChain/LangGraph binding.
+
+    T2 filters browser/code sandbox tools from active exposure. The sandbox
+    modules still exist on disk until T3 cleanup.
     """
     live_tools = load_live_mcp_tools()
-    return ALL_MCP_TOOLS + live_tools
+    active_static_tools = [tool for tool in ALL_MCP_TOOLS if not is_removed_tool_name(tool.name)]
+    active_live_tools = [tool for tool in live_tools if not is_removed_tool_name(tool.name)]
+    return active_static_tools + active_live_tools
 
 def get_mcp_tool_risk(tool_name: str) -> str:
-    """Returns the risk level ('Low', 'Medium', 'High') for a tool by name."""
+    """Returns the risk level for a tool by name, including T2 blocked tools."""
+    if is_removed_tool_name(tool_name):
+        return "Blocked"
     return TOOL_RISK_MAP.get(tool_name, "Low")
 
 def get_mcp_tool_catalog() -> List[Dict[str, Any]]:
@@ -140,9 +147,11 @@ _DESTRUCTIVE_TOOLS = {"calendar_delete_event", "github_merge", "run_code"}
 
 
 def get_mcp_gateway_tool_metadata() -> List[ToolMetadata]:
-    """Returns T1 transitional metadata for current MCP gateway/local adapter tools."""
+    """Returns transitional metadata for active MCP gateway/local adapter tools."""
     metadata: List[ToolMetadata] = []
     for tool in ALL_MCP_TOOLS:
+        if is_removed_tool_name(tool.name):
+            continue
         risk_class = get_mcp_tool_risk(tool.name)
         metadata.append(
             ToolMetadata(
@@ -164,7 +173,7 @@ def get_mcp_gateway_tool_metadata() -> List[ToolMetadata]:
                 input_schema=schema_from_langchain_tool(tool),
                 output_schema_hint="text",
                 observability_metadata={
-                    "migration_phase": "T1",
+                    "migration_phase": "T2",
                     "active_legacy_tool": True,
                     "legacy_local_adapter_backed": True,
                     "provider_managed_target": True,

@@ -9,26 +9,11 @@ from src.mcp_gateway.communication import whatsapp_read, whatsapp_send, telegram
 
 client = TestClient(app)
 
-def test_github_tools_return_structured_failures(tmp_path):
-    """P1 Item 1, 2, 3: Verifies GitHub tools return structured failure JSON with exit_code, stdout, stderr when commands fail."""
-    target_dir = tmp_path / "invalid_clone_target"
-
-    # Test clone with invalid repository URL
-    res_clone_str = github_clone.invoke({"repo_url": "https://invalid.github.com/nonexistent_repo_12345.git", "target_dir": str(target_dir)})
-    res_clone = json.loads(res_clone_str)
-    assert res_clone["status"] == "FAILED"
-    assert res_clone["exit_code"] != 0
-    assert "stderr" in res_clone
-    assert "stdout" in res_clone
-    assert "GitHub Error" in res_clone["message"]
-
-
-    # Test merge with invalid repo directory
-    res_merge_str = github_merge.invoke({"source_branch": "feature", "target_branch": "main", "repo_dir": "/nonexistent_dir_999"})
-    res_merge = json.loads(res_merge_str)
-    assert res_merge["status"] == "FAILED"
-    assert res_merge["exit_code"] != 0
-    assert "stderr" in res_merge
+def test_github_sandbox_source_tools_remain_until_t3_but_are_not_active(tmp_path):
+    """T2 keeps sandbox source symbols on disk for T3 deletion but blocks active exposure."""
+    assert github_clone.name == "github_clone"
+    assert github_commit_and_push.name == "github_commit_and_push"
+    assert github_merge.name == "github_merge"
 
 def test_calendar_local_storage_banner():
     """P1 Item 4, 5: Verifies calendar tools display local-only storage banners when credentials are missing."""

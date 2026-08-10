@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from src.db import get_connection
+from src.tools.removed_tools import is_removed_tool_name, get_removed_tool_blocked_message
 
 def generate_payload_preview(tool_name: str, tool_args: Dict[str, Any]) -> str:
     """Generates a rich, human-readable preview summary for approval requests."""
@@ -162,6 +163,42 @@ def process_approval_decision(
         raise ValueError(f"Approval request '{request_id}' not found.")
 
     existing_status = row["status"]
+    if norm_decision == "APPROVED" and is_removed_tool_name(row["tool_name"]):
+        blocked_message = get_removed_tool_blocked_message(row["tool_name"])
+        try:
+            cursor.execute(
+                """
+                UPDATE approval_requests
+                SET status = 'REJECTED', execution_status = 'BLOCKED'
+                WHERE id = ?
+                """,
+                (request_id,),
+            )
+        except Exception:
+            cursor.execute(
+                """
+                UPDATE approval_requests
+                SET status = 'REJECTED'
+                WHERE id = ?
+                """,
+                (request_id,),
+            )
+        conn.commit()
+        conn.close()
+        try:
+            from src.hitl.audit_logger import log_audit_event
+            log_audit_event(
+                session_id=row["session_id"],
+                tool_name=row["tool_name"],
+                risk_level="Blocked",
+                action="REMOVED_TOOL_APPROVAL_BLOCKED",
+                details=blocked_message,
+                db_path=db_path,
+            )
+        except Exception:
+            pass
+        raise ValueError(blocked_message)
+
     if existing_status in ("APPROVED", "REJECTED", "EXECUTED"):
         conn.close()
 
