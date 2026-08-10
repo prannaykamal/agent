@@ -51,12 +51,12 @@ ASTRA categorizes tool features into three distinct operational modes:
 
 | Feature / Tool Component | Execution Status | Provider Adapter / Engine | Required Environment Variables |
 | :--- | :--- | :--- | :--- |
-| **Email Reading** | REAL / LOCAL | `IMAPEmailAdapter` or SQLite | `IMAP_HOST`, `IMAP_USER`, `IMAP_PASS` |
-| **Email Transmit** | REAL / LOCAL | `SMTPEmailAdapter` (Gated HITL) | `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS` |
-| **Web Search** | REAL / LOCAL | Tavily API / DuckDuckGo | `TAVILY_API_KEY` (Optional: fallback to DDG) |
-| **Telegram Messaging**| REAL / LOCAL | Telegram Bot API / SQLite | `TELEGRAM_BOT_TOKEN` |
-| **WhatsApp Messaging**| REAL / LOCAL | Meta Graph API / SQLite | `WHATSAPP_API_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` |
-| **Google Calendar** | REAL / LOCAL | Google Calendar v3 API / SQLite | `GOOGLE_CALENDAR_TOKEN` |
+| **Email Reading** | MCP / UNAVAILABLE | Provider-managed Gmail MCP | `.agent/mcp_config.json` or app connector |
+| **Email Transmit** | MCP / UNAVAILABLE | Provider-managed Gmail MCP (Gated HITL) | `.agent/mcp_config.json` or app connector |
+| **Web Search** | MCP / UNAVAILABLE | Provider-managed Tavily or DuckDuckGo MCP | `.agent/mcp_config.json` or app connector |
+| **Telegram Messaging**| MCP / UNAVAILABLE | Provider-managed Telegram MCP | `.agent/mcp_config.json` or app connector |
+| **WhatsApp Messaging**| MCP / UNAVAILABLE | Provider-managed WhatsApp MCP | `.agent/mcp_config.json` or app connector |
+| **Google Calendar** | MCP / UNAVAILABLE | Provider-managed Google Calendar MCP | `.agent/mcp_config.json` or app connector |
 | **Task Management** | LOCAL-ONLY | SQLite `tasks` table | None |
 | **Sub-Agent Spawn** | REAL / LOCAL | LangChain Async Sub-Agent | None |
 | **System Backup** | REAL | Zip compressed archive | None |
@@ -207,38 +207,10 @@ GOOGLE_API_KEY=AIza...
 XAI_API_KEY=xai-...
 ```
 
-### 2. Email (SMTP / IMAP)
-```ini
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USER=user@gmail.com
-SMTP_PASS=app_password
+### 2. Provider-managed MCP tools
+Configure search, Google Calendar, Gmail, WhatsApp, and Telegram through `.agent/mcp_config.json` or provider-managed app connectors. The local assistant discovers tools through MCP `tools/list` and invokes provider actions only through MCP `tools/call`.
 
-IMAP_HOST=imap.gmail.com
-IMAP_PORT=993
-IMAP_USER=user@gmail.com
-IMAP_PASS=app_password
-```
-
-### 3. Web Search (Tavily & DuckDuckGo)
-```ini
-TAVILY_API_KEY=tvly-...
-```
-*(If `TAVILY_API_KEY` is omitted, search tools fall back automatically to free DuckDuckGo web search).*
-
-### 4. Telegram Bot & WhatsApp Cloud API
-```ini
-TELEGRAM_BOT_TOKEN=123456789:ABCdefGHI...
-TELEGRAM_TEST_CHAT_ID=987654321
-
-WHATSAPP_API_TOKEN=EAAG...
-WHATSAPP_PHONE_NUMBER_ID=10987654321
-```
-
-### 5. Google Calendar v3 API
-```ini
-GOOGLE_CALENDAR_TOKEN=ya29.a0A...
-```
+Direct local provider credentials for Tavily REST, DuckDuckGo libraries, Google Calendar REST, SMTP/IMAP, WhatsApp Graph, and Telegram Bot API are not consumed by the local assistant runtime.
 
 ---
 

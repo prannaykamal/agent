@@ -81,12 +81,12 @@ def test_t0_migration_baseline_personal_os_tools_are_currently_present():
     assert BASELINE_PERSONAL_OS_TOOLS <= tool_names
 
 
-def test_t0_migration_baseline_local_adapter_mcp_tools_are_currently_present():
+def test_t0_migration_baseline_provider_wrappers_not_active_without_mcp_after_t7():
     from src.mcp_gateway.registry import get_all_mcp_tools
 
     tool_names = {tool.name for tool in get_all_mcp_tools()}
 
-    assert BASELINE_LOCAL_ADAPTER_MCP_TOOLS <= tool_names
+    assert tool_names.isdisjoint(BASELINE_LOCAL_ADAPTER_MCP_TOOLS)
 
 
 def test_t0_migration_baseline_browser_sandbox_tools_no_longer_active_after_t2():
@@ -117,7 +117,7 @@ def test_t0_migration_baseline_api_tools_shape_and_groups_are_unchanged(temp_db)
     assert data["total_tools"] == len(data["personal_os_tools"]) + len(data["mcp_tools"])
 
 
-def test_t0_migration_baseline_api_tools_includes_current_groups_and_sandbox_targets(temp_db):
+def test_t0_migration_baseline_api_tools_includes_personal_os_and_filters_unavailable_mcp(temp_db):
     response = client.get("/api/tools")
     data = response.json()
 
@@ -125,7 +125,7 @@ def test_t0_migration_baseline_api_tools_includes_current_groups_and_sandbox_tar
     mcp_names = {tool["name"] for tool in data["mcp_tools"]}
 
     assert BASELINE_PERSONAL_OS_TOOLS <= personal_os_names
-    assert BASELINE_LOCAL_ADAPTER_MCP_TOOLS <= mcp_names
+    assert mcp_names.isdisjoint(BASELINE_LOCAL_ADAPTER_MCP_TOOLS)
 
     assert mcp_names.isdisjoint(BASELINE_BROWSER_SANDBOX_TOOLS_TO_REMOVE)
     assert mcp_names.isdisjoint(BASELINE_CODE_SANDBOX_TOOLS_TO_REMOVE)

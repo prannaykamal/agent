@@ -36,4 +36,4 @@ def test_t3_registry_import_succeeds_without_sandbox_modules():
     from src.mcp_gateway.registry import get_all_mcp_tools
 
     names = {tool.name for tool in get_all_mcp_tools()}
-    assert "search_web" in names
+    assert "search_web" not in names

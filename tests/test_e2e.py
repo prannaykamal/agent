@@ -74,9 +74,9 @@ def test_e2e_personal_os_and_mcp_tools(temp_db):
     pub_res = publish_event.invoke({"topic": "deploy.started", "payload": "v1.0.0"})
     assert "published to topic 'deploy.started'" in pub_res
 
-    # Web search MCP tool
+    # Provider-managed search MCP is unavailable unless configured.
     search_res = search_web.invoke({"query": "LangGraph tutorial"})
-    assert "Web Search Results" in search_res
+    assert "Unavailable" in search_res
 
 def test_e2e_hitl_approval_pause_and_resume(temp_db):
     db_path = temp_db["db"]

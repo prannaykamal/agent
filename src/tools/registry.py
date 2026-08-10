@@ -36,7 +36,13 @@ def get_bindable_tool_metadata() -> List[ToolMetadata]:
     binding only includes current supported tool implementations.
     """
     active = get_personal_os_tool_metadata() + get_mcp_gateway_tool_metadata()
-    return [item for item in active if not is_removed_tool_name(item.legacy_name)]
+    return [
+        item
+        for item in active
+        if not is_removed_tool_name(item.legacy_name)
+        and item.enabled
+        and item.availability_status.value == "available"
+    ]
 
 
 def get_unified_tool_metadata() -> List[ToolMetadata]:

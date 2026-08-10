@@ -24,16 +24,17 @@ def test_t1_personal_os_tools_have_local_metadata():
     assert by_name["schedule_job"].risk_class == RiskClass.HIGH
 
 
-def test_t1_mcp_gateway_tools_have_transitional_mcp_metadata():
+def test_t1_mcp_gateway_tools_have_provider_managed_mcp_metadata_after_t7():
     from src.tools.registry import get_mcp_gateway_tool_metadata
 
     metadata = get_mcp_gateway_tool_metadata()
     by_name = {item.legacy_name: item for item in metadata}
 
     assert by_name["search_web"].implementation_type == ImplementationType.MCP
-    assert by_name["search_web"].provider == "mcp_gateway"
-    assert by_name["search_web"].provider_managed is False
-    assert by_name["search_web"].observability_metadata["legacy_local_adapter_backed"] is True
+    assert by_name["search_web"].provider == "search"
+    assert by_name["search_web"].provider_managed is True
+    assert by_name["search_web"].enabled is False
+    assert by_name["search_web"].observability_metadata["legacy_local_adapter_backed"] is False
     assert by_name["email_send"].approval_policy == ApprovalPolicy.APPROVAL_REQUIRED
 
 
@@ -85,8 +86,8 @@ def test_t1_bindable_metadata_excludes_removed_targets_after_t2():
 
     by_name = {item.legacy_name: item for item in get_bindable_tool_metadata()}
 
-    assert "search_web" in by_name
-    assert "email_send" in by_name
+    assert "search_web" not in by_name
+    assert "email_send" not in by_name
     assert "safe_browse_url" not in by_name
     assert "capture_screenshot" not in by_name
     assert "run_code" not in by_name

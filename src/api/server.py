@@ -28,14 +28,14 @@ from src.hitl.approval_engine import create_approval_request, get_all_approval_r
 from src.harness.graph import agent_app, resume_graph_after_approval
 from src.harness.models import get_model_catalog
 from src.harness.llm_router import normalize_provider
-from src.mcp_gateway.search_adapters import perform_web_search
+from src.mcp_gateway.search import perform_web_search
 
 from src.mcp_gateway.communication import (
-    email_read, email_draft, email_send
+    email_read, email_search, email_draft, email_send
 )
 
 from src.mcp_gateway.calendar import (
-    calendar_create_event, calendar_update_event, calendar_delete_event
+    calendar_inspect_availability, calendar_create_event, calendar_update_event, calendar_delete_event
 )
 
 from src.config import SOUL_PATH, SKILL_PATH, MEMORY_PATH
@@ -484,15 +484,11 @@ class CalendarEventRequest(BaseModel):
 
 @app.get("/api/calendar/events")
 def api_get_calendar_events(start_date: Optional[str] = None, end_date: Optional[str] = None):
-    conn = get_connection()
-    cursor = conn.cursor()
-    if start_date and end_date:
-        cursor.execute("SELECT * FROM calendar_events WHERE start_time >= ? AND start_time <= ? ORDER BY start_time ASC", (start_date, end_date))
-    else:
-        cursor.execute("SELECT * FROM calendar_events ORDER BY start_time DESC")
-    rows = cursor.fetchall()
-    conn.close()
-    return {"events": [dict(r) for r in rows], "total_events": len(rows)}
+    result = calendar_inspect_availability.invoke({
+        "start_date": start_date or "",
+        "end_date": end_date or "",
+    })
+    return {"events": [], "total_events": 0, "result": result}
 
 @app.post("/api/calendar/events")
 def api_create_calendar_event(req: CalendarEventRequest):
@@ -551,18 +547,11 @@ class EmailMessageRequest(BaseModel):
 
 @app.get("/api/email/messages")
 def api_get_email_messages(limit: int = 10, query: Optional[str] = None):
-    conn = get_connection()
-    cursor = conn.cursor()
     if query:
-        cursor.execute(
-            "SELECT * FROM emails WHERE subject LIKE ? OR body LIKE ? OR sender LIKE ? ORDER BY created_at DESC LIMIT ?",
-            (f"%{query}%", f"%{query}%", f"%{query}%", limit)
-        )
+        result = email_read.invoke({"limit": limit}) if not query.strip() else email_search.invoke({"query": query})
     else:
-        cursor.execute("SELECT * FROM emails ORDER BY created_at DESC LIMIT ?", (limit,))
-    rows = cursor.fetchall()
-    conn.close()
-    return {"messages": [dict(r) for r in rows], "total_messages": len(rows)}
+        result = email_read.invoke({"limit": limit})
+    return {"messages": [], "total_messages": 0, "result": result}
 
 @app.post("/api/email/draft")
 def api_create_email_draft(req: EmailMessageRequest):
@@ -921,55 +910,36 @@ def api_system_restore(req: RestoreRequest):
 
 @app.get("/api/integrations/status")
 def api_get_integrations_status():
-    from src.mcp_gateway.calendar import is_google_calendar_credentials_configured
-    smtp_active = bool(os.getenv("SMTP_HOST"))
-    imap_active = bool(os.getenv("IMAP_HOST"))
-    tavily_active = bool(os.getenv("TAVILY_API_KEY"))
-    gcal_active = is_google_calendar_credentials_configured()
+    from src.tools.mcp_provider_registry import get_mcp_provider_statuses
+
+    providers = {item["provider_id"]: item for item in get_mcp_provider_statuses(include_config=False)}
+
+    def provider_entry(provider_id: str, name: str) -> Dict[str, Any]:
+        status = providers.get(provider_id, {})
+        available = status.get("availability_status") == "available"
+        return {
+            "name": name,
+            "status": "MCP_AVAILABLE" if available else "MCP_UNAVAILABLE",
+            "mode": "provider_managed_mcp",
+            "description": "Provider-managed MCP available" if available else "Provider-managed MCP not configured or unavailable",
+            "truthfulness": "PROVIDER_MANAGED_MCP" if available else "UNAVAILABLE",
+            "provider_id": provider_id,
+        }
 
     return {
         "integrations": {
-            "calendar": {
-                "name": "Calendar Subsystem",
-                "status": "GOOGLE_SYNC" if gcal_active else "LOCAL_ONLY",
-                "mode": "google_calendar" if gcal_active else "sqlite",
-                "description": "Google Calendar sync active" if gcal_active else "Local SQLite storage (google_calendar credentials not supplied)",
-                "truthfulness": "REAL_API" if gcal_active else "LOCAL_ONLY_STORAGE"
-            },
-            "email_smtp": {
-                "name": "Email Outbound (SMTP)",
-                "status": "AVAILABLE" if smtp_active else "LOCAL_ONLY",
-                "mode": "smtp" if smtp_active else "sqlite",
-                "description": "Live SMTP adapter active" if smtp_active else "Local SQLite email draft/sent storage",
-                "truthfulness": "REAL_API" if smtp_active else "LOCAL_ONLY_STORAGE"
-            },
-            "email_imap": {
-                "name": "Email Inbound (IMAP)",
-                "status": "AVAILABLE" if imap_active else "LOCAL_ONLY",
-                "mode": "imap" if imap_active else "sqlite",
-                "description": "Live IMAP adapter active" if imap_active else "Local SQLite email inbox storage",
-                "truthfulness": "REAL_API" if imap_active else "LOCAL_ONLY_STORAGE"
-            },
-            "whatsapp": {
-                "name": "WhatsApp Messaging",
-                "status": "LOCAL_ONLY",
-                "mode": "sqlite",
-                "description": "Local SQLite storage (WhatsApp Business API adapter pending)",
-                "truthfulness": "LOCAL_ONLY_STORAGE"
-            },
-            "telegram": {
-                "name": "Telegram Messaging",
-                "status": "LOCAL_ONLY",
-                "mode": "sqlite",
-                "description": "Local SQLite storage (Telegram Bot API adapter pending)",
-                "truthfulness": "LOCAL_ONLY_STORAGE"
-            },
+            "calendar": provider_entry("google_calendar", "Google Calendar MCP"),
+            "email_smtp": provider_entry("gmail", "Gmail MCP"),
+            "email_imap": provider_entry("gmail", "Gmail MCP"),
+            "whatsapp": provider_entry("whatsapp", "WhatsApp MCP"),
+            "telegram": provider_entry("telegram", "Telegram MCP"),
             "search": {
-                "name": "Web Search Adapter",
-                "status": "AVAILABLE",
-                "mode": "tavily" if tavily_active else "duckduckgo",
-                "description": "Tavily REST API" if tavily_active else "DuckDuckGo HTML Search",
-                "truthfulness": "REAL_LIVE_FETCH"
+                "name": "Search MCP",
+                "status": "MCP_AVAILABLE" if any(providers.get(pid, {}).get("availability_status") == "available" for pid in ("search_tavily", "search_duckduckgo")) else "MCP_UNAVAILABLE",
+                "mode": "provider_managed_mcp",
+                "description": "Provider-managed search MCP available" if any(providers.get(pid, {}).get("availability_status") == "available" for pid in ("search_tavily", "search_duckduckgo")) else "Provider-managed search MCP not configured or unavailable",
+                "truthfulness": "PROVIDER_MANAGED_MCP" if any(providers.get(pid, {}).get("availability_status") == "available" for pid in ("search_tavily", "search_duckduckgo")) else "UNAVAILABLE",
+                "provider_id": "search_tavily_or_search_duckduckgo",
             }
         }
     }

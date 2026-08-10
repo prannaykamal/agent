@@ -33,8 +33,6 @@ TOOL_RISK_MAP: Dict[str, str] = {
     "telegram_read": "Low",
     "calendar_inspect_availability": "Low",
     "calendar_propose_event": "Low",
-    "calendar_update_event": "Low",
-    "calendar_delete_event": "Low",
     "search_web": "Low",
 
     # High Risk (Irreversible side-effects / external messages / payments)
@@ -42,7 +40,42 @@ TOOL_RISK_MAP: Dict[str, str] = {
     "whatsapp_send": "High",
     "telegram_send": "High",
     "calendar_create_event": "High",
+    "calendar_update_event": "High",
+    "calendar_delete_event": "High",
 }
+
+
+_PROVIDER_FOR_TOOL: Dict[str, str] = {
+    "email_read": "gmail",
+    "email_search": "gmail",
+    "email_draft": "gmail",
+    "email_send": "gmail",
+    "whatsapp_read": "whatsapp",
+    "whatsapp_send": "whatsapp",
+    "telegram_read": "telegram",
+    "telegram_send": "telegram",
+    "calendar_inspect_availability": "google_calendar",
+    "calendar_propose_event": "google_calendar",
+    "calendar_create_event": "google_calendar",
+    "calendar_update_event": "google_calendar",
+    "calendar_delete_event": "google_calendar",
+    "search_web": "search",
+}
+
+
+def _available_provider_ids() -> set[str]:
+    from src.tools.mcp_provider_registry import get_mcp_provider_statuses
+
+    statuses = get_mcp_provider_statuses(include_config=False)
+    available = {item["provider_id"] for item in statuses if item.get("availability_status") == "available"}
+    if "search_tavily" in available or "search_duckduckgo" in available:
+        available.add("search")
+    return available
+
+
+def _is_tool_provider_available(tool_name: str) -> bool:
+    provider_id = _PROVIDER_FOR_TOOL.get(tool_name)
+    return bool(provider_id and provider_id in _available_provider_ids())
 
 ALL_MCP_TOOLS: List[BaseTool] = [
     # Communication
@@ -67,7 +100,7 @@ def get_all_mcp_tools() -> List[BaseTool]:
     T3 keeps removed local execution tools out of runtime exposure.
     """
     live_tools = load_live_mcp_tools()
-    active_static_tools = [tool for tool in ALL_MCP_TOOLS if not is_removed_tool_name(tool.name)]
+    active_static_tools = [tool for tool in ALL_MCP_TOOLS if not is_removed_tool_name(tool.name) and _is_tool_provider_available(tool.name)]
     active_live_tools = [tool for tool in live_tools if not is_removed_tool_name(tool.name)]
     return active_static_tools + active_live_tools
 
@@ -131,24 +164,24 @@ def get_mcp_gateway_tool_metadata() -> List[ToolMetadata]:
                 tool_id=f"mcp.gateway_legacy.{normalize_tool_id_part(tool.name)}",
                 legacy_name=tool.name,
                 display_name=tool.name.replace("_", " ").title(),
-                provider="mcp_gateway",
-                category=_MCP_GATEWAY_TOOL_CATEGORIES.get(tool.name, "mcp_gateway_legacy"),
+                provider=_PROVIDER_FOR_TOOL.get(tool.name, "mcp_gateway"),
+                category=_MCP_GATEWAY_TOOL_CATEGORIES.get(tool.name, "provider_managed_mcp"),
                 implementation_type=ImplementationType.MCP,
-                enabled=True,
-                availability_status=AvailabilityStatus.AVAILABLE,
+                enabled=_is_tool_provider_available(tool.name),
+                availability_status=AvailabilityStatus.AVAILABLE if _is_tool_provider_available(tool.name) else AvailabilityStatus.UNAVAILABLE,
                 risk_class=risk_class,
                 approval_policy=approval_policy_for_risk(risk_class),
                 read_write_capability=infer_read_write_capability(tool.name),
                 external_side_effect=tool.name in _EXTERNAL_SIDE_EFFECT_TOOLS,
                 destructive=tool.name in _DESTRUCTIVE_TOOLS,
                 scheduled_capable=False,
-                provider_managed=False,
+                provider_managed=True,
                 input_schema=schema_from_langchain_tool(tool),
                 output_schema_hint="text",
                 observability_metadata={
-                    "migration_phase": "T3",
-                    "active_legacy_tool": True,
-                    "legacy_local_adapter_backed": True,
+                    "migration_phase": "T7",
+                    "compatibility_wrapper": True,
+                    "legacy_local_adapter_backed": False,
                     "provider_managed_target": True,
                     "registry_source": "src.mcp_gateway.registry",
                 },

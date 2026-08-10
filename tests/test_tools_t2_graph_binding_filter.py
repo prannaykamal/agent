@@ -34,7 +34,6 @@ def test_t2_get_registered_tools_keeps_personal_os_and_non_removed_mcp_tools():
 
     assert "create_task" in names
     assert "schedule_job" in names
-    assert "search_web" in names
-    assert "email_read" in names
-    assert "calendar_inspect_availability" in names
-    assert tool_map["search_web"].name == "search_web"
+    assert "search_web" not in names
+    assert "email_read" not in names
+    assert "calendar_inspect_availability" not in names

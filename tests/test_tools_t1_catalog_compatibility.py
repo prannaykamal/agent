@@ -41,13 +41,13 @@ def test_t1_get_all_personal_os_tools_still_returns_current_tools():
     assert "heartbeat" in names
 
 
-def test_t1_get_all_mcp_tools_returns_current_gateway_tools_without_removed_sandboxes():
+def test_t1_get_all_mcp_tools_filters_removed_and_unavailable_tools_after_t7():
     from src.mcp_gateway.registry import get_all_mcp_tools
 
     names = {tool.name for tool in get_all_mcp_tools()}
 
-    assert "search_web" in names
-    assert "email_send" in names
+    assert "search_web" not in names
+    assert "email_send" not in names
     assert names.isdisjoint(REMOVED_SANDBOX_TOOLS)
 
 
@@ -59,7 +59,7 @@ def test_t1_get_registered_tools_still_returns_active_graph_bindable_tools():
 
     assert tool_map
     assert "create_task" in names
-    assert "search_web" in names
+    assert "search_web" not in names
     assert names.isdisjoint(REMOVED_SANDBOX_TOOLS)
 
 
@@ -103,13 +103,11 @@ def test_t1_removed_sandbox_api_routes_are_gone_after_t3():
     assert "/" + 'api' + "/" + 'github' + "/" + 'merge' not in route_paths
 
 
-def test_t1_local_provider_adapter_modules_are_not_replaced_yet():
-    import src.mcp_gateway.search_adapters as search_adapters
+def test_t1_local_provider_adapter_modules_replaced_by_t7_wrappers():
     import src.mcp_gateway.calendar as calendar
     import src.mcp_gateway.communication as communication
-    import src.mcp_gateway.email_adapters as email_adapters
+    import src.mcp_gateway.search as search
 
-    assert hasattr(search_adapters, "perform_web_search")
+    assert hasattr(search, "perform_web_search")
     assert hasattr(calendar, "calendar_create_event")
     assert hasattr(communication, "email_send")
-    assert hasattr(email_adapters, "SMTPEmailAdapter")

@@ -43,14 +43,21 @@ def setup_langsmith_tracing():
 setup_langsmith_tracing()
 
 def validate_integration_environment() -> dict:
-    """Validates presence and readiness of real integration provider environment variables."""
+    """Reports target provider readiness from provider-managed MCP status only."""
+    from src.tools.mcp_provider_registry import get_mcp_provider_statuses
+
+    statuses = {item["provider_id"]: item for item in get_mcp_provider_statuses(include_config=False)}
+
+    def available(provider_id: str) -> bool:
+        return statuses.get(provider_id, {}).get("availability_status") == "available"
+
     return {
-        "smtp": bool(os.getenv("SMTP_HOST")),
-        "imap": bool(os.getenv("IMAP_HOST")),
-        "tavily": bool(os.getenv("TAVILY_API_KEY")),
-        "telegram": bool(os.getenv("TELEGRAM_BOT_TOKEN")),
-        "whatsapp": bool(os.getenv("WHATSAPP_API_TOKEN") and os.getenv("WHATSAPP_PHONE_NUMBER_ID")),
-        "google_calendar": bool(os.getenv("GOOGLE_CALENDAR_CREDENTIALS") or os.getenv("GOOGLE_CALENDAR_CLIENT_SECRET"))
+        "smtp": available("gmail"),
+        "imap": available("gmail"),
+        "tavily": available("search_tavily"),
+        "telegram": available("telegram"),
+        "whatsapp": available("whatsapp"),
+        "google_calendar": available("google_calendar"),
     }
 
 

@@ -15,6 +15,7 @@ HIGH_RISK_TOOLS: Dict[str, str] = {
     "telegram_send": "External message: Sends outbound Telegram message",
     "delete_files": "Filesystem destruction: Deletes persistent files or directories",
     "calendar_create_event": "Calendar creation: Creates new calendar event",
+    "calendar_update_event": "Calendar update: Modifies an existing calendar event",
     "calendar_delete_event": "Calendar deletion: Deletes existing calendar event"
 }
 

@@ -51,8 +51,8 @@ def test_t2_api_tools_keeps_personal_os_and_non_removed_mcp_tools(temp_db):
 
     assert "create_task" in personal_names
     assert "schedule_job" in personal_names
-    assert "search_web" in mcp_names
-    assert "email_send" in mcp_names
+    assert "search_web" not in mcp_names
+    assert "email_send" not in mcp_names
 
 
 def test_t2_removed_target_metadata_remains_available_and_disabled():

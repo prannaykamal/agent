@@ -56,7 +56,7 @@ def test_t3_api_tools_active_catalog_excludes_removed_tools(temp_db):
     assert set(data) == {"total_tools", "personal_os_tools", "mcp_tools"}
     active_names = {item["name"] for item in data["personal_os_tools"] + data["mcp_tools"]}
     assert active_names.isdisjoint(REMOVED_TOOLS)
-    assert "search_web" in active_names
+    assert "search_web" not in active_names
     assert "create_task" in active_names
 
 

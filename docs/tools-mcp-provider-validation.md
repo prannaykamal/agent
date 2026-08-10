@@ -79,6 +79,23 @@ Discovery rules:
 
 T6 still requires manual validation for real providers because no real Tavily, DuckDuckGo, Google Calendar, WhatsApp, Telegram, or Gmail MCP server is configured in the current workspace.
 
+
+## Phase T7 Provider Adapter Replacement
+
+Phase T7 replaces local provider behavior for search, Google Calendar, Gmail, WhatsApp, and Telegram with provider-managed MCP invocation boundaries. Compatibility wrappers such as `search_web`, `calendar_create_event`, `email_send`, `whatsapp_send`, and `telegram_send` may remain, but they must invoke MCP `tools/call` only.
+
+Removed local provider behaviors:
+
+- Tavily REST and DuckDuckGo library fallback from the local search path.
+- Google Calendar REST/local SQLite CRUD as provider source of truth.
+- SMTP/IMAP Gmail behavior.
+- WhatsApp Graph REST/local message table source-of-truth behavior.
+- Telegram Bot REST/local message table source-of-truth behavior.
+
+Legacy tables (`calendar_events`, `emails`, `whatsapp_messages`, `telegram_messages`) are retained temporarily for compatibility/history, but T7 wrappers must not treat them as provider source of truth and must not write provider actions into them.
+
+If a target MCP provider or capability is unavailable, the local system returns a safe unavailable result. It must not silently fall back to the removed local provider implementation.
+
 ## Provider Checklist Template
 
 For each provider, validate:

@@ -107,15 +107,14 @@ def test_missing_secondary_credentials_do_not_break_chat(temp_startup, monkeypat
     assert "response" in response.json()
 
 
-def test_environment_validation_exposes_booleans_not_secrets(monkeypatch):
+def test_environment_validation_exposes_mcp_booleans_not_secrets(monkeypatch):
     from src.config import validate_integration_environment
 
-    monkeypatch.setenv("TAVILY_API_KEY", "secret-tavily-key")
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "secret-telegram-token")
+    monkeypatch.setenv("LEGACY_DIRECT_PROVIDER_SECRET", "hidden-value")
 
     result = validate_integration_environment()
 
-    assert result["tavily"] is True
-    assert result["telegram"] is True
+    assert result["tavily"] is False
+    assert result["telegram"] is False
+    assert "hidden-value" not in str(result)
     assert "secret" not in str(result).lower()
-    assert "token" not in str(result).lower()
