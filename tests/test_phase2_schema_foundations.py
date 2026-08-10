@@ -34,7 +34,7 @@ def test_empty_db_initialization_creates_phase2_tables(temp_db):
     conn = sqlite3.connect(temp_db)
     try:
         assert set(PHASE_X_MEMORY_TABLES).issubset(_table_names(conn))
-        assert check_db_version(temp_db) == 8
+        assert check_db_version(temp_db) >= 8
     finally:
         conn.close()
 
@@ -64,7 +64,7 @@ def test_existing_db_migrates_to_version_8(tmp_path):
 
     conn = sqlite3.connect(db_file)
     try:
-        assert check_db_version(db_file) == 8
+        assert check_db_version(db_file) >= 8
         assert set(PHASE_X_MEMORY_TABLES).issubset(_table_names(conn))
     finally:
         conn.close()

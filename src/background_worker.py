@@ -1,76 +1,56 @@
 import time
 import signal
-import sys
-import datetime
 from threading import Event
-from src.db import get_connection
+from src.personal_os.scheduler_worker import process_due_schedules_once, process_legacy_due_scheduled_jobs
+
 
 def process_due_scheduled_jobs(db_path=None) -> list:
     """
-    Polls scheduled_jobs table for pending jobs due for execution,
-    executes payload tasks, updates job status, and returns list of processed jobs.
+    Compatibility wrapper for the T5 durable scheduler.
+
+    Processes new tool_schedules first, then legacy scheduled_jobs rows that contain
+    parseable one-time timestamps. Cron expressions are no longer compared to
+    timestamps lexicographically.
     """
-    conn = get_connection(db_path)
-    cursor = conn.cursor()
-
-    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-    cursor.execute(
-        """
-        SELECT id, cron_or_timestamp, task_payload, status
-        FROM scheduled_jobs
-        WHERE status IN ('PENDING', 'ACTIVE') AND cron_or_timestamp <= ?
-        """,
-        (now_str,)
-    )
-
-    due_jobs = cursor.fetchall()
-
+    typed_results = process_due_schedules_once(db_path=db_path)
     processed = []
-    for job in due_jobs:
-        job_id = job["id"]
-        # Mark as COMPLETED
-        cursor.execute(
-            "UPDATE scheduled_jobs SET status = 'COMPLETED' WHERE id = ?",
-            (job_id,)
-        )
+    for item in typed_results:
         processed.append({
-            "id": job_id,
-            "cron_or_timestamp": job["cron_or_timestamp"],
-            "task_payload": job["task_payload"],
-            "status": "COMPLETED",
-            "executed_at": now_str
+            "id": item.get("schedule_id"),
+            "run_id": item.get("run_id"),
+            "status": "COMPLETED" if item.get("status") == "SUCCEEDED" else item.get("status"),
+            "target_tool_id": item.get("target_tool_id"),
+            "scheduled_for": item.get("scheduled_for"),
+            "message": item.get("message", ""),
         })
-
-    conn.commit()
-    conn.close()
+    processed.extend(process_legacy_due_scheduled_jobs(db_path=db_path))
     return processed
 
+
 def run_scheduled_worker_loop(interval_seconds: int = 5, stop_event: Event = None, db_path=None):
-    """
-    Runs a continuous background polling loop for scheduled jobs with graceful shutdown capability.
-    """
+    """Runs an explicit scheduler polling loop. It is not auto-started by app/chat startup."""
     if stop_event is None:
         stop_event = Event()
 
-    print(f"[Background Worker] Started polling loop (Interval: {interval_seconds}s)...")
+    print(f"[Scheduler Worker] Started explicit polling loop (Interval: {interval_seconds}s)...")
     while not stop_event.is_set():
         try:
             processed = process_due_scheduled_jobs(db_path=db_path)
             if processed:
-                print(f"[Background Worker] Executed {len(processed)} due scheduled jobs.")
+                print(f"[Scheduler Worker] Processed {len(processed)} due schedule run(s).")
         except Exception as ex:
-            print(f"[Background Worker Warning] Polling exception: {ex}")
+            print(f"[Scheduler Worker Warning] Polling exception: {ex}")
 
-        # Wait with graceful interrupt
         stop_event.wait(interval_seconds)
 
-    print("[Background Worker] Graceful shutdown completed.")
+    print("[Scheduler Worker] Graceful shutdown completed.")
+
 
 if __name__ == "__main__":
     shutdown_event = Event()
 
     def handle_signal(sig, frame):
-        print(f"\n[Background Worker] Signal {sig} received. Requesting graceful shutdown...")
+        print(f"\n[Scheduler Worker] Signal {sig} received. Requesting graceful shutdown...")
         shutdown_event.set()
 
     signal.signal(signal.SIGINT, handle_signal)

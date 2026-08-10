@@ -51,7 +51,8 @@ def run_db_migrations(db_path: Path):
         (5, "Add session-based query indexes and formal tool_calls / tool_results tracking tables"),
         (6, "Add audit_logs table for medium/high risk operation security tracking"),
         (7, "Add idempotency_key and execution_status columns to approval_requests table"),
-        (8, "Add Phase X memory architecture schema foundations")
+        (8, "Add Phase X memory architecture schema foundations"),
+        (9, "Add durable cron scheduler tables")
     ]
 
     for ver, desc in migrations:
@@ -117,6 +118,9 @@ def run_db_migrations(db_path: Path):
             elif ver == 8:
                 from src.memory.schema import create_phase_x_memory_schema
                 create_phase_x_memory_schema(conn)
+            elif ver == 9:
+                from src.personal_os.scheduler_store import create_scheduler_schema
+                create_scheduler_schema(conn)
 
             cursor.execute(
                 "INSERT INTO schema_migrations (version, description, applied_at) VALUES (?, ?, ?)",

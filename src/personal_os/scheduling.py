@@ -1,50 +1,43 @@
-import uuid
 from langchain_core.tools import tool
 from src.db import get_connection
 from src.personal_os.audit import log_personal_os_action
+from src.personal_os.scheduler_service import create_legacy_compatible_schedule
+from src.personal_os.scheduler_store import ToolScheduleRepository
+
 
 @tool
 def schedule_job(cron_or_timestamp: str, task_payload: str) -> str:
-    """Schedules a task payload to execute at a specified timestamp or cron expression."""
-    job_id = f"job_{uuid.uuid4().hex[:8]}"
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        INSERT INTO scheduled_jobs (id, cron_or_timestamp, task_payload, status, created_at)
-        VALUES (?, ?, ?, 'PENDING', datetime('now'))
-        """,
-        (job_id, cron_or_timestamp, task_payload)
-    )
-
-    conn.commit()
-    conn.close()
+    """Schedules a local assistant action using the durable T5 scheduler compatibility wrapper."""
+    result = create_legacy_compatible_schedule(cron_or_timestamp=cron_or_timestamp, task_payload=task_payload)
+    schedule = result.schedule
     log_personal_os_action(
         tool_name="schedule_job",
         action="PERSONAL_OS_SCHEDULE_CREATED",
-        payload={"cron_or_timestamp": cron_or_timestamp, "task_payload": task_payload},
-        target_resource=job_id,
+        payload={"cron_or_timestamp": cron_or_timestamp, "task_payload": task_payload, "schedule_id": schedule.id},
+        target_resource=schedule.id,
     )
-    return f"[Personal OS Scheduled Job] Job '{job_id}' registered for schedule '{cron_or_timestamp}'."
+    return f"[Personal OS Scheduled Job] Job '{schedule.id}' registered for schedule '{cron_or_timestamp}'."
+
 
 @tool
 def cancel_job(job_id: str) -> str:
-    """Cancels a scheduled background job."""
+    """Cancels a scheduled local assistant action."""
+    repo = ToolScheduleRepository()
+    cancelled = False
+    try:
+        repo.cancel_schedule(job_id)
+        cancelled = True
+    except KeyError:
+        pass
+
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute(
-        """
-        UPDATE scheduled_jobs
-        SET status = 'CANCELLED'
-        WHERE id = ?
-        """,
-        (job_id,)
-    )
+    cursor.execute("UPDATE scheduled_jobs SET status = 'CANCELLED' WHERE id = ?", (job_id,))
     affected = cursor.rowcount
     conn.commit()
     conn.close()
 
-    if affected == 0:
+    if not cancelled and affected == 0:
         return f"[Personal OS Scheduler Error] Job '{job_id}' not found."
     log_personal_os_action(
         tool_name="cancel_job",
@@ -53,6 +46,7 @@ def cancel_job(job_id: str) -> str:
         target_resource=job_id,
     )
     return f"[Personal OS Scheduler] Job '{job_id}' successfully cancelled."
+
 
 @tool
 def heartbeat() -> str:

@@ -100,6 +100,30 @@ class ScheduledJobRequest(BaseModel):
     cron_or_timestamp: str
     task_payload: str
 
+
+class CronScheduleRequest(BaseModel):
+    schedule_type: str
+    target_tool_id: str = "heartbeat"
+    target_payload: Dict[str, Any] = {}
+    cron_expression: Optional[str] = None
+    run_at: Optional[str] = None
+    timezone: Optional[str] = "UTC"
+    missed_run_policy: Optional[str] = None
+    max_catchup_runs: int = 1
+    created_by: Optional[str] = "api"
+
+
+class CronSchedulePatchRequest(BaseModel):
+    schedule_type: Optional[str] = None
+    target_tool_id: Optional[str] = None
+    target_payload: Optional[Dict[str, Any]] = None
+    cron_expression: Optional[str] = None
+    run_at: Optional[str] = None
+    timezone: Optional[str] = None
+    missed_run_policy: Optional[str] = None
+    max_catchup_runs: Optional[int] = None
+    status: Optional[str] = None
+
 class RetrievalTraceRequest(BaseModel):
     query: str
     session_id: Optional[str] = None
@@ -117,7 +141,8 @@ ALLOWED_DATA_TABLES = [
     "memory_jobs", "dead_letter_jobs", "worker_heartbeats", "summary_blocks",
     "structured_episodes", "pending_fact_candidates", "semantic_embeddings",
     "semantic_dedup_events", "consolidation_runs", "skill_candidates",
-    "skill_versions", "skill_usage_stats", "procedural_skill_approvals"
+    "skill_versions", "skill_usage_stats", "procedural_skill_approvals",
+    "tool_schedules", "tool_schedule_runs"
 ]
 
 
@@ -639,6 +664,88 @@ def api_get_tasks():
 
 # --- Scheduled Jobs Endpoints ---
 
+@app.get("/api/tools/cron/schedules")
+def api_list_cron_schedules(status: Optional[str] = None, limit: int = 100):
+    from src.personal_os.scheduler_service import list_schedules
+
+    return {"schedules": list_schedules(status=status, limit=limit)}
+
+
+@app.post("/api/tools/cron/schedules")
+def api_create_cron_schedule(req: CronScheduleRequest):
+    from src.personal_os.scheduler_service import create_tool_schedule
+
+    try:
+        result = create_tool_schedule(
+            schedule_type=req.schedule_type,
+            cron_expression=req.cron_expression,
+            run_at=req.run_at,
+            timezone=req.timezone or "UTC",
+            target_tool_id=req.target_tool_id,
+            target_payload=req.target_payload or {},
+            missed_run_policy=req.missed_run_policy,
+            max_catchup_runs=req.max_catchup_runs,
+            created_by=req.created_by or "api",
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"status": "success", **result.to_dict()}
+
+
+@app.get("/api/tools/cron/schedules/{schedule_id}")
+def api_get_cron_schedule(schedule_id: str):
+    from src.personal_os.scheduler_store import ToolScheduleRepository
+
+    try:
+        schedule = ToolScheduleRepository().get_schedule(schedule_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Schedule not found") from exc
+    return {"schedule": schedule.to_dict()}
+
+
+@app.patch("/api/tools/cron/schedules/{schedule_id}")
+def api_update_cron_schedule(schedule_id: str, req: CronSchedulePatchRequest):
+    from src.personal_os.scheduler_policy import approval_policy_for_target
+    from src.personal_os.scheduler_store import ToolScheduleRepository
+
+    repo = ToolScheduleRepository()
+    try:
+        current = repo.get_schedule(schedule_id)
+        updates = {k: v for k, v in req.model_dump().items() if v is not None}
+        target = updates.get("target_tool_id", current.target_tool_id)
+        new_policy = approval_policy_for_target(target)
+        if current.approval_policy != "approval_required" and new_policy == "approval_required":
+            raise HTTPException(status_code=403, detail="Schedule update increases risk and requires approval; denied in T5 compatibility API.")
+        if "target_tool_id" in updates:
+            updates["approval_policy"] = new_policy
+        schedule = repo.update_schedule(schedule_id, updates)
+    except HTTPException:
+        raise
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Schedule not found") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"status": "success", "schedule": schedule.to_dict()}
+
+
+@app.delete("/api/tools/cron/schedules/{schedule_id}")
+def api_cancel_cron_schedule(schedule_id: str):
+    from src.personal_os.scheduler_store import ToolScheduleRepository
+
+    try:
+        schedule = ToolScheduleRepository().cancel_schedule(schedule_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Schedule not found") from exc
+    return {"status": "success", "schedule": schedule.to_dict()}
+
+
+@app.get("/api/tools/cron/runs")
+def api_list_cron_runs(schedule_id: Optional[str] = None, status: Optional[str] = None, limit: int = 100):
+    from src.personal_os.scheduler_service import list_runs
+
+    return {"runs": list_runs(schedule_id=schedule_id, status=status, limit=limit)}
+
+
 @app.get("/api/scheduled")
 def api_get_scheduled():
     conn = get_connection()
@@ -648,6 +755,7 @@ def api_get_scheduled():
     conn.close()
     return {"scheduled_jobs": [dict(r) for r in rows]}
 
+
 @app.post("/api/scheduled")
 def api_create_scheduled(req: ScheduledJobRequest):
     res = schedule_job.invoke({
@@ -655,6 +763,7 @@ def api_create_scheduled(req: ScheduledJobRequest):
         "task_payload": req.task_payload
     })
     return {"status": "success", "message": res}
+
 
 @app.delete("/api/scheduled/{job_id}")
 def api_delete_scheduled(job_id: str):

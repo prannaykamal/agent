@@ -287,6 +287,14 @@ def _create_tables(conn: sqlite3.Connection, db_path: Optional[Path] = None) -> 
         );
     """)
 
+
+    # 22. Durable Tool Scheduler Tables
+    try:
+        from src.personal_os.scheduler_store import create_scheduler_schema
+        create_scheduler_schema(conn)
+    except Exception:
+        pass
+
     # Performance Indexes for Session-based queries
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_raw_turns_session ON raw_turns(session_id);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_loop_events_session_step ON loop_events(session_id, step_index);")
