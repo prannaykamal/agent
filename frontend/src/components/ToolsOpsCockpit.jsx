@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { api } from '../api/client.js';
 
 function Badge({ value }) {
   const text = String(value || 'unknown');
@@ -37,32 +38,23 @@ export default function ToolsOpsCockpit() {
     setError(null);
     try {
       const [
-        overviewRes,
-        providersRes,
-        personalStatusRes,
-        personalActionsRes,
-        personalAuditRes,
-        schedulesRes,
-        runsRes
+        overviewData,
+        providersData,
+        personalStatusData,
+        personalActionsData,
+        personalAuditData,
+        schedulesData,
+        runsData
       ] = await Promise.all([
-        fetch('/api/tools/observability/overview'),
-        fetch('/api/tools/mcp/providers'),
-        fetch('/api/tools/personal-os/status'),
-        fetch('/api/tools/personal-os/actions'),
-        fetch('/api/tools/personal-os/audit'),
-        fetch('/api/tools/cron/schedules'),
-        fetch('/api/tools/cron/runs?limit=20')
+        api.get('/api/tools/observability/overview'),
+        api.get('/api/tools/mcp/providers'),
+        api.get('/api/tools/personal-os/status'),
+        api.get('/api/tools/personal-os/actions'),
+        api.get('/api/tools/personal-os/audit'),
+        api.get('/api/tools/cron/schedules'),
+        api.get('/api/tools/cron/runs?limit=20')
       ]);
-      for (const res of [overviewRes, providersRes, personalStatusRes, personalActionsRes, personalAuditRes, schedulesRes, runsRes]) {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      }
-      const overviewData = await overviewRes.json();
-      const providersData = await providersRes.json();
-      const personalStatusData = await personalStatusRes.json();
-      const personalActionsData = await personalActionsRes.json();
-      const personalAuditData = await personalAuditRes.json();
-      const schedulesData = await schedulesRes.json();
-      const runsData = await runsRes.json();
+
       setOverview(overviewData);
       setProviders(providersData.providers || []);
       setPersonalStatus(personalStatusData);
