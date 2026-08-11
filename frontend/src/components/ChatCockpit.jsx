@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { api } from '../api/client.js';
 
 export default function ChatCockpit({ activeSessionId, onNewSession, onSessionChanged }) {
   const [messages, setMessages] = useState([]);
@@ -19,11 +20,8 @@ export default function ChatCockpit({ activeSessionId, onNewSession, onSessionCh
 
   const loadSessions = async () => {
     try {
-      const res = await fetch("/api/sessions");
-      if (res.ok) {
-        const data = await res.json();
-        setSessions(data.sessions || []);
-      }
+      const data = await api.get("/api/sessions");
+      setSessions(data.sessions || []);
     } catch (e) {
       console.error("Failed to load sessions:", e);
     }
@@ -31,11 +29,8 @@ export default function ChatCockpit({ activeSessionId, onNewSession, onSessionCh
 
   const loadModels = async () => {
     try {
-      const res = await fetch("/api/models");
-      if (res.ok) {
-        const data = await res.json();
-        setModelCatalog(data.catalog || {});
-      }
+      const data = await api.get("/api/models");
+      setModelCatalog(data.catalog || {});
     } catch (e) {
       console.error("Failed to load models:", e);
     }
@@ -45,9 +40,7 @@ export default function ChatCockpit({ activeSessionId, onNewSession, onSessionCh
     setHistoryLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/history/${sessId}`);
-      if (!res.ok) throw new Error(`HTTP error ${res.status}`);
-      const data = await res.json();
+      const data = await api.get(`/api/history/${sessId}`);
       const loaded = (data.turns || []).map(t => ({
         id: t.id,
         sender: t.sender,
@@ -57,7 +50,7 @@ export default function ChatCockpit({ activeSessionId, onNewSession, onSessionCh
       setMessages(loaded);
     } catch (e) {
       console.error(e);
-      setError("Failed to load conversation history.");
+      setError(e.message || "Failed to load conversation history.");
     } finally {
       setHistoryLoading(false);
     }
@@ -85,26 +78,18 @@ export default function ChatCockpit({ activeSessionId, onNewSession, onSessionCh
     setError(null);
 
     try {
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: userText,
-          session_id: currentSession,
-          provider: provider,
-          model_name: modelName,
-          secondary_provider: secondaryProvider,
-          secondary_model_name: secondaryModelName
-        })
+      const data = await api.post("/api/chat", {
+        message: userText,
+        session_id: currentSession,
+        provider: provider,
+        model_name: modelName,
+        secondary_provider: secondaryProvider,
+        secondary_model_name: secondaryModelName
       });
-
-      if (!res.ok) throw new Error(`HTTP error ${res.status}`);
-      const data = await res.json();
 
       const inlineToolEvents = (data.loop_trace || []).filter(e => e.step_type === "TOOL_REQUESTED" || e.step_type === "TOOL_EXECUTED");
 
-      setMessages(prev => [
-        ...prev,
+      const newMessages = [
         ...inlineToolEvents.map(e => {
           const isFailed = e.tool_result && (e.tool_result.includes("FAILED") || e.tool_result.includes("Error") || e.tool_result.includes("blocked") || e.tool_result.includes("failed"));
           let toolText = `⚙️ Tool Requested: ${e.tool_name}`;
@@ -116,10 +101,28 @@ export default function ChatCockpit({ activeSessionId, onNewSession, onSessionCh
             text: toolText,
             isFailed: isFailed
           };
-        }),
-        { sender: "assistant", text: data.response || "[No reply content]" }
+        })
+      ];
 
-      ]);
+      if (data.response) {
+        newMessages.push({
+          sender: "assistant",
+          text: data.response,
+          retrievalTriggered: data.retrieval_triggered,
+          retrievedMemoriesCount: (data.retrieved_memories || []).length
+        });
+      }
+
+      if (data.pending_approval_id || data.approval_status === "PENDING" || data.approval_status === "APPROVAL_REQUIRED") {
+        newMessages.push({
+          sender: "system_approval_pending",
+          text: `🛡️ HITL Approval Pending: Execution paused waiting for human decision.`,
+          pendingApprovalId: data.pending_approval_id,
+          approvalStatus: data.approval_status || "PENDING"
+        });
+      }
+
+      setMessages(prev => [...prev, ...newMessages]);
 
       if (data.session_id && data.session_id !== currentSession) {
         setCurrentSession(data.session_id);
@@ -349,23 +352,68 @@ export default function ChatCockpit({ activeSessionId, onNewSession, onSessionCh
               💬 Send a message to begin conversation with 24x7 Personal AI Assistant.
             </div>
           ) : (
-            messages.map((m, idx) => (
-              <div
-                key={idx}
-                style={{
-                  alignSelf: m.sender === "user" ? "flex-end" : m.sender === "system_tool" ? "center" : "flex-start",
-                  maxWidth: m.sender === "system_tool" ? "90%" : "75%",
-                  padding: m.sender === "system_tool" ? "4px 12px" : "12px 16px",
-                  borderRadius: "12px",
-                  fontSize: m.sender === "system_tool" ? "12px" : "14px",
-                  background: m.sender === "user" ? "var(--primary-glow)" : m.sender === "system_tool" ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.06)",
-                  border: m.sender === "system_tool" ? "1px dashed var(--border-glass)" : "1px solid var(--border-glass)",
-                  color: m.sender === "system_tool" ? "var(--text-secondary)" : "var(--text-primary)"
-                }}
-              >
-                {m.text}
-              </div>
-            ))
+            messages.map((m, idx) => {
+              if (m.sender === "system_approval_pending") {
+                return (
+                  <div
+                    key={idx}
+                    style={{
+                      alignSelf: "center",
+                      width: "90%",
+                      padding: "14px 18px",
+                      borderRadius: "12px",
+                      background: "rgba(243, 156, 18, 0.12)",
+                      border: "1px solid rgba(243, 156, 18, 0.4)",
+                      color: "#f39c12",
+                      fontSize: "14px",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "8px",
+                      boxShadow: "0 4px 12px rgba(243, 156, 18, 0.1)"
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <strong style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                        🛡️ Human Approval Pending
+                      </strong>
+                      <span style={{ fontSize: "11px", background: "rgba(243, 156, 18, 0.25)", padding: "2px 8px", borderRadius: "4px", fontWeight: "600" }}>
+                        STATUS: {m.approvalStatus || "PENDING"}
+                      </span>
+                    </div>
+                    <div>{m.text}</div>
+                    {m.pendingApprovalId && (
+                      <div style={{ fontSize: "12px", color: "var(--text-secondary)", display: "flex", gap: "8px", alignItems: "center" }}>
+                        <span>Request ID: <code>{m.pendingApprovalId}</code></span>
+                        <span>• Go to <strong>🛡️ Approvals</strong> tab to decide.</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              }
+
+              return (
+                <div
+                  key={idx}
+                  style={{
+                    alignSelf: m.sender === "user" ? "flex-end" : m.sender === "system_tool" ? "center" : "flex-start",
+                    maxWidth: m.sender === "system_tool" ? "90%" : "75%",
+                    padding: m.sender === "system_tool" ? "4px 12px" : "12px 16px",
+                    borderRadius: "12px",
+                    fontSize: m.sender === "system_tool" ? "12px" : "14px",
+                    background: m.sender === "user" ? "var(--primary-glow)" : m.sender === "system_tool" ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.06)",
+                    border: m.sender === "system_tool" ? "1px dashed var(--border-glass)" : "1px solid var(--border-glass)",
+                    color: m.sender === "system_tool" ? "var(--text-secondary)" : "var(--text-primary)"
+                  }}
+                >
+                  {m.text}
+                  {m.sender === "assistant" && m.retrievalTriggered && (
+                    <div style={{ marginTop: "6px", fontSize: "11px", color: "#4ecdc4", display: "flex", alignItems: "center", gap: "4px" }}>
+                      <span>🧠 Memory Retrieved ({m.retrievedMemoriesCount || 0} facts)</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })
           )}
 
           {loading && (
