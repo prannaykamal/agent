@@ -39,9 +39,9 @@ def test_real_hitl_high_risk_tool_approval_resumption(temp_db):
     """2. HITL test using actual high-risk tool call pause, decision API, and resumption."""
     req = create_approval_request(
         session_id="sess_hitl_behavior",
-        tool_name="bank_transfer",
-        tool_args={"amount": 1000, "recipient": "supplier_account"},
-        reason="High risk financial transaction",
+        tool_name="email_send",
+        tool_args={"to": "ops@example.com", "subject": "Behavior test", "body": "Approval test"},
+        reason="High risk external email send",
         checkpoint_id="chk_behavior_1"
     )
     req_id = req["request_id"]

@@ -1,4 +1,4 @@
-from src.tools.policy import ToolCallerSource, ToolPolicyDecisionType, evaluate_tool_policy
+﻿from src.tools.policy import ToolCallerSource, ToolPolicyDecisionType, evaluate_tool_policy
 from src.tools.registry_types import ApprovalPolicy, AvailabilityStatus, ImplementationType, ReadWriteCapability, RiskClass, ToolMetadata
 from src.hitl.classifier import classify_tool_risk
 
@@ -51,7 +51,9 @@ def test_t8_personal_os_read_direct_and_write_policy_known():
     assert create_task.risk_class == RiskClass.MEDIUM
 
 
-def test_t8_removed_and_legacy_high_risk_classification_delegate_to_policy():
+def test_t8_removed_demo_tools_and_real_high_risk_classification_delegate_to_policy():
     assert classify_tool_risk("run_code")[0] == "Blocked"
-    assert classify_tool_risk("delete_database")[0] == "High"
+    assert classify_tool_risk("delete_database")[0] == "Blocked"
+    assert classify_tool_risk("bank_transfer")[0] == "Blocked"
     assert classify_tool_risk("email_send")[0] == "High"
+

@@ -1,11 +1,11 @@
-## 🚀 ASTRA (Autonomous System for Tasks, Reasoning & Assistance)
+﻿## ðŸš€ ASTRA (Autonomous System for Tasks, Reasoning & Assistance)
 
 An autonomous, multi-provider AI Assistant and Agent Cockpit built with **LangGraph**, **LangChain**, **FastAPI**, **React**, and **SQLite FTS5**.
 
 
 ---
 
-## 🌟 Key Features
+## ðŸŒŸ Key Features
 
 - **Multi-Provider LLM Integration**: Dynamically switch between **OpenAI** (`gpt-4o`, `gpt-4o-mini`), **Anthropic** (`claude-3-5-sonnet`, `claude-3-5-haiku`), **Google Gemini** (`gemini-1.5-pro`, `gemini-1.5-flash`), and **xAI Grok** (`grok-2`).
 - **Tiered LLM Architecture**: Primary LLM for planning & tool execution + Secondary cheaper LLM for background summaries, fact extraction, and memory consolidation.
@@ -14,13 +14,13 @@ An autonomous, multi-provider AI Assistant and Agent Cockpit built with **LangGr
   - **Semantic Memory**: FTS5 Top-K keyword search & auto-synced `.agent/MEMORY.md`.
   - **Episodic Memory**: FTS5 session history & Secondary LLM structured JSON summaries.
   - **Procedural Memory**: Interactive skills manager & auto-synced `.agent/SKILL.md`.
-- **Human-In-The-Loop (HITL) Tool Safety**: Deterministic risk classifier & approval engine for high-risk tool operations (`bank_transfer`, `delete_database`, `production_deploy`, `calendar_create_event`).
+- **Human-In-The-Loop (HITL) Tool Safety**: Centralized policy and approval engine for high-risk real tool operations such as provider-managed sends, calendar writes, scheduler-triggered writes, and sensitive Personal OS actions.
 - **Native Personal OS Tools & MCP Gateway**: 22 native Personal OS system tools + Live MCP Stdio/SSE protocol transport adapters.
 - **Glassmorphism Web Cockpit**: Interactive React + Vite control panel with dark mode visuals and live telemetry tabs (Overview, Loop Timeline, Data Inspector, Memory, Tools, Scheduled Jobs, Tasks).
 
 ---
 
-## 🚀 Quickstart Guide
+## ðŸš€ Quickstart Guide
 
 ### 1. Prerequisites
 - Python **3.10+**
@@ -57,7 +57,7 @@ cd ..
 
 ---
 
-## 🏃 Run Everything
+## ðŸƒ Run Everything
 
 Launch system components using the commands below:
 
@@ -71,15 +71,15 @@ Launch system components using the commands below:
 
 ---
 
-## 📚 Technical Documentation & Architecture
+## ðŸ“š Technical Documentation & Architecture
 
 For complete system architecture diagrams, 21-table database schema specifications, Human-In-The-Loop (HITL) execution traces, backup/restore lifecycle details, background worker polling loop behavior, and provider setup guides, refer to:
 
-👉 **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**
+ðŸ‘‰ **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**
 
 ---
 
-## 🧪 Running Automated Tests
+## ðŸ§ª Running Automated Tests
 
 Run the complete verified test suite (**181 tests passed/skipped, 100% success rate** covering multi-provider models, REST API endpoints, memory systems, Personal OS tools, MCP gateway, HITL approvals, database migrations, background worker, system backup/restore, provider capability matrix, product polish, and documentation):
 
@@ -109,3 +109,4 @@ python -m pytest tests/
 - **[Cron Jobs](docs/tools-cron-jobs.md)**: durable local scheduler model, one-time and recurring schedules, timezone handling, missed-run policy, and run attempts.
 - **[Personal OS](docs/tools-personal-os.md)**: bounded local responsibilities, non-responsibilities, memory boundaries, audit, idempotency, and deprecated synthetic tools.
 - **[MCP Provider Validation](docs/tools-mcp-provider-validation.md)**: manual checklist for Tavily/DuckDuckGo, Google Calendar, Gmail, WhatsApp, and Telegram MCP providers. Mocked tests do not prove real provider availability.
+

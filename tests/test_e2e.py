@@ -1,6 +1,6 @@
-import pytest
+﻿import pytest
 from pathlib import Path
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, AIMessage
 
 from src.db import init_db
 from src.memory.semantic import add_semantic_fact, sync_memory_md
@@ -81,31 +81,34 @@ def test_e2e_personal_os_and_mcp_tools(temp_db):
 def test_e2e_hitl_approval_pause_and_resume(temp_db):
     db_path = temp_db["db"]
 
-    # 1. User turn requesting high-risk operation
-    input_state = {
-        "messages": [HumanMessage(content="Please do a bank_transfer of $1000 to vendor")],
+    from src.harness.graph import node_hitl_check
+
+    state = {
+        "messages": [
+            HumanMessage(content="Please delegate this safely"),
+            AIMessage(
+                content="I need approval to spawn a sub-agent.",
+                tool_calls=[{
+                    "name": "spawn_agent",
+                    "args": {"role": "Researcher", "instructions": "Summarize release risks"},
+                    "id": "call_spawn_e2e",
+                }],
+            ),
+        ],
         "session_id": "e2e_hitl_sess",
-        "summary": "",
-        "token_count": 0,
-        "retrieval_triggered": False,
-        "retrieved_memories": [],
-        "pending_approval_id": None,
-        "approval_status": None
+        "loop_events": [],
     }
 
-    result = agent_app.invoke(input_state)
-
-    # 2. Verify graph interrupted and paused
+    result = node_hitl_check(state)
     assert result["approval_status"] == "PENDING"
     req_id = result["pending_approval_id"]
     assert req_id is not None
 
-    # 3. Check pending approval request in DB
     pending_list = get_pending_approvals("e2e_hitl_sess", db_path=db_path)
     assert len(pending_list) == 1
-    assert pending_list[0]["tool_name"] == "bank_transfer"
+    assert pending_list[0]["tool_name"] == "spawn_agent"
 
-    # 4. Process approval decision (APPROVED)
     resume_res = resume_graph_after_approval(req_id, "APPROVED")
     assert resume_res["status"] == "APPROVED"
     assert "Approval GRANTED" in resume_res["message"]
+

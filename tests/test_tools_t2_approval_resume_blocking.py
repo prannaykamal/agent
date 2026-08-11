@@ -1,4 +1,4 @@
-import pytest
+﻿import pytest
 from src.db import init_db
 from src.hitl.approval_engine import create_approval_request, get_approval_request
 from src.harness.graph import resume_graph_after_approval
@@ -55,9 +55,9 @@ def test_t2_approval_resume_rejection_for_removed_tool_remains_safe(temp_db):
 def test_t2_existing_non_removed_approval_flow_remains_compatible(temp_db):
     req = create_approval_request(
         "t2-approval-ok",
-        "delete_database",
-        {"target_db": "staging"},
-        "Purge staging DB",
+        "spawn_agent",
+        {"role": "Reviewer", "instructions": "Review staging plan"},
+        "Delegate staging review",
         "chk_allowed",
         db_path=temp_db,
     )
@@ -66,3 +66,6 @@ def test_t2_existing_non_removed_approval_flow_remains_compatible(temp_db):
 
     assert result["status"] == "APPROVED"
     assert "Approval GRANTED" in result["message"]
+
+
+

@@ -1,4 +1,4 @@
-﻿# Phase X Memory Architecture Implementation Roadmap
+# Phase X Memory Architecture Implementation Roadmap
 
 This roadmap is the finalized migration plan for moving ASTRA from the current memory scaffold to the approved Dual-LLM Memory Architecture described in `verify&implement.md`.
 
@@ -1565,7 +1565,7 @@ Each existing non-generated module is classified exactly once.
 | `src/hitl/classifier.py` | KEEP | HITL risk classification remains valid. |
 | `src/hitl/audit_logger.py` | KEEP | Audit logging remains useful. |
 | `src/hitl/approval_engine.py` | REFACTOR | Approval foundation is useful; must support procedural skill approval linkage. |
-| `src/hitl/high_risk_tools.py` | KEEP | Existing risk catalog remains useful. |
+| `src/hitl/high_risk_tools.py` | REMOVED AFTER TOOLS MIGRATION | Demo risk catalog was removed; real HITL policy now lives in the unified tools policy/classifier path. |
 | `src/orchestration/__init__.py` | KEEP | Package marker. |
 | `src/orchestration/registry.py` | KEEP | Orthogonal orchestration registry. |
 | `src/orchestration/sub_agent.py` | KEEP | Orthogonal sub-agent support. |
@@ -1575,9 +1575,9 @@ Each existing non-generated module is classified exactly once.
 | `src/personal_os/backup.py` | REFACTOR | Backup must include new memory stores, jobs, and skill files. |
 | `src/personal_os/checkpointing.py` | KEEP | HITL/checkpointing remains useful. |
 | `src/personal_os/concurrency.py` | KEEP | Orthogonal concurrency helpers. |
-| `src/personal_os/context.py` | KEEP | Orthogonal context helpers unless later integrated deliberately. |
+| `src/personal_os/context.py` | REMOVED AFTER TOOLS MIGRATION | Synthetic context helpers were removed so Personal OS does not compete with adaptive retrieval. |
 | `src/personal_os/event_bus.py` | KEEP | Orthogonal event bus. |
-| `src/personal_os/execution_control.py` | KEEP | Orthogonal execution controls. |
+| `src/personal_os/execution_control.py` | REMOVED AFTER TOOLS MIGRATION | Synthetic sleep/wake controls were removed from the bounded Personal OS layer. |
 | `src/personal_os/registry.py` | KEEP | Tool registry remains useful. |
 | `src/personal_os/scheduling.py` | KEEP | Scheduled jobs remain useful and separate from memory jobs. |
 | `src/personal_os/tasks.py` | KEEP | Task board support is orthogonal. |

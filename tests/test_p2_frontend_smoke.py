@@ -66,9 +66,9 @@ def test_p2_5_approval_inbox_rendering(temp_db):
     """P2 Item 5: Tests approval inbox rendering with pending approval requests."""
     req_info = create_approval_request(
         session_id="sess_p2_approval",
-        tool_name="bank_transfer",
-        tool_args={"amount": 500, "recipient": "ACME Corp"},
-        reason="High risk bank transfer",
+        tool_name="email_send",
+        tool_args={"to": "ops@example.com", "subject": "Approval smoke", "body": "Smoke test"},
+        reason="High risk external email send",
         checkpoint_id="chk_p2_1",
         db_path=temp_db
     )

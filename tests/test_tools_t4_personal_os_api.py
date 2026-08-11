@@ -1,4 +1,4 @@
-import pytest
+﻿import pytest
 from fastapi.testclient import TestClient
 
 from src.api.server import app
@@ -40,14 +40,15 @@ def test_t4_personal_os_status_endpoint(temp_db):
     assert "non_responsibilities" in data
 
 
-def test_t4_personal_os_actions_endpoint_includes_deprecated_metadata(temp_db):
+def test_t4_personal_os_actions_endpoint_lists_active_bounded_actions_only(temp_db):
     response = client.get("/api/tools/personal-os/actions")
     assert response.status_code == 200
     actions = response.json()["actions"]
     by_name = {item["legacy_name"]: item for item in actions}
     assert by_name["create_task"]["implementation_type"] == "local"
-    assert by_name["sleep"]["implementation_type"] == "removed"
-    assert by_name["sleep"]["approval_policy"] == "blocked"
+    assert "sleep" not in by_name
+    assert "acquire_context" not in by_name
+    assert "release_context" not in by_name
 
 
 def test_t4_personal_os_audit_endpoint(temp_db):
@@ -67,3 +68,4 @@ def test_t4_api_tasks_compatibility(temp_db):
     assert "total_tasks" in data
     assert "tasks_summary" in data
     assert "sub_agents" in data
+

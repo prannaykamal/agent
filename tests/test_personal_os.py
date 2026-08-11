@@ -1,13 +1,11 @@
-import pytest
+﻿import pytest
 from src.db import init_db
 from src.personal_os.tasks import create_task, update_task, cancel_task, list_tasks
 from src.personal_os.agent_lifecycle import terminate_agent, pause_agent, resume_agent, get_agent_status
 from src.personal_os.scheduling import schedule_job, cancel_job, heartbeat
 from src.personal_os.concurrency import lock_resource, unlock_resource
-from src.personal_os.event_bus import publish_event, subscribe_event
-from src.personal_os.context import acquire_context, release_context
+from src.personal_os.event_bus import publish_event
 from src.personal_os.checkpointing import checkpoint, restore_checkpoint
-from src.personal_os.execution_control import sleep, wake
 from src.personal_os.registry import get_all_personal_os_tools
 
 @pytest.fixture
@@ -56,18 +54,8 @@ def test_event_bus_tools(temp_db):
     pub_res = publish_event.invoke({"topic": "task.completed", "payload": "Task #123 completed"})
     assert "published to topic 'task.completed'" in pub_res
 
-    sub_res = subscribe_event.invoke({"topic": "task.completed", "handler": "email_notifier"})
-    assert "[Personal OS Tool Blocked]" in sub_res
-    assert "subscribe_event" in sub_res
 
-def test_context_tools(temp_db):
-    acq_res = acquire_context.invoke({"query_or_topic": "quarterly_reports"})
-    assert "[Personal OS Tool Blocked]" in acq_res
-    assert "acquire_context" in acq_res
 
-    rel_res = release_context.invoke({"context_id": "ctx_legacy"})
-    assert "[Personal OS Tool Blocked]" in rel_res
-    assert "release_context" in rel_res
 
 def test_checkpointing_tools(temp_db):
     chk_res = checkpoint.invoke({"task_id": "task_xyz"})
@@ -77,14 +65,6 @@ def test_checkpointing_tools(temp_db):
     rest_res = restore_checkpoint.invoke({"checkpoint_id": chk_id})
     assert "[Personal OS Checkpoint Restored]" in rest_res
 
-def test_execution_control_tools():
-    sleep_res = sleep.invoke({"duration_seconds": 1})
-    assert "[Personal OS Tool Blocked]" in sleep_res
-    assert "sleep" in sleep_res
-
-    wake_res = wake.invoke({"agent_id": "agent_main"})
-    assert "[Personal OS Tool Blocked]" in wake_res
-    assert "wake" in wake_res
 
 def test_personal_os_registry():
     tools = get_all_personal_os_tools()
@@ -100,3 +80,4 @@ def test_personal_os_registry():
     assert "subscribe_event" not in names
     assert "acquire_context" not in names
     assert "release_context" not in names
+

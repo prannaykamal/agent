@@ -20,9 +20,9 @@ client = TestClient(app)
 def test_approval_resumption_executes_tool(temp_db):
     req = create_approval_request(
         session_id="sess_hitl_real",
-        tool_name="bank_transfer",
-        tool_args={"amount": 500, "recipient": "vendor_account"},
-        reason="High risk financial transaction",
+        tool_name="spawn_agent",
+        tool_args={"role": "Reviewer", "instructions": "Review vendor account plan"},
+        reason="High risk sub-agent lifecycle action",
         checkpoint_id="chk_real_1"
     )
 
@@ -32,7 +32,7 @@ def test_approval_resumption_executes_tool(temp_db):
     # Test APPROVED decision
     res = resume_graph_after_approval(req_id, "APPROVED")
     assert res["status"] == "APPROVED"
-    assert res["tool_name"] == "bank_transfer"
+    assert res["tool_name"] == "spawn_agent"
     assert "GRANTED" in res["message"]
 
     # Verify database update
@@ -42,16 +42,16 @@ def test_approval_resumption_executes_tool(temp_db):
 def test_rejection_logs_rejection_event(temp_db):
     req = create_approval_request(
         session_id="sess_hitl_reject",
-        tool_name="delete_database",
-        tool_args={"target_db": "production_db"},
-        reason="High risk destructive operation",
+        tool_name="email_send",
+        tool_args={"to": "ops@example.com", "subject": "Reject", "body": "Test"},
+        reason="High risk external send",
         checkpoint_id="chk_real_2"
     )
 
     req_id = req["request_id"]
     res = resume_graph_after_approval(req_id, "REJECTED")
     assert res["status"] == "REJECTED"
-    assert res["tool_name"] == "delete_database"
+    assert res["tool_name"] == "email_send"
     assert "DENIED" in res["message"]
 
     # Verify database update
@@ -61,9 +61,9 @@ def test_rejection_logs_rejection_event(temp_db):
 def test_api_approval_decision_endpoint(temp_db):
     req = create_approval_request(
         session_id="sess_api_hitl",
-        tool_name="production_deploy",
-        tool_args={"environment": "production"},
-        reason="High risk deployment",
+        tool_name="spawn_agent",
+        tool_args={"role": "Reviewer", "instructions": "Review approval endpoint"},
+        reason="High risk sub-agent lifecycle action",
         checkpoint_id="chk_real_3"
     )
 
@@ -72,3 +72,4 @@ def test_api_approval_decision_endpoint(temp_db):
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "APPROVED"
+

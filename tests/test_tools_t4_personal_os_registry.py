@@ -1,6 +1,7 @@
-from src.personal_os.registry import get_all_personal_os_tools, get_personal_os_tool_metadata
+﻿from src.personal_os.registry import get_all_personal_os_tools, get_personal_os_tool_metadata
+from src.tools.policy import ToolPolicyDecisionType, evaluate_tool_policy
 from src.tools.registry import get_bindable_tool_metadata, get_tool_metadata_by_legacy_name
-from src.tools.registry_types import ImplementationType, AvailabilityStatus, ApprovalPolicy, RiskClass
+from src.tools.registry_types import ImplementationType, AvailabilityStatus, ApprovalPolicy
 
 SYNTHETIC = {"sleep", "wake", "subscribe_event", "acquire_context", "release_context"}
 
@@ -32,21 +33,16 @@ def test_t4_active_personal_os_tools_are_local_and_bounded():
         assert item.tool_id.startswith("local.personal_os.")
 
 
-def test_t4_deprecated_synthetic_metadata_is_blocked_not_bindable():
+def test_t4_deprecated_synthetic_tools_have_no_local_metadata_and_are_blocked():
     all_metadata = get_personal_os_tool_metadata(include_deprecated=True)
-    by_name = {item.legacy_name: item for item in all_metadata}
+    by_name = {item.legacy_name for item in all_metadata}
     bindable_names = {item.legacy_name for item in get_bindable_tool_metadata()}
 
     for name in SYNTHETIC:
-        item = by_name[name]
+        assert name not in by_name
         assert name not in bindable_names
-        assert item.implementation_type == ImplementationType.REMOVED
-        assert item.availability_status == AvailabilityStatus.REMOVED
-        assert item.enabled is False
-        assert item.risk_class == RiskClass.BLOCKED
-        assert item.approval_policy == ApprovalPolicy.BLOCKED
-        assert item.removal_reason
-        assert get_tool_metadata_by_legacy_name(name).implementation_type == ImplementationType.REMOVED
+        assert get_tool_metadata_by_legacy_name(name) is None
+        assert evaluate_tool_policy(name, {}).decision == ToolPolicyDecisionType.BLOCKED
 
 
 def test_t4_personal_os_registry_excludes_provider_and_sandbox_tools():

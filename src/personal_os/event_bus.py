@@ -1,7 +1,8 @@
-import uuid
+﻿import uuid
 from langchain_core.tools import tool
 from src.db import get_connection
 from src.personal_os.audit import log_personal_os_action
+
 
 @tool
 def publish_event(topic: str, payload: str) -> str:
@@ -25,11 +26,3 @@ def publish_event(topic: str, payload: str) -> str:
         target_resource=event_id,
     )
     return f"[Personal OS Event Bus] Event '{event_id}' published to topic '{topic}'."
-
-@tool
-def subscribe_event(topic: str, handler: str = "default_handler") -> str:
-    """Deprecated synthetic subscription tool retained as a blocked compatibility wrapper."""
-    return (
-        "[Personal OS Tool Blocked] 'subscribe_event' is deprecated synthetic event subscription. "
-        "Use durable local task/scheduler boundaries when T5 lands. No subscription was registered."
-    )

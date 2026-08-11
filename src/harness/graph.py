@@ -1,4 +1,4 @@
-import os
+﻿import os
 import json
 import uuid
 from typing import List, Dict, Any, Optional
@@ -335,17 +335,6 @@ def node_hitl_check(state: AgentState) -> dict:
         detected_tool = tool_calls[0]["name"]
         tool_args = dict(tool_calls[0].get("args", {}))
         tool_call_id = tool_calls[0].get("id", tool_call_id)
-    else:
-        # Keyword detection fallback
-        if "bank_transfer" in last_user_text or "transfer money" in last_user_text:
-            detected_tool = "bank_transfer"
-        elif "delete_database" in last_user_text or "drop database" in last_user_text:
-            detected_tool = "delete_database"
-        elif "production_deploy" in last_user_text or "deploy to production" in last_user_text:
-            detected_tool = "production_deploy"
-        elif "delete_files" in last_user_text or "delete file" in last_user_text:
-            detected_tool = "delete_files"
-
     if detected_tool:
         risk_level, reason = classify_tool_risk(detected_tool)
         if risk_level == "High":
@@ -514,9 +503,7 @@ def should_continue(state: AgentState) -> str:
     if loop_count >= 10:
         return "consolidate"
 
-    is_high_risk_keyword = any(kw in last_user_text for kw in ["bank_transfer", "delete_database", "production_deploy", "delete_files", "email_send"])
-
-    if tool_calls or is_high_risk_keyword:
+    if tool_calls:
         return "hitl_check"
 
     return "consolidate"
@@ -743,4 +730,6 @@ def build_agent_graph():
 
 # Global compiled graph instance
 agent_app = build_agent_graph()
+
+
 

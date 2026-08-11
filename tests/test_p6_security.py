@@ -1,4 +1,4 @@
-import pytest
+﻿import pytest
 from pathlib import Path
 from src.db import init_db, get_connection
 from src.hitl.classifier import classify_tool_risk
@@ -22,14 +22,14 @@ def test_hitl_expanded_high_risk_classification():
     high_risk_tools = [
         "calendar_create_event", "calendar_delete_event",
         "email_send", "whatsapp_send", "telegram_send",
-        "production_deploy", "bank_transfer", "spend_money", "delete_database"
+        "spawn_agent", "terminate_agent"
     ]
     for tool_name in high_risk_tools:
         risk, reason = classify_tool_risk(tool_name)
         assert risk == "High", f"Tool '{tool_name}' should be classified as High risk."
         assert len(reason) > 0
 
-    for tool_name in ["github_merge", "github_commit_and_push", "run_code", "safe_browse_url", "capture_screenshot", "github_clone"]:
+    for tool_name in ["github_merge", "github_commit_and_push", "run_code", "safe_browse_url", "capture_screenshot", "github_clone", "bank_transfer", "spend_money", "production_deploy", "delete_database"]:
         risk, reason = classify_tool_risk(tool_name)
         assert risk == "Blocked"
         assert len(reason) > 0
@@ -49,8 +49,8 @@ def test_duplicate_approval_protection(temp_db):
     """P6 Item 7: Verifies approving or rejecting a request twice is blocked."""
     req = create_approval_request(
         session_id="sess_p6",
-        tool_name="bank_transfer",
-        tool_args={"amount": 100},
+        tool_name="email_send",
+        tool_args={"to": "user@example.com", "subject": "Approval", "body": "Test"},
         reason="Transfer money",
         db_path=temp_db
     )
@@ -69,11 +69,11 @@ def test_audit_logger(temp_db):
     """P6 Item 4: Verifies audit log entries are recorded in SQLite audit_logs table."""
     audit_evt = log_audit_event(
         session_id="sess_p6",
-        tool_name="bank_transfer",
+        tool_name="email_send",
         risk_level="High",
         action="HITL_APPROVED",
-        tool_args={"amount": 100},
-        details="Operator approved bank transfer",
+        tool_args={"to": "user@example.com", "subject": "Approval", "body": "Test"},
+        details="Operator approved email send",
         db_path=temp_db
     )
     assert audit_evt["action"] == "HITL_APPROVED"
@@ -83,5 +83,6 @@ def test_audit_logger(temp_db):
     cursor.execute("SELECT * FROM audit_logs WHERE session_id = 'sess_p6'")
     rows = cursor.fetchall()
     assert len(rows) >= 1
-    assert rows[0]["tool_name"] == "bank_transfer"
+    assert rows[0]["tool_name"] == "email_send"
     conn.close()
+

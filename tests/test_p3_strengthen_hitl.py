@@ -1,4 +1,4 @@
-import pytest
+﻿import pytest
 from fastapi.testclient import TestClient
 
 from src.db import init_db, get_connection
@@ -60,8 +60,8 @@ def test_idempotency_key_and_duplicate_protection(temp_db):
     key = "idem_key_unique_123"
     r1 = create_approval_request(
         session_id="sess_idem",
-        tool_name="bank_transfer",
-        tool_args={"amount": 100},
+        tool_name="email_send",
+        tool_args={"to": "ops@example.com", "subject": "Approval", "body": "Test"},
         reason="Test idempotency",
         idempotency_key=key,
         db_path=temp_db
@@ -71,8 +71,8 @@ def test_idempotency_key_and_duplicate_protection(temp_db):
     # Re-call with same key returns existing request
     r2 = create_approval_request(
         session_id="sess_idem",
-        tool_name="bank_transfer",
-        tool_args={"amount": 100},
+        tool_name="email_send",
+        tool_args={"to": "ops@example.com", "subject": "Approval", "body": "Test"},
         reason="Test idempotency duplicate",
         idempotency_key=key,
         db_path=temp_db
@@ -91,8 +91,8 @@ def test_hitl_audit_logs_recorded(temp_db):
     """P3 Item 8: Verifies audit logs record creation, decisions, tool executions, and blocked attempts."""
     req_info = create_approval_request(
         session_id="sess_audit",
-        tool_name="bank_transfer",
-        tool_args={"amount": 50},
+        tool_name="email_send",
+        tool_args={"to": "audit@example.com", "subject": "Audit", "body": "Test"},
         reason="Audit test",
         db_path=temp_db
     )
@@ -110,3 +110,4 @@ def test_hitl_audit_logs_recorded(temp_db):
     assert "HITL_REQUEST_CREATED" in actions
     assert "HITL_APPROVED" in actions
     assert "HIGH_RISK_TOOL_EXECUTED" in actions
+

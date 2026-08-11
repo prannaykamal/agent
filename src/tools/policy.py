@@ -92,15 +92,6 @@ class ToolPolicyDecision:
 
 
 
-_LEGACY_HIGH_RISK_REASONS = {
-    "bank_transfer": "Financial transaction: Initiates monetary transfer",
-    "spend_money": "Financial action: Spends real money or API credits",
-    "production_deploy": "Deployment: Deploys code to production environment",
-    "delete_database": "Data destruction: Drops database or purges persistent tables",
-    "send_email": "External message: Sends outbound email to external recipient",
-    "delete_files": "Filesystem destruction: Deletes persistent files or directories",
-}
-
 _LEGACY_MEDIUM_RISK_REASONS = {
     "schedule_job": "Scheduling: Registers a background recurring job",
     "spawn_agent": "Sub-agent: Launches an autonomous child sub-agent",
@@ -278,20 +269,6 @@ def evaluate_tool_policy(
                 metadata={"caller_source": source_value.value},
             )
         lower = clean.lower()
-        if lower in _LEGACY_HIGH_RISK_REASONS:
-            approved = _approved_context(approval_context)
-            return ToolPolicyDecision(
-                tool_name=clean,
-                decision=ToolPolicyDecisionType.NO_APPROVAL_NEEDED if approved else ToolPolicyDecisionType.APPROVAL_REQUIRED,
-                risk_class=RiskClass.HIGH,
-                approval_policy=ApprovalPolicy.APPROVAL_REQUIRED,
-                read_write_capability=ReadWriteCapability.WRITE_CAPABLE,
-                reason_code="legacy_high_risk_approved" if approved else "approval_required",
-                reason=_LEGACY_HIGH_RISK_REASONS[lower],
-                destructive=lower in {"delete_database", "delete_files"},
-                external_side_effect=lower in {"bank_transfer", "spend_money", "send_email"},
-                metadata={"caller_source": source_value.value, "legacy_hitl_demo_tool": True},
-            )
         if lower in _LEGACY_MEDIUM_RISK_REASONS:
             return ToolPolicyDecision(
                 tool_name=clean,
@@ -338,3 +315,4 @@ def classify_tool_policy(
 def legacy_risk_tuple(tool_name: str, arguments: Mapping[str, Any] | None = None) -> tuple[str, str]:
     decision = evaluate_tool_policy(tool_name, arguments, source=ToolCallerSource.CHAT)
     return decision.risk_class.value, decision.reason
+

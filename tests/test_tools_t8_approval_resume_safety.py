@@ -1,4 +1,4 @@
-import pytest
+﻿import pytest
 
 from src.db import init_db
 from src.hitl.approval_engine import create_approval_request, get_approval_request
@@ -34,8 +34,15 @@ def test_t8_unavailable_mcp_approval_resume_fails_closed(temp_db):
     assert get_approval_request(req["request_id"], db_path=temp_db)["status"] == "REJECTED"
 
 
-def test_t8_legacy_non_removed_approval_flow_still_works(temp_db):
-    req = create_approval_request("sess", "delete_database", {"target_db": "staging"}, "purge", db_path=temp_db)
+def test_t8_non_removed_high_risk_personal_os_approval_flow_still_works(temp_db):
+    req = create_approval_request(
+        "sess",
+        "spawn_agent",
+        {"role": "Reviewer", "instructions": "Review staging plan"},
+        "delegate",
+        db_path=temp_db,
+    )
     result = resume_graph_after_approval(req["request_id"], "APPROVED")
     assert result["status"] == "APPROVED"
     assert "Approval GRANTED" in result["message"]
+
