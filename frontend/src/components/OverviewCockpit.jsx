@@ -24,7 +24,7 @@ export default function OverviewCockpit({ activeSessionId, onRefresh }) {
         session_id: sess,
         total_turns: dataHist.total_turns || 0,
         gate_status: "Active (Hybrid SQL/FTS5)",
-        tool_status: "Operational (22 OS + MCP Gateway)",
+        tool_status: "Personal OS + cron + provider-managed MCP",
         memory_sync: "Synced (.agent/MEMORY.md)"
       });
     } catch (e) {
@@ -97,7 +97,7 @@ export default function OverviewCockpit({ activeSessionId, onRefresh }) {
                     border: val ? "1px solid rgba(46, 204, 113, 0.4)" : "1px solid rgba(255,255,255,0.1)"
                   }}
                 >
-                  {val ? "🟢 REAL API" : "🟡 LOCAL/DEFERRED"}: {key.toUpperCase()}
+                  {val ? "AVAILABLE MCP" : "UNAVAILABLE MCP"}: {key.toUpperCase()}
                 </span>
               ))}
             </div>

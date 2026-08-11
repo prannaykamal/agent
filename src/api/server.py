@@ -1,4 +1,4 @@
-﻿import os
+import os
 import json
 import uuid
 import datetime
@@ -601,6 +601,47 @@ def api_get_tools():
     }
 
 
+@app.get("/api/tools/status")
+def api_tools_status():
+    from src.tools.observability import get_tools_status_observability
+
+    return get_tools_status_observability()
+
+
+@app.get("/api/tools/observability/overview")
+def api_tools_observability_overview(limit: int = 20):
+    from src.tools.observability import get_tools_observability_overview
+
+    return get_tools_observability_overview(limit=limit)
+
+
+@app.get("/api/tools/observability/calls")
+def api_tools_observability_calls(limit: int = 50):
+    from src.tools.observability import get_tool_calls_observability
+
+    return get_tool_calls_observability(limit=limit)
+
+
+@app.get("/api/tools/observability/results")
+def api_tools_observability_results(limit: int = 50):
+    from src.tools.observability import get_tool_results_observability
+
+    return get_tool_results_observability(limit=limit)
+
+
+@app.get("/api/tools/observability/audit")
+def api_tools_observability_audit(limit: int = 50):
+    from src.tools.observability import get_tool_audit_observability
+
+    return get_tool_audit_observability(limit=limit)
+
+
+@app.get("/api/tools/observability/blocked")
+def api_tools_observability_blocked(limit: int = 50):
+    from src.tools.observability import get_blocked_tool_observability
+
+    return get_blocked_tool_observability(limit=limit)
+
 @app.get("/api/tools/mcp/providers")
 def api_get_mcp_provider_statuses():
     from src.tools.mcp_provider_registry import get_mcp_provider_statuses
@@ -665,7 +706,7 @@ def api_get_tasks():
     sub_agents_list = [dict(r) for r in agent_rows]
 
     if tasks_list:
-        summary_lines = [f"â€¢ [{t['status']}] {t['title']} (Priority: {t.get('priority', 'Medium')})" for t in tasks_list]
+        summary_lines = [f"• [{t['status']}] {t['title']} (Priority: {t.get('priority', 'Medium')})" for t in tasks_list]
         summary_str = "\n".join(summary_lines)
     else:
         summary_str = "No active tasks registered."

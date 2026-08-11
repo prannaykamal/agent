@@ -6,6 +6,7 @@ import MemoryCockpit from './components/MemoryCockpit.jsx';
 import MemoryObservabilityCockpit from './components/MemoryObservabilityCockpit.jsx';
 import ApprovalInbox from './components/ApprovalInbox.jsx';
 import ToolsCockpit from './components/ToolsCockpit.jsx';
+import ToolsOpsCockpit from './components/ToolsOpsCockpit.jsx';
 import ScheduledCockpit from './components/ScheduledCockpit.jsx';
 import DataCockpit from './components/DataCockpit.jsx';
 import TaskBoard from './components/TaskBoard.jsx';
@@ -42,6 +43,7 @@ export default function App() {
             { id: "memory_ops", label: "Memory Ops", component: MemoryObservabilityCockpit },
             { id: "approvals", label: "🛡️ Approvals", component: ApprovalInbox },
             { id: "tools", label: "🧰 Tools Catalog", component: ToolsCockpit },
+            { id: "tools_ops", label: "Tools Ops", component: ToolsOpsCockpit },
             { id: "scheduled", label: "⏱️ Scheduled Jobs", component: ScheduledCockpit },
             { id: "data", label: "🗄️ Data Inspector", component: DataCockpit }
           ].map(tab => (
@@ -79,6 +81,7 @@ export default function App() {
         {activeTab === "memory_ops" && <MemoryObservabilityCockpit />}
         {activeTab === "approvals" && <ApprovalInbox />}
         {activeTab === "tools" && <ToolsCockpit />}
+        {activeTab === "tools_ops" && <ToolsOpsCockpit />}
         {activeTab === "scheduled" && <ScheduledCockpit />}
         {activeTab === "data" && <DataCockpit />}
       </div>
