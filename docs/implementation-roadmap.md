@@ -1,4 +1,4 @@
-# Phase X Memory Architecture Implementation Roadmap
+﻿# Phase X Memory Architecture Implementation Roadmap
 
 This roadmap is the finalized migration plan for moving ASTRA from the current memory scaffold to the approved Dual-LLM Memory Architecture described in `verify&implement.md`.
 
@@ -1584,15 +1584,15 @@ Each existing non-generated module is classified exactly once.
 | `src/mcp_gateway/__init__.py` | KEEP | Package marker. |
 | `src/mcp_gateway/calendar.py` | KEEP | Tool integration unrelated to memory migration. |
 | `src/mcp_gateway/communication.py` | KEEP | Tool integration unrelated to memory migration. |
-| `src/mcp_gateway/email_adapters.py` | KEEP | Tool integration unrelated to memory migration. |
-| `src/mcp_gateway/google_calendar_sync.py` | KEEP | Tool integration unrelated to memory migration. |
+| `src/mcp_gateway/email_adapters.py` | REMOVED AFTER MEMORY MIGRATION | Removed during tools migration when Gmail moved to provider-managed MCP. |
+| `src/mcp_gateway/google_calendar_sync.py` | REMOVED AFTER MEMORY MIGRATION | Removed during tools migration when Google Calendar moved to provider-managed MCP. |
 | `src/mcp_gateway/mcp_bridge.py` | KEEP | MCP bridge unrelated to memory migration. |
 | `src/mcp_gateway/registry.py` | KEEP | Tool registry remains useful. |
 | `src/mcp_gateway/search.py` | KEEP | Search tool unrelated to memory migration. |
-| `src/mcp_gateway/search_adapters.py` | KEEP | Search adapters unrelated to memory migration. |
-| `src/mcp_gateway/sandboxes/__init__.py` | KEEP | Package marker. |
-| `src/mcp_gateway/sandboxes/browser_sandbox.py` | KEEP | Tool sandbox unrelated to memory migration. |
-| `src/mcp_gateway/sandboxes/code_sandbox.py` | KEEP | Tool sandbox unrelated to memory migration. |
+| `src/mcp_gateway/search_adapters.py` | REMOVED AFTER MEMORY MIGRATION | Removed during tools migration when search moved to provider-managed MCP. |
+| `src/mcp_gateway/sandboxes/__init__.py` | REMOVED AFTER MEMORY MIGRATION | Removed during tools migration with browser/code sandbox deletion. |
+| `src/mcp_gateway/sandboxes/browser_sandbox.py` | REMOVED AFTER MEMORY MIGRATION | Browser sandbox removed from final tools architecture. |
+| `src/mcp_gateway/sandboxes/code_sandbox.py` | REMOVED AFTER MEMORY MIGRATION | Code/GitHub sandbox removed from final tools architecture. |
 | `src/mcp_gateway/protocol/__init__.py` | KEEP | Package marker. |
 | `src/mcp_gateway/protocol/client.py` | KEEP | Protocol layer unrelated to memory migration. |
 | `src/mcp_gateway/protocol/json_rpc.py` | KEEP | Protocol layer unrelated to memory migration. |
@@ -1676,3 +1676,4 @@ Each existing non-generated module is classified exactly once.
 20. Phase 11: End-to-end hardening, backfill, and documentation.
 
 This sequence prioritizes correctness and conformance over minimizing code changes. It keeps reusable infrastructure, replaces memory abstractions that conflict with the approved architecture, and ensures each merge leaves the system in a testable, understandable state.
+

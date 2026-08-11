@@ -229,3 +229,18 @@ For each provider, capture:
 
 Do not record secrets, tokens, OAuth refresh tokens, API keys, raw message bodies, or hidden reasoning in this document.
 
+
+## Phase T10 Final Validation Note
+
+Phase T10 documents and tests the completed local tools architecture, but it does not mark real providers as validated. A provider remains manually unvalidated until an operator records:
+
+- sanitized config shape
+- transport type
+- credential model
+- `tools/list` output
+- safe read-only smoke-test result
+- safe write/send smoke-test result after HITL approval, where applicable
+
+Automated tests use mocked MCP clients. They prove local discovery, metadata, policy, invocation, and unavailable-state behavior, not real provider availability.
+
+The final local rule remains unchanged: do not add local duplicate implementations for Tavily, DuckDuckGo, Google Calendar, Gmail, WhatsApp, or Telegram. If a provider is unavailable, return a safe unavailable result and fix MCP provider configuration instead of adding a local fallback.

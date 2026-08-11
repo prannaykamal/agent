@@ -99,3 +99,13 @@ python -m pytest tests/
 - **[Memory Observability API](docs/api-memory-observability.md)**: read-only observability endpoints, request parameters, example responses, redaction rules, and privacy boundaries.
 - **[Memory Failure Recovery](docs/memory-failure-recovery.md)**: queue, worker, secondary LLM, consolidation, approval, skill reload, retrieval, and DB recovery playbooks.
 - **[Legacy Memory Backfill](docs/legacy-memory-backfill.md)**: documentation-only dry-run strategy for future optional legacy data backfill.
+
+## Tools Architecture Runbooks
+
+- **[Tools Architecture](docs/tools-architecture.md)**: final local/MCP/removed tool taxonomy, registry, routing, policy, invocation, audit, observability, sandbox removal proof, and memory boundaries.
+- **[Tools Operator Runbook](docs/tools-operator-runbook.md)**: backend/frontend startup, provider status checks, cron operations, approval review, Personal OS inspection, and troubleshooting.
+- **[MCP Wiring Guide](docs/tools-mcp-wiring.md)**: provider-managed MCP rule, config shape, discovery, invocation, and safe manual validation.
+- **[Tools Security Policy](docs/tools-security-policy.md)**: HITL policy classes, approval previews, approval resume safety, secondary LLM boundaries, and redaction rules.
+- **[Cron Jobs](docs/tools-cron-jobs.md)**: durable local scheduler model, one-time and recurring schedules, timezone handling, missed-run policy, and run attempts.
+- **[Personal OS](docs/tools-personal-os.md)**: bounded local responsibilities, non-responsibilities, memory boundaries, audit, idempotency, and deprecated synthetic tools.
+- **[MCP Provider Validation](docs/tools-mcp-provider-validation.md)**: manual checklist for Tavily/DuckDuckGo, Google Calendar, Gmail, WhatsApp, and Telegram MCP providers. Mocked tests do not prove real provider availability.
