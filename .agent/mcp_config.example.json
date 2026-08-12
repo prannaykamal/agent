@@ -1,0 +1,46 @@
+{
+  "mcpServers": {
+    "search_tavily": {
+      "enabled": false,
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "tavily-mcp@0.1.3"],
+      "env": {
+        "TAVILY_API_KEY": "PASTE_TAVILY_KEY_HERE"
+      }
+    },
+    "search_duckduckgo": {
+      "enabled": false,
+      "transport": "stdio",
+      "command": "uvx",
+      "args": ["--with", "duckduckgo-mcp-server[browser]", "duckduckgo-mcp-server"],
+      "env": {
+        "DDG_SAFE_SEARCH": "MODERATE",
+        "DDG_REGION": "wt-wt",
+        "DDG_SEARCH_BACKEND": "auto"
+      }
+    },
+    "google_calendar": {
+      "enabled": false,
+      "transport": "http",
+      "url": "https://calendarmcp.googleapis.com/mcp/v1",
+      "oauth": {
+        "clientId": "PASTE_GOOGLE_OAUTH_CLIENT_ID_HERE",
+        "clientSecret": "PASTE_GOOGLE_OAUTH_CLIENT_SECRET_HERE"
+      }
+    },
+    "gmail": {
+      "enabled": false,
+      "transport": "http",
+      "url": "https://gmailmcp.googleapis.com/mcp/v1",
+      "oauth": {
+        "clientId": "PASTE_GOOGLE_OAUTH_CLIENT_ID_HERE",
+        "clientSecret": "PASTE_GOOGLE_OAUTH_CLIENT_SECRET_HERE"
+      },
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.compose"
+      ]
+    }
+  }
+}

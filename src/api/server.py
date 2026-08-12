@@ -1,4 +1,4 @@
-﻿import os
+import os
 import json
 import uuid
 import datetime
@@ -95,6 +95,10 @@ class SkillRequest(BaseModel):
 
 class DecisionRequest(BaseModel):
     decision: str  # "APPROVED" or "REJECTED"
+
+class ProviderConfigUpdateRequest(BaseModel):
+    values: Dict[str, Any] = {}
+
 
 class ScheduledJobRequest(BaseModel):
     cron_or_timestamp: str
@@ -582,6 +586,44 @@ def api_search_web(q: str, max_results: int = 5):
     results = perform_web_search(query=q.strip(), max_results=max_results)
     return {"query": q, "results": results, "total_results": len(results)}
 
+# --- Provider Configuration Endpoints ---
+
+@app.get("/api/config/providers")
+def api_get_provider_configs():
+    from src.tools.provider_config import list_provider_config_statuses
+
+    return list_provider_config_statuses()
+
+
+@app.post("/api/config/providers/{provider_id}")
+def api_save_provider_config(provider_id: str, req: ProviderConfigUpdateRequest):
+    from src.tools.provider_config import save_provider_config
+
+    result = save_provider_config(provider_id, req.values or {})
+    if result is None:
+        raise HTTPException(status_code=404, detail="Unknown provider.")
+    return result
+
+
+@app.delete("/api/config/providers/{provider_id}/secret")
+def api_clear_provider_secret(provider_id: str, field_name: Optional[str] = None):
+    from src.tools.provider_config import clear_provider_secret
+
+    result = clear_provider_secret(provider_id, field_name=field_name)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Unknown provider.")
+    return result
+
+
+@app.post("/api/config/providers/{provider_id}/validate")
+def api_validate_provider_config(provider_id: str):
+    from src.tools.provider_config import validate_provider_config
+
+    result = validate_provider_config(provider_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Unknown provider.")
+    return result
+
 # --- Tools Endpoints ---
 
 
@@ -1042,8 +1084,3 @@ if os.path.exists(target_static):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("src.api.server:app", host="0.0.0.0", port=8000, reload=True)
-
-
-
-
-

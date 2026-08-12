@@ -1,4 +1,4 @@
-﻿import json
+import json
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from langchain_core.tools import StructuredTool, BaseTool
@@ -8,6 +8,7 @@ from src.config import AGENT_DIR
 from src.mcp_gateway.protocol.transports.stdio import StdioMCPTransport
 from src.mcp_gateway.protocol.transports.sse import SSEMCPTransport
 from src.mcp_gateway.protocol.client import MCPClient
+from src.tools.mcp_provider_config import collect_mcp_secret_values, redact_observability_text
 
 MCP_CONFIG_PATH = AGENT_DIR / "mcp_config.json"
 
@@ -100,7 +101,7 @@ def load_live_mcp_tools(config_path: Optional[Path] = None) -> List[BaseTool]:
                     lc_tool = create_langchain_tool_from_mcp(client=client, tool_meta=t, server_name=server_name)
                     tools.append(lc_tool)
             except Exception as e:
-                print(f"[MCP Bridge Warning] Failed to load tools from server '{server_name}': {str(e)}")
+                safe_error = redact_observability_text(str(e), extra_values=collect_mcp_secret_values(server_cfg))
+                print(f"[MCP Bridge Warning] Failed to load tools from server '{server_name}': {safe_error}")
 
     return tools
-

@@ -1,9 +1,11 @@
-.agent/
+.agent/*
+!.agent/mcp_config.example.json
 .venv/
 __pycache__/
 *.pyc
 .env
 .env.*
+!.env.example
 *.db
 *.sqlite
 node_modules/

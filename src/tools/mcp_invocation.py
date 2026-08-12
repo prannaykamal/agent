@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from src.mcp_gateway.protocol.client import MCPClient
 from src.mcp_gateway.protocol.transports.sse import SSEMCPTransport
 from src.mcp_gateway.protocol.transports.stdio import StdioMCPTransport
-from src.tools.mcp_provider_config import MCPDiscoveryStatus, MCPProviderConfig, MCPTransportType
+from src.tools.mcp_provider_config import MCPDiscoveryStatus, MCPProviderConfig, MCPTransportType, redact_observability_text
 from src.tools.mcp_provider_registry import (
     MCPClientFactory,
     get_mcp_provider_results,
@@ -190,11 +190,14 @@ def invoke_mcp_tool(
             audit_metadata=_redacted_audit_metadata(provider_id, tool_name, arguments),
         )
     except Exception as exc:
+        provider_obj = getattr(locals().get("provider_result"), "provider", None)
+        extra_values = getattr(provider_obj, "redaction_values", ()) if provider_obj is not None else ()
+        safe_error = redact_observability_text(str(exc), extra_values=extra_values) or "MCP provider invocation failed."
         return MCPInvocationResult(
             status=MCPInvocationStatus.INVOCATION_FAILED_TERMINAL,
             provider_id=provider_id,
             tool_name=tool_name,
-            error=str(exc)[:240],
+            error=safe_error,
         )
     finally:
         close = getattr(client, "close", None)

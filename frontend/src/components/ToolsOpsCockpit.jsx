@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { api } from '../api/client.js';
 
 function Badge({ value }) {
@@ -32,6 +32,9 @@ export default function ToolsOpsCockpit() {
   const [overview, setOverview] = useState(null);
   const [providers, setProviders] = useState([]);
   const [externalProviders, setExternalProviders] = useState([]);
+  const [providerConfigs, setProviderConfigs] = useState([]);
+  const [configDrafts, setConfigDrafts] = useState({});
+  const [configBusyProviderId, setConfigBusyProviderId] = useState(null);
   const [personalStatus, setPersonalStatus] = useState(null);
   const [personalActions, setPersonalActions] = useState([]);
   const [personalAudit, setPersonalAudit] = useState([]);
@@ -62,6 +65,7 @@ export default function ToolsOpsCockpit() {
         overviewData,
         providersData,
         externalProvidersData,
+        providerConfigsData,
         personalStatusData,
         personalActionsData,
         personalAuditData,
@@ -72,6 +76,7 @@ export default function ToolsOpsCockpit() {
         api.get('/api/tools/observability/overview'),
         api.get('/api/tools/mcp/providers'),
         api.get('/api/tools/external/providers'),
+        api.get('/api/config/providers'),
         api.get('/api/tools/personal-os/status'),
         api.get('/api/tools/personal-os/actions'),
         api.get('/api/tools/personal-os/audit'),
@@ -83,6 +88,7 @@ export default function ToolsOpsCockpit() {
       setOverview(overviewData);
       setProviders((providersData.providers || []).map(p => ({ ...p, provider_layer: 'mcp' })));
       setExternalProviders((externalProvidersData.providers || []).map(p => ({ ...p, provider_layer: 'external_api' })));
+      setProviderConfigs(providerConfigsData.providers || []);
       setPersonalStatus(personalStatusData);
       setPersonalActions(personalActionsData.actions || []);
       setPersonalAudit(personalAuditData.audit_events || []);
@@ -167,6 +173,79 @@ export default function ToolsOpsCockpit() {
       setError(`Status validation failed for '${providerId}': ${e.message}`);
     } finally {
       setRefreshingProviderId(null);
+    }
+  };
+
+  const updateConfigDraft = (providerId, field, value) => {
+    setConfigDrafts(prev => ({
+      ...prev,
+      [providerId]: {
+        ...(prev[providerId] || {}),
+        [field.name]: field.type === 'boolean' ? Boolean(value) : value
+      }
+    }));
+  };
+
+  const configValueForSubmit = (field, value) => {
+    if (field.type === 'array') {
+      return String(value || '').split(',').map(item => item.trim()).filter(Boolean);
+    }
+    return field.type === 'boolean' ? Boolean(value) : value;
+  };
+
+  const handleSaveProviderConfig = async (provider) => {
+    setConfigBusyProviderId(provider.provider_id);
+    setError(null);
+    setNotice(null);
+    try {
+      const draft = configDrafts[provider.provider_id] || {};
+      const values = {};
+      (provider.fields || []).forEach(field => {
+        if (Object.prototype.hasOwnProperty.call(draft, field.name)) {
+          values[field.name] = configValueForSubmit(field, draft[field.name]);
+        }
+      });
+      const data = await api.post(`/api/config/providers/${provider.provider_id}`, { values });
+      setProviderConfigs(prev => prev.map(item => item.provider_id === provider.provider_id ? data : item));
+      setConfigDrafts(prev => ({ ...prev, [provider.provider_id]: {} }));
+      setNotice(`Configuration saved for '${provider.provider_id}'. Secrets remain hidden.`);
+      load();
+    } catch (e) {
+      setError(`Configuration save failed for '${provider.provider_id}': ${e.message}`);
+    } finally {
+      setConfigBusyProviderId(null);
+    }
+  };
+
+  const handleValidateProviderConfig = async (providerId) => {
+    setConfigBusyProviderId(providerId);
+    setError(null);
+    setNotice(null);
+    try {
+      const data = await api.post(`/api/config/providers/${providerId}/validate`);
+      setProviderConfigs(prev => prev.map(item => item.provider_id === providerId ? data : item));
+      setNotice(`Validation completed for '${providerId}'. Status: ${data.validation_status}`);
+      load();
+    } catch (e) {
+      setError(`Validation failed for '${providerId}': ${e.message}`);
+    } finally {
+      setConfigBusyProviderId(null);
+    }
+  };
+
+  const handleClearProviderSecret = async (providerId) => {
+    setConfigBusyProviderId(providerId);
+    setError(null);
+    setNotice(null);
+    try {
+      const data = await api.delete(`/api/config/providers/${providerId}/secret`);
+      setProviderConfigs(prev => prev.map(item => item.provider_id === providerId ? data : item));
+      setNotice(`Stored secret fields cleared for '${providerId}'.`);
+      load();
+    } catch (e) {
+      setError(`Clear secret failed for '${providerId}': ${e.message}`);
+    } finally {
+      setConfigBusyProviderId(null);
     }
   };
 
@@ -356,6 +435,78 @@ export default function ToolsOpsCockpit() {
             ))}
           </div>
 
+          {/* Provider Configuration */}
+          <div className="glass-card">
+            <h3 style={{ margin: '0 0 12px 0', fontFamily: 'var(--font-heading)', fontSize: '16px' }}>Provider Configuration</h3>
+            {providerConfigs.length === 0 ? <Empty>No provider configuration definitions available.</Empty> : providerConfigs.map(provider => {
+              const draft = configDrafts[provider.provider_id] || {};
+              const busy = configBusyProviderId === provider.provider_id;
+              return (
+                <div key={provider.provider_id} style={{ borderTop: '1px solid var(--border-glass)', padding: '14px 0' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '10px' }}>
+                    <div>
+                      <strong>{provider.display_name}</strong> <code>({provider.provider_id})</code>
+                      <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '3px' }}>
+                        Type: <code>{provider.provider_type}</code> | Configured: <Badge value={provider.configured ? 'configured' : 'missing_config'} /> | Validation: <Badge value={provider.validation_status} />
+                      </div>
+                      {provider.validation_error && <div style={{ fontSize: '12px', color: '#ff6b6b', marginTop: '4px' }}>Validation error: {provider.validation_error}</div>}
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                      <button
+                        disabled={busy}
+                        onClick={() => handleSaveProviderConfig(provider)}
+                        style={{ padding: '5px 12px', background: 'var(--primary-glow)', border: 'none', borderRadius: '4px', color: 'white', cursor: 'pointer', fontSize: '12px' }}
+                      >
+                        {busy ? 'Saving...' : 'Save'}
+                      </button>
+                      <button
+                        disabled={busy}
+                        onClick={() => handleValidateProviderConfig(provider.provider_id)}
+                        style={{ padding: '5px 12px', background: 'rgba(255,255,255,0.08)', border: '1px solid var(--border-glass)', borderRadius: '4px', color: 'white', cursor: 'pointer', fontSize: '12px' }}
+                      >
+                        Validate
+                      </button>
+                      <button
+                        disabled={busy}
+                        onClick={() => handleClearProviderSecret(provider.provider_id)}
+                        style={{ padding: '5px 12px', background: 'rgba(255,71,87,0.15)', border: '1px solid rgba(255,71,87,0.35)', borderRadius: '4px', color: '#ff6b6b', cursor: 'pointer', fontSize: '12px' }}
+                      >
+                        Clear Secret
+                      </button>
+                    </div>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '10px' }}>
+                    {(provider.fields || []).map(field => {
+                      const savedValue = provider.saved_values?.[field.name];
+                      const value = draft[field.name] ?? '';
+                      if (field.type === 'boolean') {
+                        const checked = Object.prototype.hasOwnProperty.call(draft, field.name) ? Boolean(draft[field.name]) : Boolean(savedValue);
+                        return (
+                          <label key={field.name} style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            <input type="checkbox" checked={checked} onChange={e => updateConfigDraft(provider.provider_id, field, e.target.checked)} />
+                            {field.label}
+                          </label>
+                        );
+                      }
+                      return (
+                        <label key={field.name} style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          <span>{field.label}{field.required ? ' *' : ''}</span>
+                          <input
+                            type={field.secret ? 'password' : 'text'}
+                            value={value}
+                            placeholder={field.secret && savedValue ? 'Stored secret hidden' : String(savedValue || '')}
+                            onChange={e => updateConfigDraft(provider.provider_id, field, e.target.value)}
+                            style={{ padding: '7px 9px', borderRadius: '4px', border: '1px solid var(--border-glass)', background: 'rgba(255,255,255,0.04)', color: 'white' }}
+                          />
+                          {savedValue && <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.42)' }}>Saved: {String(savedValue)}</span>}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
           {/* Observability Sub-Navigation Tabs */}
           <div className="glass-card" style={{ padding: '12px 16px' }}>
             <div style={{ display: 'flex', gap: '10px', alignItems: 'center', borderBottom: '1px solid var(--border-glass)', paddingBottom: '10px', marginBottom: '12px' }}>
@@ -521,7 +672,3 @@ export default function ToolsOpsCockpit() {
 if (typeof window !== 'undefined') {
   window.ToolsOpsCockpit = ToolsOpsCockpit;
 }
-
-
-
-

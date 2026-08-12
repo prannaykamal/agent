@@ -127,3 +127,20 @@ Blocked removed tool:
 ## Backup
 
 Back up the SQLite database and `.agent/skills` together. MCP provider credentials should be backed up through the provider-managed credential system, not copied into docs or logs.
+
+## Provider Onboarding and Validation
+
+Use the provider configuration APIs for frontend-safe onboarding:
+
+- `GET /api/config/providers`: list MCP and direct API providers with redacted saved values.
+- `POST /api/config/providers/{provider_id}`: save submitted local configuration values.
+- `DELETE /api/config/providers/{provider_id}/secret`: clear stored provider secret fields.
+- `POST /api/config/providers/{provider_id}/validate`: run safe status/discovery validation.
+
+MCP provider configuration is stored in local `.agent/mcp_config.json`. The tracked template is `.agent/mcp_config.example.json`.
+
+Direct API provider secrets are stored in local `.env`. The tracked template is `.env.example`.
+
+Allowed MCP providers are Gmail, Google Calendar, Tavily Search, and DuckDuckGo Search. WhatsApp API and Telegram Bot API are direct API providers and must not be configured as MCP providers.
+
+Validation is read/status-only. It does not send WhatsApp or Telegram messages, does not create Gmail/Calendar writes, and does not bypass HITL. Real provider onboarding still requires safe test credentials/accounts and manual smoke tests.

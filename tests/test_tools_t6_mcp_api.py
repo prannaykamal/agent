@@ -1,4 +1,4 @@
-﻿import json
+import json
 
 from fastapi.testclient import TestClient
 
@@ -236,3 +236,260 @@ def test_t6_direct_provider_invocation_errors_redact_secret_values(monkeypatch):
     assert telegram_token not in combined
     assert whatsapp_token not in combined
     assert "[REDACTED]" in combined
+
+
+def test_provider_config_get_redacts_saved_values(tmp_path, monkeypatch):
+    env_path = tmp_path / ".env"
+    env_path.write_text("WHATSAPP_API_TOKEN=raw-whatsapp-token\nWHATSAPP_PHONE_NUMBER_ID=phone-id\nTELEGRAM_BOT_TOKEN=raw-telegram-token\n", encoding="utf-8")
+    monkeypatch.setattr("src.tools.provider_config._ENV_PATH", env_path)
+    monkeypatch.delenv("WHATSAPP_API_TOKEN", raising=False)
+    monkeypatch.delenv("WHATSAPP_PHONE_NUMBER_ID", raising=False)
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+
+    response = client.get("/api/config/providers")
+
+    assert response.status_code == 200
+    body = response.json()
+    text = str(body)
+    provider_types = {item["provider_id"]: item["provider_type"] for item in body["providers"]}
+    assert provider_types["gmail"] == "mcp"
+    assert provider_types["google_calendar"] == "mcp"
+    assert provider_types["search_tavily"] == "mcp"
+    assert provider_types["whatsapp_api"] == "external_api"
+    assert provider_types["telegram_bot_api"] == "external_api"
+    assert "raw-whatsapp-token" not in text
+    assert "raw-telegram-token" not in text
+    assert "[REDACTED]" in text
+
+
+def test_provider_config_post_external_stores_without_returning_raw_secret(tmp_path, monkeypatch):
+    env_path = tmp_path / ".env"
+    monkeypatch.setattr("src.tools.provider_config._ENV_PATH", env_path)
+    monkeypatch.delenv("WHATSAPP_API_TOKEN", raising=False)
+    monkeypatch.delenv("WHATSAPP_PHONE_NUMBER_ID", raising=False)
+
+    response = client.post(
+        "/api/config/providers/whatsapp_api",
+        json={"values": {"WHATSAPP_API_TOKEN": "saved-whatsapp-token", "WHATSAPP_PHONE_NUMBER_ID": "phone-id"}},
+    )
+
+    assert response.status_code == 200
+    text = str(response.json())
+    assert "saved-whatsapp-token" not in text
+    assert "[REDACTED]" in text
+    assert "saved-whatsapp-token" in env_path.read_text(encoding="utf-8")
+
+
+def test_provider_config_validate_external_is_status_only(tmp_path, monkeypatch):
+    env_path = tmp_path / ".env"
+    monkeypatch.setattr("src.tools.provider_config._ENV_PATH", env_path)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "validate-telegram-token")
+
+    def forbidden_send(*args, **kwargs):
+        raise AssertionError("validation must not send messages")
+
+    monkeypatch.setattr("src.external_providers.telegram_bot_api.send_message", forbidden_send)
+
+    response = client.post("/api/config/providers/telegram_bot_api/validate")
+
+    assert response.status_code == 200
+    text = str(response.json())
+    assert "validate-telegram-token" not in text
+    assert response.json()["provider_type"] == "external_api"
+
+
+def test_provider_config_validate_mcp_uses_safe_status_refresh(monkeypatch):
+    calls = []
+
+    def fake_get_status(provider_id, refresh=False, include_config=False):
+        calls.append({"provider_id": provider_id, "refresh": refresh, "include_config": include_config})
+        return {
+            "provider_id": provider_id,
+            "configured": True,
+            "availability_status": "available",
+            "discovery_status": "discovered",
+            "last_error": None,
+        }
+
+    monkeypatch.setattr("src.tools.provider_config.get_mcp_provider_status", fake_get_status)
+
+    response = client.post("/api/config/providers/gmail/validate")
+
+    assert response.status_code == 200
+    assert response.json()["provider_type"] == "mcp"
+    assert {"provider_id": "gmail", "refresh": True, "include_config": False} in calls
+
+
+def test_provider_config_clear_secret_removes_external_secret(tmp_path, monkeypatch):
+    env_path = tmp_path / ".env"
+    env_path.write_text("TELEGRAM_BOT_TOKEN=clear-me\nTELEGRAM_TEST_CHAT_ID=123\n", encoding="utf-8")
+    monkeypatch.setattr("src.tools.provider_config._ENV_PATH", env_path)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "clear-me")
+
+    response = client.delete("/api/config/providers/telegram_bot_api/secret")
+
+    assert response.status_code == 200
+    text = env_path.read_text(encoding="utf-8")
+    assert "TELEGRAM_BOT_TOKEN" not in text
+    assert "clear-me" not in str(response.json())
+
+def test_provider_config_mcp_errors_redact_marker_free_configured_values(tmp_path, monkeypatch):
+    from src.tools.mcp_provider_registry import clear_mcp_provider_discovery_cache
+
+    secrets = {
+        "gmail": "gmail_plain_value_ABC123_NO_MARKER",
+        "google_calendar": "calendar_plain_value_ABC123_NO_MARKER",
+        "search_tavily": "search_plain_value_ABC123_NO_MARKER",
+    }
+    config_path = tmp_path / "mcp_config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "gmail": {
+                        "enabled": True,
+                        "transport": "stdio",
+                        "command": "fake-gmail",
+                        "env": {"GMAIL_AUTH": secrets["gmail"]},
+                    },
+                    "google_calendar": {
+                        "enabled": True,
+                        "transport": "stdio",
+                        "command": "fake-calendar",
+                        "oauth": {"clientSecret": secrets["google_calendar"]},
+                    },
+                    "search_tavily": {
+                        "enabled": True,
+                        "transport": "stdio",
+                        "command": "fake-search",
+                        "env": {"TAVILY_API_KEY": secrets["search_tavily"]},
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("src.tools.mcp_provider_config.mcp_config_path", lambda: config_path)
+    clear_mcp_provider_discovery_cache()
+
+    class FakeClient:
+        def __init__(self, provider):
+            self.provider = provider
+
+        def list_tools(self):
+            raise RuntimeError(f"provider echoed {secrets[self.provider.provider_id]} during discovery")
+
+    monkeypatch.setattr("src.tools.mcp_provider_registry._build_mcp_client", lambda provider: FakeClient(provider))
+
+    for provider_id, raw_secret in secrets.items():
+        validate_response = client.post(f"/api/config/providers/{provider_id}/validate")
+        assert validate_response.status_code == 200
+        validate_text = json.dumps(validate_response.json(), sort_keys=True)
+        assert raw_secret not in validate_text
+        assert "provider echoed" in validate_text
+        assert "[REDACTED]" in validate_text
+
+        config_response = client.get("/api/config/providers")
+        assert config_response.status_code == 200
+        config_text = json.dumps(config_response.json(), sort_keys=True)
+        assert raw_secret not in config_text
+
+        status_response = client.get(f"/api/tools/mcp/providers/{provider_id}")
+        assert status_response.status_code == 200
+        status_text = json.dumps(status_response.json(), sort_keys=True)
+        assert raw_secret not in status_text
+
+    overview_response = client.get("/api/tools/observability/overview")
+    assert overview_response.status_code == 200
+    overview_text = json.dumps(overview_response.json(), sort_keys=True)
+    for raw_secret in secrets.values():
+        assert raw_secret not in overview_text
+
+
+def test_t6_live_mcp_bridge_redacts_marker_free_configured_secret_in_warning(tmp_path, monkeypatch, capsys):
+    from src.mcp_gateway.mcp_bridge import load_live_mcp_tools
+
+    raw_secret = "gmail_plain_value_ABC123_NO_MARKER"
+    config_path = tmp_path / "mcp_config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "gmail": {
+                        "transport": "stdio",
+                        "command": "gmail-cmd",
+                        "env": {"GMAIL_AUTH": raw_secret},
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeTransport:
+        def __init__(self, command, args=None, env=None, cwd=None):
+            self.command = command
+
+    class FakeClient:
+        def __init__(self, transport):
+            self.transport = transport
+
+        def list_tools(self):
+            raise RuntimeError(f"bridge echoed {raw_secret}")
+
+    monkeypatch.setattr("src.mcp_gateway.mcp_bridge.StdioMCPTransport", FakeTransport)
+    monkeypatch.setattr("src.mcp_gateway.mcp_bridge.MCPClient", FakeClient)
+
+    assert load_live_mcp_tools(config_path) == []
+    captured = capsys.readouterr()
+    assert raw_secret not in captured.out
+    assert "bridge echoed" in captured.out
+    assert "[REDACTED]" in captured.out
+
+
+def test_t6_mcp_invocation_errors_redact_marker_free_configured_secret(tmp_path):
+    from src.tools.mcp_invocation import invoke_mcp_tool
+    from src.tools.mcp_provider_registry import clear_mcp_provider_discovery_cache
+
+    raw_secret = "gmail_plain_value_ABC123_NO_MARKER"
+    config_path = tmp_path / "mcp_config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "gmail": {
+                        "enabled": True,
+                        "transport": "stdio",
+                        "command": "fake-gmail",
+                        "env": {"GMAIL_AUTH": raw_secret},
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    clear_mcp_provider_discovery_cache()
+
+    class FakeClient:
+        def __init__(self, provider):
+            self.provider = provider
+
+        def list_tools(self):
+            return [{"name": "read", "description": "Read Gmail", "inputSchema": {"type": "object", "properties": {}}}]
+
+        def call_tool(self, name, arguments):
+            raise RuntimeError(f"tools call echoed {raw_secret}")
+
+    result = invoke_mcp_tool(
+        "gmail",
+        "read",
+        {},
+        config_path=config_path,
+        client_factory=lambda provider: FakeClient(provider),
+    )
+
+    result_text = result.to_text("Gmail MCP")
+    assert raw_secret not in result.error
+    assert raw_secret not in result_text
+    assert "tools call echoed" in result.error
+    assert "[REDACTED]" in result.error

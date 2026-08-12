@@ -98,7 +98,7 @@ def discover_mcp_provider(
     except Exception as exc:
         failed_provider = provider.with_discovery(
             discovery_status=MCPDiscoveryStatus.FAILED,
-            last_error=redact_observability_text(str(exc)),
+            last_error=str(exc),
             now=now,
         )
         result = MCPProviderDiscoveryResult(provider=failed_provider, tools=[])
