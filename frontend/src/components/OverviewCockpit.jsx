@@ -58,6 +58,17 @@ export default function OverviewCockpit({ activeSessionId, onRefresh }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  // Backup & Restore State
+  const [backups, setBackups] = useState([]);
+  const [totalBackups, setTotalBackups] = useState(0);
+  const [loadingBackups, setLoadingBackups] = useState(false);
+  const [creatingBackup, setCreatingBackup] = useState(false);
+  const [restoringBackup, setRestoringBackup] = useState(false);
+  const [selectedBackupForRestore, setSelectedBackupForRestore] = useState(null);
+  const [customBackupPath, setCustomBackupPath] = useState('');
+  const [backupNotice, setBackupNotice] = useState(null);
+  const [backupError, setBackupError] = useState(null);
+
   const fetchOverview = async () => {
     setLoading(true);
     setError(null);
@@ -98,16 +109,68 @@ export default function OverviewCockpit({ activeSessionId, onRefresh }) {
     }
   };
 
+  const fetchBackups = async () => {
+    setLoadingBackups(true);
+    try {
+      const data = await api.get('/api/system/backups');
+      setBackups(data.backups || []);
+      setTotalBackups(data.total_backups || 0);
+    } catch (e) {
+      setBackupError(`Failed to load backups list: ${e.message}`);
+    } finally {
+      setLoadingBackups(false);
+    }
+  };
+
   useEffect(() => {
     fetchOverview();
+    fetchBackups();
   }, [activeSessionId]);
+
+  const handleCreateBackup = async () => {
+    setCreatingBackup(true);
+    setBackupNotice(null);
+    setBackupError(null);
+    try {
+      const res = await api.post('/api/system/backup');
+      setBackupNotice(`Backup archive created successfully! Location: ${res.backup_path} (${res.packed_files?.length || 0} files packed, ${(res.size_bytes / 1024).toFixed(1)} KB)`);
+      fetchBackups();
+    } catch (e) {
+      setBackupError(`Backup creation failed: ${e.message}`);
+    } finally {
+      setCreatingBackup(false);
+    }
+  };
+
+  const handleConfirmRestore = async (backupPath) => {
+    if (!backupPath || !backupPath.trim()) {
+      setBackupError("Please specify a valid backup archive path for restore.");
+      return;
+    }
+
+    setRestoringBackup(true);
+    setBackupNotice(null);
+    setBackupError(null);
+    try {
+      const res = await api.post('/api/system/restore', { backup_path: backupPath.trim() });
+      setBackupNotice(`System restored successfully from '${res.backup_path}'! Restored files: ${res.restored_files?.join(', ')}.`);
+      setSelectedBackupForRestore(null);
+      setCustomBackupPath('');
+      fetchOverview();
+      fetchBackups();
+    } catch (e) {
+      setBackupError(`Restore failed: ${e.message}`);
+    } finally {
+      setRestoringBackup(false);
+    }
+  };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h2 style={{ fontFamily: 'var(--font-heading)', margin: 0 }}>📊 ASTRA Telemetry & Integration Status</h2>
+        <h2 style={{ fontFamily: 'var(--font-heading)', margin: 0 }}>📊 ASTRA Telemetry & System Admin</h2>
         <button
-          onClick={() => { fetchOverview(); if (onRefresh) onRefresh(); }}
+          onClick={() => { fetchOverview(); fetchBackups(); if (onRefresh) onRefresh(); }}
           style={{ padding: '8px 16px', background: 'var(--primary-glow)', border: 'none', borderRadius: '6px', color: 'white', cursor: 'pointer' }}
         >
           🔄 Refresh
@@ -239,6 +302,140 @@ export default function OverviewCockpit({ activeSessionId, onRefresh }) {
               <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>No MCP providers registered.</div>
             )}
           </div>
+
+          {/* System Backup & Restore Administration Section */}
+          <div className="glass-card" style={{ marginTop: '10px', background: 'rgba(0,0,0,0.25)', border: '1px solid var(--border-glass)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '10px' }}>
+              <div>
+                <h3 style={{ fontFamily: 'var(--font-heading)', fontSize: '16px', margin: 0 }}>
+                  💾 System Backup & Restore Administration
+                </h3>
+                <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                  Manage system snapshot archives (state.db, SOUL.md, MEMORY.md, SKILL.md). Total Backups: <strong>{totalBackups}</strong>
+                </span>
+              </div>
+              <button
+                disabled={creatingBackup}
+                onClick={handleCreateBackup}
+                style={{
+                  padding: '8px 18px',
+                  background: 'var(--primary-glow)',
+                  border: 'none',
+                  borderRadius: '6px',
+                  color: 'white',
+                  cursor: 'pointer',
+                  fontSize: '13px',
+                  fontWeight: '600'
+                }}
+              >
+                {creatingBackup ? '📦 Creating Archive...' : '📦 Create System Backup'}
+              </button>
+            </div>
+
+            {/* Backup Action Feedback Notices */}
+            {backupNotice && (
+              <div style={{ padding: '10px 14px', background: 'rgba(46, 204, 113, 0.15)', border: '1px solid rgba(46, 204, 113, 0.3)', borderRadius: '8px', color: '#2ecc71', fontSize: '13px', marginBottom: '12px' }}>
+                ✅ {backupNotice}
+              </div>
+            )}
+            {backupError && (
+              <div style={{ padding: '10px 14px', background: 'rgba(255, 50, 50, 0.15)', border: '1px solid rgba(255, 50, 50, 0.3)', borderRadius: '8px', color: '#ff6b6b', fontSize: '13px', marginBottom: '12px' }}>
+                ⚠️ {backupError}
+              </div>
+            )}
+
+            {/* Restructive Restore Confirmation Modal */}
+            {selectedBackupForRestore && (
+              <div style={{ padding: '16px', background: 'rgba(255, 71, 87, 0.12)', border: '1px solid rgba(255, 71, 87, 0.4)', borderRadius: '8px', marginBottom: '16px' }}>
+                <h4 style={{ color: '#ff6b6b', margin: '0 0 8px 0', fontSize: '15px' }}>⚠️ Confirm Destructive System Restore</h4>
+                <p style={{ margin: '0 0 12px 0', fontSize: '13px', color: 'var(--text-secondary)' }}>
+                  You are about to restore system state from: <code>{selectedBackupForRestore.path || selectedBackupForRestore.filename}</code>.
+                  This will overwrite active database records, memory files, and skills. A safety rollback copy (<code>state.db.bak</code>) will be saved automatically.
+                </p>
+                <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                  <button
+                    onClick={() => setSelectedBackupForRestore(null)}
+                    style={{ padding: '6px 14px', background: 'transparent', border: '1px solid var(--border-glass)', borderRadius: '6px', color: 'white', cursor: 'pointer', fontSize: '12px' }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    disabled={restoringBackup}
+                    onClick={() => handleConfirmRestore(selectedBackupForRestore.path || selectedBackupForRestore.filename)}
+                    style={{ padding: '6px 16px', background: '#ff4757', border: 'none', borderRadius: '6px', color: 'white', cursor: 'pointer', fontSize: '12px', fontWeight: '600' }}
+                  >
+                    {restoringBackup ? 'Restoring System...' : 'Confirm System Restore'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Backups List */}
+            {loadingBackups ? (
+              <div style={{ color: 'var(--text-secondary)', padding: '12px 0', fontStyle: 'italic' }}>🌀 Loading available backups...</div>
+            ) : backups.length === 0 ? (
+              <div style={{ color: 'var(--text-secondary)', padding: '12px 0', fontStyle: 'italic' }}>📭 No backup archives created yet. Click "Create System Backup" above to generate a snapshot.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {backups.map(b => (
+                  <div
+                    key={b.filename}
+                    style={{
+                      padding: '10px 14px',
+                      background: 'rgba(255, 255, 255, 0.03)',
+                      border: '1px solid var(--border-glass)',
+                      borderRadius: '6px',
+                      display: 'flex',
+                      justify: 'space-between',
+                      alignItems: 'center',
+                      flexWrap: 'wrap',
+                      gap: '10px'
+                    }}
+                  >
+                    <div>
+                      <strong style={{ fontSize: '13px' }}>{b.filename}</strong>
+                      <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                        Created: {b.created_at} | Size: {(b.size_bytes / 1024).toFixed(1)} KB
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setSelectedBackupForRestore(b)}
+                      style={{
+                        padding: '5px 12px',
+                        background: 'rgba(255, 71, 87, 0.15)',
+                        border: '1px solid rgba(255, 71, 87, 0.3)',
+                        borderRadius: '4px',
+                        color: '#ff6b6b',
+                        cursor: 'pointer',
+                        fontSize: '12px'
+                      }}
+                    >
+                      ↺ Restore
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Custom Path Restore Input */}
+            <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid var(--border-glass)', display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Restore from custom file path:</span>
+              <input
+                type="text"
+                value={customBackupPath}
+                onChange={e => setCustomBackupPath(e.target.value)}
+                placeholder="d:/agent/.agent/backups/agent_backup_...zip"
+                style={{ flex: 1, minWidth: '220px', padding: '6px 12px', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-glass)', borderRadius: '6px', color: 'white', fontSize: '12px' }}
+              />
+              <button
+                disabled={!customBackupPath.trim()}
+                onClick={() => setSelectedBackupForRestore({ path: customBackupPath, filename: customBackupPath })}
+                style={{ padding: '6px 14px', background: 'rgba(255,71,87,0.2)', border: '1px solid rgba(255,71,87,0.4)', borderRadius: '6px', color: '#ff6b6b', cursor: 'pointer', fontSize: '12px', fontWeight: '600' }}
+              >
+                Inspect & Restore
+              </button>
+            </div>
+          </div>
         </>
       )}
     </div>
@@ -248,4 +445,5 @@ export default function OverviewCockpit({ activeSessionId, onRefresh }) {
 if (typeof window !== 'undefined') {
   window.OverviewCockpit = OverviewCockpit;
 }
+
 
