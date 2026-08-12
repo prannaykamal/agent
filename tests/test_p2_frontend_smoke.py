@@ -1,17 +1,38 @@
 import os
+
+os.environ["LANGCHAIN_TRACING_V2"] = "false"
+os.environ["LANGSMITH_TRACING"] = "false"
+os.environ["LANGCHAIN_API_KEY"] = "your_langchain_api_key_here"
+os.environ["LANGSMITH_API_KEY"] = "your_langsmith_api_key_here"
+
 import json
 import pytest
+from typing import Any, List
 from pathlib import Path
 from fastapi.testclient import TestClient
+from langchain_core.messages import AIMessage
 
 from src.db import init_db, get_connection
 from src.api.server import app
+from src.harness.llm_router import LLMRouteResult, LLMSelector
 from src.personal_os.tasks import create_task
 from src.personal_os.scheduling import schedule_job
 from src.hitl.approval_engine import create_approval_request
 from src.memory.semantic import add_semantic_fact
 
 client = TestClient(app)
+
+
+class DeterministicFrontendSmokeLLM:
+    def __init__(self, responses: List[AIMessage]):
+        self.responses = list(responses)
+
+    def bind_tools(self, tools: Any, **kwargs: Any) -> Any:
+        return self
+
+    def invoke(self, messages: List[Any]) -> AIMessage:
+        return self.responses.pop(0) if self.responses else AIMessage(content="Frontend smoke response.")
+
 
 @pytest.fixture
 def temp_db(tmp_path, monkeypatch):
@@ -23,6 +44,36 @@ def temp_db(tmp_path, monkeypatch):
     init_db(db_file)
     return db_file
 
+
+@pytest.fixture
+def deterministic_chat_path(monkeypatch):
+    fake_llm = DeterministicFrontendSmokeLLM(
+        responses=[
+            AIMessage(content="Deterministic frontend chat smoke response."),
+            AIMessage(content="Deterministic loop timeline response."),
+        ]
+    )
+    selector = LLMSelector(
+        role="primary",
+        provider="test",
+        model_name="deterministic-frontend-smoke",
+        temperature=0.0,
+        context_window=4096,
+        source="test",
+    )
+    route = LLMRouteResult(
+        selector=selector,
+        llm=fake_llm,
+        available=True,
+        fallback_used=False,
+        error=None,
+    )
+    monkeypatch.setattr("src.harness.graph.resolve_primary_llm", lambda **kwargs: route)
+    monkeypatch.setattr("src.harness.graph.get_primary_llm", lambda **kwargs: (fake_llm, 4096))
+    monkeypatch.setattr("src.harness.graph.get_registered_tools", lambda: ([], {}))
+    return fake_llm
+
+
 def test_p2_1_and_2_cockpit_loads_from_dist_bundle(temp_db):
     """P2 Items 1 & 2: Verifies cockpit loads from built dist bundle index.html and static assets."""
     r_root = client.get("/")
@@ -33,6 +84,7 @@ def test_p2_1_and_2_cockpit_loads_from_dist_bundle(temp_db):
 
     r_static = client.get("/static/index.html")
     assert r_static.status_code in (200, 404)
+
 
 def test_p2_3_sidebar_navigation_all_tabs(temp_db):
     """P2 Item 3: Tests API readiness for sidebar navigation across all cockpit tabs."""
@@ -50,7 +102,8 @@ def test_p2_3_sidebar_navigation_all_tabs(temp_db):
         resp = client.get(tab_endpoint)
         assert resp.status_code == 200, f"Tab endpoint '{tab_endpoint}' failed."
 
-def test_p2_4_chat_send_flow_browser_ui(temp_db):
+
+def test_p2_4_chat_send_flow_browser_ui(temp_db, deterministic_chat_path):
     """P2 Item 4: Tests chat send flow from browser UI submission endpoint."""
     resp = client.post("/api/chat", json={
         "message": "Frontend chat send flow test prompt",
@@ -61,6 +114,8 @@ def test_p2_4_chat_send_flow_browser_ui(temp_db):
     assert "response" in data
     assert "loop_events" in data
     assert "tools_used" in data
+    assert data["response"] == "Deterministic frontend chat smoke response."
+
 
 def test_p2_5_approval_inbox_rendering(temp_db):
     """P2 Item 5: Tests approval inbox rendering with pending approval requests."""
@@ -83,6 +138,7 @@ def test_p2_5_approval_inbox_rendering(temp_db):
     requests = data["approval_requests"]
     assert any(r["id"] == req_id for r in requests)
 
+
 def test_p2_6_task_board_rendering(temp_db):
     """P2 Item 6: Tests task board rendering with sample task and sub-agent rows."""
     res_task = create_task.invoke({"title": "Sample Frontend Task", "description": "Testing task board rendering", "priority": "HIGH"})
@@ -95,19 +151,22 @@ def test_p2_6_task_board_rendering(temp_db):
     assert "sub_agents" in data
     assert "tasks_summary" in data
 
-def test_p2_7_loop_timeline_rendering(temp_db):
+
+def test_p2_7_loop_timeline_rendering(temp_db, deterministic_chat_path):
     """P2 Item 7: Tests loop timeline rendering with sample loop events."""
     session_id = "sess_p2_timeline"
-    client.post("/api/chat", json={
+    chat_resp = client.post("/api/chat", json={
         "message": "Generate loop timeline events",
         "session_id": session_id
     })
+    assert chat_resp.status_code == 200
 
     resp = client.get(f"/api/history/{session_id}")
     assert resp.status_code == 200
     data = resp.json()
     assert "turns" in data
     assert data["session_id"] == session_id
+
 
 def test_p2_8_data_inspector_table_selection(temp_db):
     """P2 Item 8: Tests data inspector table selection across allowed tables."""
@@ -124,6 +183,7 @@ def test_p2_8_data_inspector_table_selection(temp_db):
         assert "columns" in tbl_data
         assert "rows" in tbl_data
 
+
 def test_p2_9_scheduled_job_ui(temp_db):
     """P2 Item 9: Tests scheduled job create/cancel UI endpoints."""
     create_resp = client.post("/api/scheduled", json={
@@ -131,7 +191,7 @@ def test_p2_9_scheduled_job_ui(temp_db):
         "task_payload": "Frontend UI Scheduled Job"
     })
     assert create_resp.status_code == 200
-    
+
     list_resp = client.get("/api/scheduled")
     assert list_resp.status_code == 200
     jobs = list_resp.json().get("scheduled_jobs", [])
@@ -140,6 +200,7 @@ def test_p2_9_scheduled_job_ui(temp_db):
     job_id = jobs[0]["id"]
     del_resp = client.delete(f"/api/scheduled/{job_id}")
     assert del_resp.status_code == 200
+
 
 def test_p2_10_memory_fact_creation_search_ui(temp_db):
     """P2 Item 10: Tests memory fact creation and search UI endpoints."""
@@ -157,6 +218,7 @@ def test_p2_10_memory_fact_creation_search_ui(temp_db):
     assert "skill_md" in data
     assert "memory_md" in data
 
+
 def test_p2_optional_frontend_browser_smoke():
     """P2 Item 1: Optional browser E2E smoke test when the local browser driver is installed."""
     try:
@@ -172,3 +234,6 @@ def test_p2_optional_frontend_browser_smoke():
             browser.close()
     except (ImportError, Exception):
         pass
+
+
+
