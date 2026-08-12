@@ -21,7 +21,7 @@ def test_t4_api_tools_remains_compatible_and_excludes_synthetic(temp_db):
     response = client.get("/api/tools")
     assert response.status_code == 200
     data = response.json()
-    assert set(data) == {"total_tools", "personal_os_tools", "mcp_tools"}
+    assert set(data) == {"total_tools", "personal_os_tools", "mcp_tools", "external_api_tools"}
     names = {item["name"] for item in data["personal_os_tools"]}
     assert "create_task" in names
     assert "schedule_job" in names
@@ -68,4 +68,5 @@ def test_t4_api_tasks_compatibility(temp_db):
     assert "total_tasks" in data
     assert "tasks_summary" in data
     assert "sub_agents" in data
+
 

@@ -1,4 +1,4 @@
-import pytest
+﻿import pytest
 from fastapi.testclient import TestClient
 
 from src.api.server import app
@@ -68,8 +68,8 @@ def test_t1_api_tools_response_shape_remains_compatible(temp_db):
 
     assert response.status_code == 200
     data = response.json()
-    assert set(data.keys()) == {"total_tools", "personal_os_tools", "mcp_tools"}
-    assert data["total_tools"] == len(data["personal_os_tools"]) + len(data["mcp_tools"])
+    assert set(data.keys()) == {"total_tools", "personal_os_tools", "mcp_tools", "external_api_tools"}
+    assert data["total_tools"] == len(data["personal_os_tools"]) + len(data["mcp_tools"]) + len(data["external_api_tools"])
     assert all(set(item.keys()) == {"name", "description"} for item in data["personal_os_tools"])
     assert all({"name", "description", "risk_level"} <= set(item.keys()) for item in data["mcp_tools"])
 
@@ -111,3 +111,4 @@ def test_t1_local_provider_adapter_modules_replaced_by_t7_wrappers():
     assert hasattr(search, "perform_web_search")
     assert hasattr(calendar, "calendar_create_event")
     assert hasattr(communication, "email_send")
+

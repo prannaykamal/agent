@@ -1,4 +1,4 @@
-from fastapi.testclient import TestClient
+﻿from fastapi.testclient import TestClient
 
 from src.api.server import app
 from src.db import init_db
@@ -14,7 +14,7 @@ def test_t8_api_tools_shape_stays_compatible_and_excludes_unavailable_mcp(tmp_pa
     response = client.get("/api/tools")
     assert response.status_code == 200
     body = response.json()
-    assert set(body) == {"total_tools", "personal_os_tools", "mcp_tools"}
+    assert set(body) == {"total_tools", "personal_os_tools", "mcp_tools", "external_api_tools"}
     assert any(tool["name"] == "heartbeat" for tool in body["personal_os_tools"])
     assert all(tool["name"] != "email_send" for tool in body["mcp_tools"])
 

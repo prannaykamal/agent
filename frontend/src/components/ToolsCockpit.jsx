@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import { api } from '../api/client.js';
 
 function Badge({ value }) {
@@ -79,6 +79,7 @@ export default function ToolsCockpit({ onRefresh }) {
   const groups = overview?.registry?.groups || {};
   const unavailableMcp = (groups.mcp || []).filter(tool => tool.availability_status !== 'available');
   const activeMcp = (groups.mcp || []).filter(tool => tool.availability_status === 'available');
+  const externalApi = groups.external_api || [];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -99,6 +100,7 @@ export default function ToolsCockpit({ onRefresh }) {
             <Group title="Personal OS" tools={groups.personal_os || []} />
             <Group title="Cron Boundary" tools={groups.cron || []} />
             <Group title="Provider-managed MCP Available" tools={activeMcp} empty="No MCP provider tools are currently available." />
+            <Group title="Direct API Providers" tools={externalApi} empty="No direct API provider tools are currently available." />
             <Group title="Unavailable MCP Providers/Tools" tools={unavailableMcp} />
             <Group title="Removed/Blocked Tools" tools={groups.removed || []} empty="No removed-tool metadata found." />
           </div>
@@ -111,3 +113,6 @@ export default function ToolsCockpit({ onRefresh }) {
 if (typeof window !== 'undefined') {
   window.ToolsCockpit = ToolsCockpit;
 }
+
+
+

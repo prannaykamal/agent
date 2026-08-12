@@ -1,4 +1,4 @@
-import os
+﻿import os
 import json
 import uuid
 import datetime
@@ -13,7 +13,7 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from src.db import get_connection
 from src.personal_os.scheduling import heartbeat, schedule_job, cancel_job
 from src.personal_os.registry import get_os_tool_catalog
-from src.mcp_gateway.registry import get_mcp_tool_catalog
+from src.mcp_gateway.registry import get_external_api_tool_catalog, get_mcp_tool_catalog
 from src.memory.semantic import get_all_semantic_facts, add_semantic_fact, search_facts_top_k, sync_memory_md
 from src.memory.episodic import search_episodes_fts
 from src.memory.procedural import (
@@ -594,10 +594,12 @@ def api_search_web(q: str, max_results: int = 5):
 def api_get_tools():
     os_tools = get_os_tool_catalog()
     mcp_tools = get_mcp_tool_catalog()
+    external_api_tools = get_external_api_tool_catalog()
     return {
-        "total_tools": len(os_tools) + len(mcp_tools),
+        "total_tools": len(os_tools) + len(mcp_tools) + len(external_api_tools),
         "personal_os_tools": os_tools,
-        "mcp_tools": mcp_tools
+        "mcp_tools": mcp_tools,
+        "external_api_tools": external_api_tools,
     }
 
 
@@ -723,7 +725,7 @@ def api_get_tasks():
     sub_agents_list = [dict(r) for r in agent_rows]
 
     if tasks_list:
-        summary_lines = [f"• [{t['status']}] {t['title']} (Priority: {t.get('priority', 'Medium')})" for t in tasks_list]
+        summary_lines = [f"â€¢ [{t['status']}] {t['title']} (Priority: {t.get('priority', 'Medium')})" for t in tasks_list]
         summary_str = "\n".join(summary_lines)
     else:
         summary_str = "No active tasks registered."
@@ -1040,6 +1042,7 @@ if os.path.exists(target_static):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("src.api.server:app", host="0.0.0.0", port=8000, reload=True)
+
 
 
 

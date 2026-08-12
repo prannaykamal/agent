@@ -1,4 +1,4 @@
-import pytest
+﻿import pytest
 from fastapi.testclient import TestClient
 
 from src.api.server import app
@@ -37,8 +37,8 @@ def test_t2_api_tools_active_catalog_excludes_removed_sandbox_tools(temp_db):
 
     assert response.status_code == 200
     data = response.json()
-    assert set(data.keys()) == {"total_tools", "personal_os_tools", "mcp_tools"}
-    assert data["total_tools"] == len(data["personal_os_tools"]) + len(data["mcp_tools"])
+    assert set(data.keys()) == {"total_tools", "personal_os_tools", "mcp_tools", "external_api_tools"}
+    assert data["total_tools"] == len(data["personal_os_tools"]) + len(data["mcp_tools"]) + len(data["external_api_tools"])
 
     mcp_names = {tool["name"] for tool in data["mcp_tools"]}
     assert mcp_names.isdisjoint(REMOVED_SANDBOX_TOOLS)
@@ -73,3 +73,4 @@ def test_t2_removed_target_metadata_is_not_bindable():
     bindable_names = {item.legacy_name for item in get_bindable_tool_metadata()}
     assert bindable_names.isdisjoint(REMOVED_SANDBOX_TOOLS)
     assert get_tool_metadata_by_legacy_name("run_code").implementation_type == ImplementationType.REMOVED
+

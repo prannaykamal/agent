@@ -1,4 +1,4 @@
-from typing import List, Dict, Any
+﻿from typing import List, Dict, Any
 from langchain_core.tools import BaseTool
 
 from src.mcp_gateway.communication import (
@@ -86,18 +86,27 @@ def _is_tool_provider_available(tool_name: str) -> bool:
     provider_id = _PROVIDER_FOR_TOOL.get(tool_name)
     return bool(provider_id and provider_id in _available_provider_ids())
 
+_DIRECT_API_PROVIDER_IDS = {"whatsapp_api", "telegram_bot_api"}
+
+
+def _is_direct_api_tool(tool_name: str) -> bool:
+    return _PROVIDER_FOR_TOOL.get(tool_name) in _DIRECT_API_PROVIDER_IDS
+
+
 ALL_MCP_TOOLS: List[BaseTool] = [
-    # Communication
+    # Gmail MCP compatibility wrappers
     email_read, email_search, email_draft, email_send,
-    whatsapp_read, whatsapp_send,
-    telegram_read, telegram_send,
-    # Calendar
+    # Google Calendar MCP compatibility wrappers
     calendar_inspect_availability, calendar_propose_event, calendar_create_event,
     calendar_update_event, calendar_delete_event,
-    # Search
+    # Search MCP compatibility wrapper
     search_web,
 ]
 
+ALL_EXTERNAL_API_TOOLS: List[BaseTool] = [
+    whatsapp_read, whatsapp_send,
+    telegram_read, telegram_send,
+]
 
 
 from src.mcp_gateway.mcp_bridge import load_live_mcp_tools
@@ -113,6 +122,15 @@ def get_all_mcp_tools() -> List[BaseTool]:
     active_live_tools = [tool for tool in live_tools if not is_removed_tool_name(tool.name)]
     return active_static_tools + active_live_tools
 
+def get_all_external_api_tools() -> List[BaseTool]:
+    """Returns active direct external API provider tools for graph binding."""
+    return [
+        tool
+        for tool in ALL_EXTERNAL_API_TOOLS
+        if not is_removed_tool_name(tool.name) and _is_tool_provider_available(tool.name)
+    ]
+
+
 def get_mcp_tool_risk(tool_name: str) -> str:
     """Returns the risk level for a tool by name, including T2 blocked tools."""
     if is_removed_tool_name(tool_name):
@@ -120,13 +138,28 @@ def get_mcp_tool_risk(tool_name: str) -> str:
     return _MCP_POLICY_OVERLAY_RISK.get(tool_name, "Low")
 
 def get_mcp_tool_catalog() -> List[Dict[str, Any]]:
-    """Returns catalog metadata for all registered MCP gateway tools."""
+    """Returns catalog metadata for active MCP-backed tools only."""
     tools = get_all_mcp_tools()
     return [
         {
             "name": t.name,
             "description": t.description,
             "risk_level": get_mcp_tool_risk(t.name)
+        }
+        for t in tools
+    ]
+
+
+def get_external_api_tool_catalog() -> List[Dict[str, Any]]:
+    """Returns catalog metadata for active direct external API provider tools."""
+    tools = get_all_external_api_tools()
+    return [
+        {
+            "name": t.name,
+            "description": t.description,
+            "risk_level": get_mcp_tool_risk(t.name),
+            "provider": _PROVIDER_FOR_TOOL.get(t.name),
+            "implementation_type": "external_api",
         }
         for t in tools
     ]
@@ -164,7 +197,7 @@ _DESTRUCTIVE_TOOLS = {"calendar_delete_event"}
 def get_mcp_gateway_tool_metadata() -> List[ToolMetadata]:
     """Returns transitional local-adapter metadata plus discovered provider-managed MCP metadata."""
     metadata: List[ToolMetadata] = []
-    for tool in ALL_MCP_TOOLS:
+    for tool in ALL_MCP_TOOLS + ALL_EXTERNAL_API_TOOLS:
         if is_removed_tool_name(tool.name):
             continue
         risk_class = get_mcp_tool_risk(tool.name)
@@ -202,6 +235,10 @@ def get_mcp_gateway_tool_metadata() -> List[ToolMetadata]:
         )
     metadata.extend(get_provider_managed_mcp_tool_metadata(refresh=False))
     return metadata
+
+
+
+
 
 
 

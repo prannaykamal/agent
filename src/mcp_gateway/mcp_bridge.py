@@ -1,4 +1,4 @@
-import json
+﻿import json
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from langchain_core.tools import StructuredTool, BaseTool
@@ -65,8 +65,13 @@ def load_live_mcp_tools(config_path: Optional[Path] = None) -> List[BaseTool]:
     except Exception:
         return []
 
+    from src.tools.mcp_provider_registry import target_mcp_provider_ids
+
+    allowed_provider_ids = set(target_mcp_provider_ids())
     tools: List[BaseTool] = []
     for server_name, server_cfg in mcp_servers.items():
+        if server_name not in allowed_provider_ids:
+            continue
         transport_type = server_cfg.get("transport", "stdio").lower()
         client: Optional[MCPClient] = None
 
@@ -98,3 +103,4 @@ def load_live_mcp_tools(config_path: Optional[Path] = None) -> List[BaseTool]:
                 print(f"[MCP Bridge Warning] Failed to load tools from server '{server_name}': {str(e)}")
 
     return tools
+

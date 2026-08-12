@@ -38,11 +38,11 @@ from src.memory.jobs import enqueue_post_turn_memory_jobs
 _ORIGINAL_GET_PRIMARY_LLM = get_primary_llm
 
 def get_registered_tools():
-    """Lazily fetches and maps all Personal OS native tools + MCP Gateway tools to avoid circular imports."""
+    """Lazily fetches and maps bindable local, MCP, and direct external API tools."""
     from src.personal_os.registry import get_all_personal_os_tools
-    from src.mcp_gateway.registry import get_all_mcp_tools
+    from src.mcp_gateway.registry import get_all_external_api_tools, get_all_mcp_tools
 
-    tools = get_all_personal_os_tools() + get_all_mcp_tools()
+    tools = get_all_personal_os_tools() + get_all_mcp_tools() + get_all_external_api_tools()
     tool_map = {t.name: t for t in tools}
     return tools, tool_map
 
@@ -730,6 +730,7 @@ def build_agent_graph():
 
 # Global compiled graph instance
 agent_app = build_agent_graph()
+
 
 
 

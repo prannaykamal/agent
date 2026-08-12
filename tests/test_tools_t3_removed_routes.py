@@ -1,4 +1,4 @@
-import pytest
+﻿import pytest
 from fastapi.testclient import TestClient
 
 from src.api.server import app
@@ -53,8 +53,8 @@ def test_t3_api_tools_active_catalog_excludes_removed_tools(temp_db):
     response = client.get("/api/tools")
     assert response.status_code == 200
     data = response.json()
-    assert set(data) == {"total_tools", "personal_os_tools", "mcp_tools"}
-    active_names = {item["name"] for item in data["personal_os_tools"] + data["mcp_tools"]}
+    assert set(data) == {"total_tools", "personal_os_tools", "mcp_tools", "external_api_tools"}
+    active_names = {item["name"] for item in data["personal_os_tools"] + data["mcp_tools"] + data["external_api_tools"]}
     assert active_names.isdisjoint(REMOVED_TOOLS)
     assert "search_web" not in active_names
     assert "create_task" in active_names
@@ -67,3 +67,4 @@ def test_t3_integrations_status_does_not_advertise_removed_sandboxes(temp_db):
     assert "browser" not in integrations
     assert "github" not in integrations
     assert "search" in integrations
+

@@ -1,4 +1,4 @@
-import pytest
+﻿import pytest
 from fastapi.testclient import TestClient
 
 from src.api.server import app
@@ -110,11 +110,11 @@ def test_t0_migration_baseline_api_tools_shape_and_groups_are_unchanged(temp_db)
 
     assert response.status_code == 200
     data = response.json()
-    assert set(data.keys()) == {"total_tools", "personal_os_tools", "mcp_tools"}
+    assert set(data.keys()) == {"total_tools", "personal_os_tools", "mcp_tools", "external_api_tools"}
     assert isinstance(data["total_tools"], int)
     assert isinstance(data["personal_os_tools"], list)
     assert isinstance(data["mcp_tools"], list)
-    assert data["total_tools"] == len(data["personal_os_tools"]) + len(data["mcp_tools"])
+    assert data["total_tools"] == len(data["personal_os_tools"]) + len(data["mcp_tools"]) + len(data["external_api_tools"])
 
 
 def test_t0_migration_baseline_api_tools_includes_personal_os_and_filters_unavailable_mcp(temp_db):
@@ -129,3 +129,4 @@ def test_t0_migration_baseline_api_tools_includes_personal_os_and_filters_unavai
 
     assert mcp_names.isdisjoint(BASELINE_BROWSER_SANDBOX_TOOLS_TO_REMOVE)
     assert mcp_names.isdisjoint(BASELINE_CODE_SANDBOX_TOOLS_TO_REMOVE)
+

@@ -1,3 +1,5 @@
+﻿import json
+
 from fastapi.testclient import TestClient
 
 from src.api.server import app
@@ -79,14 +81,15 @@ def test_t6_mcp_provider_api_can_return_mocked_discovered_tools(monkeypatch):
     assert detail_response.json()["tools"][0]["tool_id"] == "mcp.gmail.gmail_send"
 
 
-def test_t6_api_tools_shape_remains_compatible():
+def test_t6_api_tools_shape_remains_compatible_with_external_api_bucket():
     response = client.get("/api/tools")
 
     assert response.status_code == 200
     data = response.json()
-    assert set(data) == {"total_tools", "personal_os_tools", "mcp_tools"}
+    assert set(data) == {"total_tools", "personal_os_tools", "mcp_tools", "external_api_tools"}
     assert isinstance(data["personal_os_tools"], list)
     assert isinstance(data["mcp_tools"], list)
+    assert isinstance(data["external_api_tools"], list)
 
 
 def test_t6_mcp_provider_discover_endpoint_is_explicit_metadata_refresh(monkeypatch):
@@ -139,6 +142,62 @@ def test_t6_unknown_whatsapp_telegram_mcp_details_404():
     assert client.get("/api/tools/mcp/providers/telegram").status_code == 404
 
 
+def test_t6_live_mcp_bridge_skips_stale_whatsapp_telegram_config(tmp_path, monkeypatch, capsys):
+    from src.mcp_gateway.mcp_bridge import load_live_mcp_tools
+
+    config_path = tmp_path / "mcp_config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "whatsapp": {"transport": "stdio", "command": "whatsapp-cmd"},
+                    "telegram": {"transport": "stdio", "command": "telegram-cmd"},
+                    "gmail": {"transport": "stdio", "command": "gmail-cmd"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    attempts = []
+
+    class FakeTransport:
+        def __init__(self, command, args=None, env=None, cwd=None):
+            self.command = command
+
+    class FakeClient:
+        def __init__(self, transport):
+            attempts.append(transport.command)
+
+        def list_tools(self):
+            return []
+
+    monkeypatch.setattr("src.mcp_gateway.mcp_bridge.StdioMCPTransport", FakeTransport)
+    monkeypatch.setattr("src.mcp_gateway.mcp_bridge.MCPClient", FakeClient)
+
+    assert load_live_mcp_tools(config_path) == []
+    assert attempts == ["gmail-cmd"]
+    captured = capsys.readouterr()
+    assert "server 'whatsapp'" not in captured.out
+    assert "server 'telegram'" not in captured.out
+
+
+def test_t6_direct_api_tools_are_not_in_mcp_tools_bucket(monkeypatch):
+    monkeypatch.setenv("WHATSAPP_API_TOKEN", "fake-whatsapp-token")
+    monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "phone-id")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-telegram-token")
+    monkeypatch.setattr("src.mcp_gateway.registry.load_live_mcp_tools", lambda: [])
+
+    response = client.get("/api/tools")
+
+    assert response.status_code == 200
+    data = response.json()
+    mcp_names = {item["name"] for item in data["mcp_tools"]}
+    external_names = {item["name"] for item in data["external_api_tools"]}
+    direct_names = {"whatsapp_read", "whatsapp_send", "telegram_read", "telegram_send"}
+    assert mcp_names.isdisjoint(direct_names)
+    assert direct_names.issubset(external_names)
+
+
 def test_t6_external_provider_status_redacts_tokens(monkeypatch):
     monkeypatch.setenv("WHATSAPP_API_TOKEN", "super-secret-whatsapp-token")
     monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "phone-id")
@@ -152,3 +211,28 @@ def test_t6_external_provider_status_redacts_tokens(monkeypatch):
     assert "super-secret-telegram-token" not in text
     assert "WHATSAPP_API_TOKEN" in text
     assert "TELEGRAM_BOT_TOKEN" in text
+
+
+def test_t6_direct_provider_invocation_errors_redact_secret_values(monkeypatch):
+    from src.external_providers import telegram_bot_api, whatsapp_api
+
+    telegram_token = "123456:telegram-secret-value"
+    whatsapp_token = "whatsapp-secret-value"
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", telegram_token)
+    monkeypatch.setenv("WHATSAPP_API_TOKEN", whatsapp_token)
+    monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "phone-id")
+
+    def fake_urlopen(request, timeout=20):
+        full_url = getattr(request, "full_url", "")
+        auth = request.headers.get("Authorization", "")
+        raise RuntimeError(f"failed url={full_url} auth={auth}")
+
+    monkeypatch.setattr("src.external_providers.common.urllib.request.urlopen", fake_urlopen)
+
+    telegram_result = telegram_bot_api.send_message(chat_id="chat", text="hello")
+    whatsapp_result = whatsapp_api.send_message(recipient="+123", message="hello")
+    combined = f"{telegram_result.to_text('Telegram')} {telegram_result.to_dict()} {whatsapp_result.to_text('WhatsApp')} {whatsapp_result.to_dict()}"
+
+    assert telegram_token not in combined
+    assert whatsapp_token not in combined
+    assert "[REDACTED]" in combined

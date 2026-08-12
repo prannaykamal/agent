@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import os
@@ -10,6 +10,10 @@ from typing import Any, Dict, Iterable, Mapping, Optional
 
 _SECRET_MARKERS = ("token", "secret", "password", "credential", "authorization", "api_key")
 _PLACEHOLDER_MARKERS = ("", "your_", "placeholder", "changeme", "replace_me")
+_SECRET_ENV_VARS = (
+    "WHATSAPP_API_TOKEN",
+    "TELEGRAM_BOT_TOKEN",
+)
 
 
 class ExternalProviderAvailability(str, Enum):
@@ -72,14 +76,14 @@ class ExternalProviderResult:
     def to_text(self, label: str) -> str:
         if self.ok:
             return self.content or f"{label} action completed."
-        detail = self.error or self.content or "Provider is unavailable."
+        detail = redact_text(self.error or self.content or "Provider is unavailable.") or "Provider is unavailable."
         return f"{label} Unavailable: {detail}"
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "status": self.status.value,
             "provider_id": self.provider_id,
-            "content": self.content,
+            "content": redact_text(self.content),
             "error": redact_text(self.error),
             "audit_metadata": redact_payload(self.audit_metadata),
         }
@@ -102,10 +106,21 @@ def missing_env_vars(names: Iterable[str]) -> tuple[str, ...]:
     return tuple(name for name in names if not _is_configured_value(_env_value(name)))
 
 
+def _configured_secret_values() -> tuple[str, ...]:
+    values = []
+    for name in _SECRET_ENV_VARS:
+        value = _env_value(name)
+        if _is_configured_value(value) and len(value) >= 4:
+            values.append(value)
+    return tuple(values)
+
+
 def redact_text(value: Optional[str], *, limit: int = 240) -> Optional[str]:
     if value is None:
         return None
     text = str(value)
+    for secret in _configured_secret_values():
+        text = text.replace(secret, "[REDACTED]")
     lowered = text.lower()
     if any(marker in lowered for marker in _SECRET_MARKERS):
         return "[REDACTED]"
@@ -124,6 +139,8 @@ def redact_payload(value: Any) -> Any:
         return redacted
     if isinstance(value, list):
         return [redact_payload(item) for item in value]
+    if isinstance(value, str):
+        return redact_text(value)
     return value
 
 
@@ -186,11 +203,11 @@ def post_json(url: str, payload: Mapping[str, Any], *, headers: Mapping[str, str
                 content="Provider API call succeeded.",
                 audit_metadata={
                     "status_code": getattr(response, "status", None),
-                    "response_preview": body[:160],
+                    "response_preview": redact_text(body[:160]),
                 },
             )
     except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")[:240]
+        detail = redact_text(exc.read().decode("utf-8", errors="replace")[:240]) or "Provider HTTP error"
         return ExternalProviderResult(
             status=ExternalProviderInvocationStatus.INVOCATION_FAILED,
             provider_id=provider_id,
@@ -202,4 +219,3 @@ def post_json(url: str, payload: Mapping[str, Any], *, headers: Mapping[str, str
             provider_id=provider_id,
             error=redact_text(str(exc)) or "Provider invocation failed.",
         )
-
