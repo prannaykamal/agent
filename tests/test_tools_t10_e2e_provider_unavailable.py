@@ -26,7 +26,9 @@ def test_t10_app_api_survives_without_target_mcp_providers(client):
     assert providers.status_code == 200
     body = providers.json()
     provider_ids = {item["provider_id"] for item in body["providers"]}
-    assert provider_ids >= {"search_tavily", "search_duckduckgo", "google_calendar", "gmail", "whatsapp", "telegram"}
+    assert provider_ids >= {"search_tavily", "search_duckduckgo", "google_calendar", "gmail"}
+    assert "whatsapp" not in provider_ids
+    assert "telegram" not in provider_ids
     assert all(item["availability_status"] == "unavailable" for item in body["providers"])
 
     tools_status = client.get("/api/tools/status")

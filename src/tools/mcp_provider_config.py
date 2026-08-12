@@ -44,8 +44,6 @@ TARGET_MCP_PROVIDER_ALIASES: Dict[str, List[str]] = {
     "search_tavily": ["search_tavily", "tavily"],
     "search_duckduckgo": ["search_duckduckgo", "duckduckgo", "duckduckgo.query"],
     "google_calendar": ["google_calendar", "calendar"],
-    "whatsapp": ["whatsapp"],
-    "telegram": ["telegram"],
     "gmail": ["gmail", "google_gmail"],
 }
 
@@ -134,16 +132,6 @@ TARGET_MCP_PROVIDER_DEFAULTS: Dict[str, MCPProviderConfig] = {
         provider_id="google_calendar",
         display_name="Google Calendar MCP",
         expected_tool_hints=["calendar", "events"],
-    ),
-    "whatsapp": MCPProviderConfig(
-        provider_id="whatsapp",
-        display_name="WhatsApp MCP",
-        expected_tool_hints=["messages", "send_message"],
-    ),
-    "telegram": MCPProviderConfig(
-        provider_id="telegram",
-        display_name="Telegram MCP",
-        expected_tool_hints=["messages", "send_message"],
     ),
     "gmail": MCPProviderConfig(
         provider_id="gmail",
@@ -258,3 +246,4 @@ def load_target_mcp_provider_configs(config_path: Optional[Path] = None) -> Dict
             last_error=None,
         )
     return configs
+

@@ -1,5 +1,6 @@
 from langchain_core.tools import tool
 
+from src.external_providers import telegram_bot_api, whatsapp_api
 from src.tools import mcp_invocation
 
 
@@ -38,23 +39,23 @@ def email_send(to: str, subject: str, body: str) -> str:
 
 @tool
 def whatsapp_read(limit: int = 5) -> str:
-    """Reads WhatsApp messages through WhatsApp MCP only."""
-    return _invoke("whatsapp", ("read", "list", "messages"), {"limit": limit}, "WhatsApp MCP")
+    """Reports WhatsApp API direct-provider status; message send uses direct API after HITL approval."""
+    return whatsapp_api.read_status(limit=limit).to_text("WhatsApp API")
 
 
 @tool
 def whatsapp_send(recipient: str, message: str) -> str:
-    """Sends WhatsApp messages through WhatsApp MCP only. Requires HITL approval by policy."""
-    return _invoke("whatsapp", ("send", "send_message"), {"recipient": recipient, "message": message}, "WhatsApp MCP")
+    """Sends WhatsApp messages through the direct WhatsApp API. Requires HITL approval by policy."""
+    return whatsapp_api.send_message(recipient=recipient, message=message).to_text("WhatsApp API")
 
 
 @tool
 def telegram_read(limit: int = 5) -> str:
-    """Reads Telegram messages through Telegram MCP only."""
-    return _invoke("telegram", ("read", "list", "messages"), {"limit": limit}, "Telegram MCP")
+    """Reports Telegram Bot API direct-provider status; sends use direct API after HITL approval."""
+    return telegram_bot_api.read_status(limit=limit).to_text("Telegram Bot API")
 
 
 @tool
 def telegram_send(chat_id: str, text: str) -> str:
-    """Sends Telegram messages through Telegram MCP only. Requires HITL approval by policy."""
-    return _invoke("telegram", ("send", "send_message"), {"chat_id": chat_id, "text": text}, "Telegram MCP")
+    """Sends Telegram messages through the direct Telegram Bot API. Requires HITL approval by policy."""
+    return telegram_bot_api.send_message(chat_id=chat_id, text=text).to_text("Telegram Bot API")

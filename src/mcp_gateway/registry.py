@@ -50,10 +50,10 @@ _PROVIDER_FOR_TOOL: Dict[str, str] = {
     "email_search": "gmail",
     "email_draft": "gmail",
     "email_send": "gmail",
-    "whatsapp_read": "whatsapp",
-    "whatsapp_send": "whatsapp",
-    "telegram_read": "telegram",
-    "telegram_send": "telegram",
+    "whatsapp_read": "whatsapp_api",
+    "whatsapp_send": "whatsapp_api",
+    "telegram_read": "telegram_bot_api",
+    "telegram_send": "telegram_bot_api",
     "calendar_inspect_availability": "google_calendar",
     "calendar_propose_event": "google_calendar",
     "calendar_create_event": "google_calendar",
@@ -68,10 +68,19 @@ def _available_provider_ids() -> set[str]:
 
     statuses = get_mcp_provider_statuses(include_config=False)
     available = {item["provider_id"] for item in statuses if item.get("availability_status") == "available"}
+    try:
+        from src.external_providers.registry import get_external_provider_statuses
+
+        available.update(
+            item["provider_id"]
+            for item in get_external_provider_statuses()
+            if item.get("availability_status") == "configured"
+        )
+    except Exception:
+        pass
     if "search_tavily" in available or "search_duckduckgo" in available:
         available.add("search")
     return available
-
 
 def _is_tool_provider_available(tool_name: str) -> bool:
     provider_id = _PROVIDER_FOR_TOOL.get(tool_name)
@@ -127,10 +136,10 @@ _MCP_GATEWAY_TOOL_CATEGORIES: Dict[str, str] = {
     "email_search": "gmail_legacy_adapter",
     "email_draft": "gmail_legacy_adapter",
     "email_send": "gmail_legacy_adapter",
-    "whatsapp_read": "whatsapp_legacy_adapter",
-    "whatsapp_send": "whatsapp_legacy_adapter",
-    "telegram_read": "telegram_legacy_adapter",
-    "telegram_send": "telegram_legacy_adapter",
+    "whatsapp_read": "whatsapp_api_direct",
+    "whatsapp_send": "whatsapp_api_direct",
+    "telegram_read": "telegram_bot_api_direct",
+    "telegram_send": "telegram_bot_api_direct",
     "calendar_inspect_availability": "google_calendar_legacy_adapter",
     "calendar_propose_event": "google_calendar_legacy_adapter",
     "calendar_create_event": "google_calendar_legacy_adapter",
@@ -161,12 +170,16 @@ def get_mcp_gateway_tool_metadata() -> List[ToolMetadata]:
         risk_class = get_mcp_tool_risk(tool.name)
         metadata.append(
             ToolMetadata(
-                tool_id=f"mcp.gateway_legacy.{normalize_tool_id_part(tool.name)}",
+                tool_id=(
+                    f"external_api.{_PROVIDER_FOR_TOOL.get(tool.name)}.{normalize_tool_id_part(tool.name)}"
+                    if _PROVIDER_FOR_TOOL.get(tool.name) in {"whatsapp_api", "telegram_bot_api"}
+                    else f"mcp.gateway_legacy.{normalize_tool_id_part(tool.name)}"
+                ),
                 legacy_name=tool.name,
                 display_name=tool.name.replace("_", " ").title(),
                 provider=_PROVIDER_FOR_TOOL.get(tool.name, "mcp_gateway"),
                 category=_MCP_GATEWAY_TOOL_CATEGORIES.get(tool.name, "provider_managed_mcp"),
-                implementation_type=ImplementationType.MCP,
+                implementation_type=ImplementationType.EXTERNAL_API if _PROVIDER_FOR_TOOL.get(tool.name) in {"whatsapp_api", "telegram_bot_api"} else ImplementationType.MCP,
                 enabled=_is_tool_provider_available(tool.name),
                 availability_status=AvailabilityStatus.AVAILABLE if _is_tool_provider_available(tool.name) else AvailabilityStatus.UNAVAILABLE,
                 risk_class=risk_class,
@@ -175,18 +188,22 @@ def get_mcp_gateway_tool_metadata() -> List[ToolMetadata]:
                 external_side_effect=tool.name in _EXTERNAL_SIDE_EFFECT_TOOLS,
                 destructive=tool.name in _DESTRUCTIVE_TOOLS,
                 scheduled_capable=False,
-                provider_managed=True,
+                provider_managed=False if _PROVIDER_FOR_TOOL.get(tool.name) in {"whatsapp_api", "telegram_bot_api"} else True,
                 input_schema=schema_from_langchain_tool(tool),
                 output_schema_hint="text",
                 observability_metadata={
-                    "migration_phase": "T7",
+                    "migration_phase": "direct_api_change" if _PROVIDER_FOR_TOOL.get(tool.name) in {"whatsapp_api", "telegram_bot_api"} else "T7",
                     "compatibility_wrapper": True,
                     "legacy_local_adapter_backed": False,
-                    "provider_managed_target": True,
+                    "provider_managed_target": False if _PROVIDER_FOR_TOOL.get(tool.name) in {"whatsapp_api", "telegram_bot_api"} else True,
                     "registry_source": "src.mcp_gateway.registry",
                 },
             )
         )
     metadata.extend(get_provider_managed_mcp_tool_metadata(refresh=False))
     return metadata
+
+
+
+
 

@@ -54,6 +54,7 @@ export default function OverviewCockpit({ activeSessionId, onRefresh }) {
   const [health, setHealth] = useState(null);
   const [integrations, setIntegrations] = useState(null);
   const [mcpProviders, setMcpProviders] = useState([]);
+  const [externalProviders, setExternalProviders] = useState([]);
   const [workerObs, setWorkerObs] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -75,11 +76,12 @@ export default function OverviewCockpit({ activeSessionId, onRefresh }) {
     try {
       const sess = activeSessionId || 'default_session';
 
-      const [histRes, healthRes, intRes, mcpRes, workerRes] = await Promise.allSettled([
+      const [histRes, healthRes, intRes, mcpRes, externalRes, workerRes] = await Promise.allSettled([
         api.get(`/api/history/${sess}`),
         api.get('/api/system/health'),
         api.get('/api/integrations/status'),
         api.get('/api/tools/mcp/providers'),
+        api.get('/api/tools/external/providers'),
         api.get('/api/memory/observability/workers')
       ]);
 
@@ -87,18 +89,20 @@ export default function OverviewCockpit({ activeSessionId, onRefresh }) {
       const dataHealth = healthRes.status === 'fulfilled' ? healthRes.value : null;
       const dataInt = intRes.status === 'fulfilled' ? intRes.value : null;
       const dataMcp = mcpRes.status === 'fulfilled' ? mcpRes.value : null;
+      const dataExternal = externalRes.status === 'fulfilled' ? externalRes.value : null;
       const dataWorkers = workerRes.status === 'fulfilled' ? workerRes.value : null;
 
       setHealth(dataHealth);
       setIntegrations(dataInt?.integrations || null);
-      setMcpProviders(dataMcp?.providers || []);
+      setMcpProviders((dataMcp?.providers || []).map(p => ({ ...p, provider_layer: 'mcp' })));
+      setExternalProviders((dataExternal?.providers || []).map(p => ({ ...p, provider_layer: 'external_api' })));
       setWorkerObs(dataWorkers?.summary || null);
 
       setTelemetry({
         session_id: sess,
         total_turns: dataHist.total_turns || 0,
         gate_status: 'Active (Hybrid SQL/FTS5)',
-        tool_status: 'Personal OS + cron + provider-managed MCP',
+        tool_status: 'Personal OS + cron + provider-managed MCP + direct APIs',
         memory_sync: 'Synced (.agent/MEMORY.md)'
       });
     } catch (e) {
@@ -287,8 +291,9 @@ export default function OverviewCockpit({ activeSessionId, onRefresh }) {
                       <StatusBadge status={p.availability_status} />
                     </div>
                     <div style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'flex', gap: '12px' }}>
-                      <span>Transport: <code>{p.transport || 'stdio'}</code></span>
-                      <span>Tools: <strong>{p.tool_count || 0}</strong></span>
+                      <span>Layer: <code>{p.provider_layer === 'external_api' ? 'Direct API' : 'MCP'}</code></span>
+                      <span>Transport: <code>{p.transport_type || p.transport || 'external_api'}</code></span>
+                      <span>Tools: <strong>{p.tool_count ?? (p.capabilities?.length || 0)}</strong></span>
                     </div>
                     {p.last_error && (
                       <div style={{ fontSize: '11px', color: '#ff6b6b', marginTop: '4px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -299,7 +304,7 @@ export default function OverviewCockpit({ activeSessionId, onRefresh }) {
                 ))}
               </div>
             ) : (
-              <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>No MCP providers registered.</div>
+              <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>No providers registered.</div>
             )}
           </div>
 

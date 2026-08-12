@@ -43,20 +43,25 @@ def setup_langsmith_tracing():
 setup_langsmith_tracing()
 
 def validate_integration_environment() -> dict:
-    """Reports target provider readiness from provider-managed MCP status only."""
+    """Reports provider readiness using MCP status for MCP providers and direct API status for WhatsApp/Telegram."""
+    from src.external_providers.registry import get_external_provider_statuses
     from src.tools.mcp_provider_registry import get_mcp_provider_statuses
 
     statuses = {item["provider_id"]: item for item in get_mcp_provider_statuses(include_config=False)}
+    external = {item["provider_id"]: item for item in get_external_provider_statuses()}
 
     def available(provider_id: str) -> bool:
         return statuses.get(provider_id, {}).get("availability_status") == "available"
+
+    def direct_configured(provider_id: str) -> bool:
+        return external.get(provider_id, {}).get("availability_status") == "configured"
 
     return {
         "smtp": available("gmail"),
         "imap": available("gmail"),
         "tavily": available("search_tavily"),
-        "telegram": available("telegram"),
-        "whatsapp": available("whatsapp"),
+        "telegram": direct_configured("telegram_bot_api"),
+        "whatsapp": direct_configured("whatsapp_api"),
         "google_calendar": available("google_calendar"),
     }
 

@@ -7,10 +7,10 @@ This document describes the final tools architecture after the T0-T10 tools migr
 The system has three tool classes:
 
 - Local non-MCP tools: bounded Personal OS actions and the local cron scheduler.
-- Provider-managed MCP tools: Tavily or DuckDuckGo Search, Google Calendar, Gmail, WhatsApp, and Telegram.
+- Provider-managed MCP tools: Tavily or DuckDuckGo Search, Google Calendar, and Gmail. Direct external API tools: WhatsApp API and Telegram Bot API.
 - Removed tools: browser sandbox and code/GitHub sandbox tools.
 
-MCP providers own provider behavior. Local code discovers, registers, policy-gates, invokes through MCP, observes, and reports errors. It does not implement provider-specific search, calendar, mail, WhatsApp, or Telegram behavior locally.
+MCP providers own Search, Google Calendar, and Gmail behavior. Local code discovers, registers, policy-gates, invokes through MCP, observes, and reports errors for those MCP providers. WhatsApp and Telegram intentionally use direct external API boundaries with redacted status, policy-gated invocation, and HITL-required sends.
 
 ## Local Tools
 
@@ -26,12 +26,19 @@ Target MCP providers are represented by stable provider IDs:
 - `search_duckduckgo`
 - `google_calendar`
 - `gmail`
-- `whatsapp`
-- `telegram`
 
 Provider discovery loads `.agent/mcp_config.json`, connects only through MCP transports, calls `tools/list`, and normalizes returned schemas into registry metadata. Invocation uses MCP `tools/call` only.
 
 If a provider is not configured, fails discovery, or lacks a requested capability, the local system returns a safe unavailable result. It does not fall back to old local provider adapters.
+
+## Direct External API Providers
+
+WhatsApp and Telegram are not MCP providers. They are represented by stable direct provider IDs:
+
+- `whatsapp_api`
+- `telegram_bot_api`
+
+They are exposed through direct-provider status APIs, not MCP discovery. Send actions require HITL approval and revalidation of provider configuration before execution. Status output exposes environment variable names and configured/missing flags only; token values are never returned.
 
 ## Registry and Routing
 
@@ -39,6 +46,7 @@ The unified registry separates:
 
 - `implementation_type = local`
 - `implementation_type = mcp`
+- `implementation_type = external_api`
 - `implementation_type = removed`
 
 Bindable tools are enabled, available, and not removed. Removed tools remain visible only as blocked metadata for policy and observability.
@@ -96,6 +104,7 @@ The completed memory architecture remains separate:
 
 - Removed sandbox tools are absent from active runtime surfaces.
 - Provider-managed MCP tools are discovered and invoked only through MCP protocol boundaries.
+- WhatsApp/Telegram tools use direct external API provider boundaries and are not MCP-discovered.
 - Local duplicate provider implementations are not active.
 - Personal OS is bounded and local.
 - Cron uses durable schedule/run tables, not `memory_jobs`.

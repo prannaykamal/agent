@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional
 class ImplementationType(str, Enum):
     LOCAL = "local"
     MCP = "mcp"
+    EXTERNAL_API = "external_api"
     REMOVED = "removed"
 
 
@@ -169,4 +170,5 @@ def schema_from_langchain_tool(tool: Any) -> Optional[Dict[str, Any]]:
             except Exception:
                 return None
     return None
+
 

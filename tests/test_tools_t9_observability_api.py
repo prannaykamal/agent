@@ -69,11 +69,18 @@ def test_t9_calls_results_audit_and_blocked_endpoints_are_read_only(client):
 
 def test_t9_provider_status_is_frontend_safe(client):
     response = client.get("/api/tools/mcp/providers")
+    external_response = client.get("/api/tools/external/providers")
     assert response.status_code == 200
+    assert external_response.status_code == 200
     providers = response.json()["providers"]
-    assert {provider["provider_id"] for provider in providers} >= {"gmail", "google_calendar", "whatsapp", "telegram", "search_tavily", "search_duckduckgo"}
-    for provider in providers:
+    external = external_response.json()["providers"]
+    mcp_ids = {provider["provider_id"] for provider in providers}
+    external_ids = {provider["provider_id"] for provider in external}
+    assert mcp_ids >= {"gmail", "google_calendar", "search_tavily", "search_duckduckgo"}
+    assert "whatsapp" not in mcp_ids
+    assert "telegram" not in mcp_ids
+    assert external_ids >= {"whatsapp_api", "telegram_bot_api"}
+    for provider in providers + external:
         assert "provider_id" in provider
         assert "availability_status" in provider
-        assert "tool_count" in provider
         assert "env" not in provider

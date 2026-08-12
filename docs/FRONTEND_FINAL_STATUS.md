@@ -3,7 +3,7 @@
 ## Executive Summary
 This document records the final integration state, testing results, and operational context for the ASTRA Personal Assistant Cockpit frontend (Tasks F0–F8) following resolution of the Codex review blockers.
 
-The frontend operates as a unified single-page React application connected to the FastAPI backend service (`src/api/server.py`). All component states, approval workflows, scheduler operations, MCP discovery views, memory fact entry, skill management, data inspection, and system backup/restore admin functions have been wired, verified, and aligned with backend API contracts.
+The frontend operates as a unified single-page React application connected to the FastAPI backend service (`src/api/server.py`). All component states, approval workflows, scheduler operations, MCP discovery views, direct provider status views, memory fact entry, skill management, data inspection, and system backup/restore admin functions have been wired, verified, and aligned with backend API contracts.
 
 ---
 
@@ -32,7 +32,7 @@ The frontend operates as a unified single-page React application connected to th
 - **Approval Inbox**: Integrated `ApprovalInbox.jsx` for bulk and historical approval management (`GET /api/approvals`, `POST /api/approvals/{id}/decision`).
 
 ### Task F2 — Overview & Integration Status Realignment
-- **System Telemetry**: Realigned `OverviewCockpit.jsx` to query `GET /api/system/health`, `GET /api/integrations/status`, `GET /api/tools/mcp/providers`, and `GET /api/memory/observability/workers`.
+- **System Telemetry**: Realigned `OverviewCockpit.jsx` to query `GET /api/system/health`, `GET /api/integrations/status`, `GET /api/tools/mcp/providers`, `GET /api/tools/external/providers`, and `GET /api/memory/observability/workers`.
 - **Integrations Readiness**: Replaced speculative provider status checks with real backend readiness flags (`MCP_AVAILABLE` vs `MCP_UNAVAILABLE`).
 - **Worker Telemetry**: Displayed real worker heartbeat count vs stale workers threshold (`/api/memory/observability/workers`) rather than treating `worker_status: "RUNNING"` as precise worker state.
 
@@ -43,7 +43,7 @@ The frontend operates as a unified single-page React application connected to th
 - **Inspection & Safe Update**: Added schedule detail modal (`GET /api/tools/cron/schedules/{id}`) and safe schedule edit modal (`PATCH /api/tools/cron/schedules/{id}`).
 
 ### Task F4 — Tools Ops & MCP Discovery Refinement
-- **Tools Status Summary**: Wired `GET /api/tools/status` into `ToolsOpsCockpit.jsx` to display bindable tools, MCP provider readiness, policy rules, and removed tools.
+- **Tools Status Summary**: Wired `GET /api/tools/status` into `ToolsOpsCockpit.jsx` to display bindable tools, MCP provider readiness, direct API provider readiness, policy rules, and removed tools.
 - **MCP Provider Inspection**: Added provider detail inspection drawer (`GET /api/tools/mcp/providers/{id}`) with redacted credential indicators and discovered tool metadata.
 - **Safe Metadata Refresh**: Added explicit `🔄 Refresh Metadata` action (`POST /api/tools/mcp/providers/{id}/discover`) with clear user feedback (no external write side-effects).
 - **Observability Sub-Tabs**: Added dedicated sub-navigation tabs for standalone tool calls, results, Personal OS audit events, and blocked attempts.
@@ -94,3 +94,9 @@ python -m pytest tests/test_frontend_api.py tests/test_p2_frontend_smoke.py test
 1. **Local Frontend Blockers**: **ALL 3 LOCAL BLOCKERS RESOLVED**. Zero frontend runtime errors or contract mismatches remain.
 2. **Environment Blocked Test**: The single failing test (`test_p2_4_chat_send_flow_browser_ui`) is strictly an environment/live-provider issue, separate from local frontend code.
 3. **Readiness**: The codebase is **READY FOR CODEX RE-REVIEW** prior to tagging `frontend-integration-v1`.
+
+
+## Provider Architecture Update
+
+WhatsApp and Telegram are no longer displayed as MCP providers. The frontend reads direct provider status for `whatsapp_api` and `telegram_bot_api` from `/api/tools/external/providers`, while Gmail, Google Calendar, and Search remain MCP provider entries under `/api/tools/mcp/providers`.
+

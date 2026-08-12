@@ -145,13 +145,15 @@ def _metadata_group(item: Dict[str, Any]) -> str:
         return "personal_os"
     if item.get("implementation_type") == "mcp":
         return "mcp"
+    if item.get("implementation_type") == "external_api":
+        return "external_api"
     return "other"
 
 
 def get_tool_registry_observability() -> Dict[str, Any]:
     metadata = [item.to_dict() for item in get_all_tool_metadata_for_policy()]
     bindable_names = {item.legacy_name for item in get_bindable_tool_metadata()}
-    grouped: Dict[str, List[Dict[str, Any]]] = {"personal_os": [], "cron": [], "mcp": [], "removed": [], "other": []}
+    grouped: Dict[str, List[Dict[str, Any]]] = {"personal_os": [], "cron": [], "mcp": [], "external_api": [], "removed": [], "other": []}
     for item in metadata:
         item["bindable"] = item["legacy_name"] in bindable_names
         grouped.setdefault(_metadata_group(item), []).append(redact_observability_value(item))
@@ -189,13 +191,26 @@ def get_policy_matrix_observability() -> Dict[str, Any]:
 
 
 def get_provider_status_observability() -> Dict[str, Any]:
+    from src.external_providers.registry import get_external_provider_statuses
     from src.tools.mcp_provider_registry import get_mcp_provider_statuses
 
-    providers = get_mcp_provider_statuses(include_config=False, refresh=False)
+    mcp_providers = get_mcp_provider_statuses(include_config=False, refresh=False)
+    external_providers = get_external_provider_statuses()
+    all_providers = [
+        {**provider, "provider_layer": "mcp"}
+        for provider in mcp_providers
+    ] + [
+        {**provider, "provider_layer": "external_api"}
+        for provider in external_providers
+    ]
     return {
-        "providers": redact_observability_value(providers),
-        "total_providers": len(providers),
-        "available_providers": sum(1 for provider in providers if provider.get("availability_status") == "available"),
+        "providers": redact_observability_value(all_providers),
+        "mcp_providers": redact_observability_value(mcp_providers),
+        "external_api_providers": redact_observability_value(external_providers),
+        "total_providers": len(all_providers),
+        "available_providers": sum(1 for provider in all_providers if provider.get("availability_status") in ("available", "configured")),
+        "mcp_provider_count": len(mcp_providers),
+        "external_api_provider_count": len(external_providers),
     }
 
 
@@ -300,3 +315,4 @@ def get_tools_observability_overview(limit: int = 20) -> Dict[str, Any]:
         "audit": get_tool_audit_observability(limit=limit),
         "blocked": get_blocked_tool_observability(limit=limit),
     }
+

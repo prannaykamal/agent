@@ -19,10 +19,10 @@ def test_t6_mcp_provider_status_api_lists_all_target_providers():
         "search_tavily",
         "search_duckduckgo",
         "google_calendar",
-        "whatsapp",
-        "telegram",
         "gmail",
     }
+    assert "whatsapp" not in provider_ids
+    assert "telegram" not in provider_ids
     assert all("tools" in provider for provider in data["providers"])
 
 
@@ -118,3 +118,37 @@ def test_t6_mcp_provider_discover_endpoint_is_explicit_metadata_refresh(monkeypa
     assert response.status_code == 200
     assert response.json()["availability_status"] == "available"
     assert calls == [{"provider_id": "gmail", "refresh": True, "include_config": False}]
+
+
+def test_t6_whatsapp_telegram_are_direct_external_api_providers_not_mcp():
+    mcp_response = client.get("/api/tools/mcp/providers")
+    external_response = client.get("/api/tools/external/providers")
+
+    assert mcp_response.status_code == 200
+    assert external_response.status_code == 200
+    mcp_ids = {provider["provider_id"] for provider in mcp_response.json()["providers"]}
+    external_ids = {provider["provider_id"] for provider in external_response.json()["providers"]}
+
+    assert "whatsapp" not in mcp_ids
+    assert "telegram" not in mcp_ids
+    assert {"whatsapp_api", "telegram_bot_api"}.issubset(external_ids)
+
+
+def test_t6_unknown_whatsapp_telegram_mcp_details_404():
+    assert client.get("/api/tools/mcp/providers/whatsapp").status_code == 404
+    assert client.get("/api/tools/mcp/providers/telegram").status_code == 404
+
+
+def test_t6_external_provider_status_redacts_tokens(monkeypatch):
+    monkeypatch.setenv("WHATSAPP_API_TOKEN", "super-secret-whatsapp-token")
+    monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "phone-id")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "super-secret-telegram-token")
+
+    response = client.get("/api/tools/external/providers")
+
+    assert response.status_code == 200
+    text = str(response.json())
+    assert "super-secret-whatsapp-token" not in text
+    assert "super-secret-telegram-token" not in text
+    assert "WHATSAPP_API_TOKEN" in text
+    assert "TELEGRAM_BOT_TOKEN" in text

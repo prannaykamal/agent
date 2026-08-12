@@ -21,12 +21,10 @@ def test_t6_search_tools_are_read_only_external_without_approval():
     assert scheduled is False
 
 
-def test_t6_provider_policy_overlays_are_conservative_for_writes():
+def test_t6_provider_policy_overlays_are_conservative_for_mcp_writes():
     assert classify_mcp_tool("google_calendar", "calendar_create_event")[1] == ApprovalPolicy.APPROVAL_REQUIRED
     assert classify_mcp_tool("gmail", "gmail_send")[1] == ApprovalPolicy.APPROVAL_REQUIRED
     assert classify_mcp_tool("gmail", "gmail_draft")[1] == ApprovalPolicy.CONFIRMATION_RECOMMENDED
-    assert classify_mcp_tool("whatsapp", "send_message")[1] == ApprovalPolicy.APPROVAL_REQUIRED
-    assert classify_mcp_tool("telegram", "telegram_send_message")[1] == ApprovalPolicy.APPROVAL_REQUIRED
 
 
 def test_t6_normalized_tool_metadata_is_provider_managed_and_stable():

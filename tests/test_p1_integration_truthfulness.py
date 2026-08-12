@@ -15,7 +15,7 @@ def test_calendar_mcp_unavailable_truthfulness():
     res_create = calendar_create_event.invoke({"title": "Sync Test", "start_time": "2026-08-01 10:00", "end_time": "2026-08-01 11:00"})
     assert "Unavailable" in res_create
 
-def test_whatsapp_telegram_mcp_unavailable_truthfulness():
+def test_whatsapp_telegram_direct_api_unavailable_truthfulness():
     """WhatsApp/Telegram wrappers do not fall back to local storage when MCP is unavailable."""
     assert "Unavailable" in whatsapp_read.invoke({"limit": 5})
     assert "Unavailable" in whatsapp_send.invoke({"recipient": "+1234567890", "message": "Test WA"})
@@ -34,10 +34,10 @@ def test_api_integrations_status():
     assert integrations["calendar"]["truthfulness"] in ("PROVIDER_MANAGED_MCP", "UNAVAILABLE")
 
     assert "whatsapp" in integrations
-    assert integrations["whatsapp"]["truthfulness"] in ("PROVIDER_MANAGED_MCP", "UNAVAILABLE")
+    assert integrations["whatsapp"]["truthfulness"] in ("DIRECT_API", "UNAVAILABLE")
 
     assert "telegram" in integrations
-    assert integrations["telegram"]["truthfulness"] in ("PROVIDER_MANAGED_MCP", "UNAVAILABLE")
+    assert integrations["telegram"]["truthfulness"] in ("DIRECT_API", "UNAVAILABLE")
 
     assert "search" in integrations
     assert integrations["search"]["truthfulness"] in ("PROVIDER_MANAGED_MCP", "UNAVAILABLE")

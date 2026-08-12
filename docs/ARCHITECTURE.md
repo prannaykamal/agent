@@ -54,8 +54,8 @@ ASTRA categorizes tool features into three distinct operational modes:
 | **Email Reading** | MCP / UNAVAILABLE | Provider-managed Gmail MCP | `.agent/mcp_config.json` or app connector |
 | **Email Transmit** | MCP / UNAVAILABLE | Provider-managed Gmail MCP (Gated HITL) | `.agent/mcp_config.json` or app connector |
 | **Web Search** | MCP / UNAVAILABLE | Provider-managed Tavily or DuckDuckGo MCP | `.agent/mcp_config.json` or app connector |
-| **Telegram Messaging**| MCP / UNAVAILABLE | Provider-managed Telegram MCP | `.agent/mcp_config.json` or app connector |
-| **WhatsApp Messaging**| MCP / UNAVAILABLE | Provider-managed WhatsApp MCP | `.agent/mcp_config.json` or app connector |
+| **Telegram Messaging**| Direct API / UNAVAILABLE | Telegram Bot API direct provider; sends require HITL | `TELEGRAM_BOT_TOKEN` |
+| **WhatsApp Messaging**| Direct API / UNAVAILABLE | WhatsApp API direct provider; sends require HITL | `WHATSAPP_API_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` |
 | **Google Calendar** | MCP / UNAVAILABLE | Provider-managed Google Calendar MCP | `.agent/mcp_config.json` or app connector |
 | **Task Management** | LOCAL-ONLY | SQLite `tasks` table | None |
 | **Sub-Agent Spawn** | REAL / LOCAL | LangChain Async Sub-Agent | None |

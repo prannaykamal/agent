@@ -98,24 +98,6 @@ def classify_mcp_tool(
             True,
         )
 
-    if provider in {"whatsapp", "telegram"}:
-        if "send" in name or "message" in name and has_write:
-            return (
-                RiskClass.HIGH,
-                ApprovalPolicy.APPROVAL_REQUIRED,
-                ReadWriteCapability.WRITE_CAPABLE,
-                True,
-                False,
-                True,
-            )
-        return (
-            RiskClass.LOW,
-            ApprovalPolicy.NO_APPROVAL_NEEDED,
-            ReadWriteCapability.READ_ONLY,
-            False,
-            False,
-            True,
-        )
 
     capability = ReadWriteCapability.READ_WRITE if has_read and has_write else (
         ReadWriteCapability.WRITE_CAPABLE if has_write else ReadWriteCapability.READ_ONLY if has_read else ReadWriteCapability.UNKNOWN
@@ -167,3 +149,4 @@ def normalize_mcp_tool_metadata(provider: MCPProviderConfig, raw_tool: Dict[str,
             "discovery_status": provider.discovery_status.value,
         },
     )
+

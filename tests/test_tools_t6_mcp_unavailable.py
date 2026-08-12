@@ -19,7 +19,7 @@ def test_t6_missing_provider_config_is_safe_unavailable_state(tmp_path):
     clear_mcp_provider_discovery_cache()
     statuses = get_mcp_provider_statuses(config_path=tmp_path / "missing.json", refresh=False)
 
-    assert len(statuses) == 6
+    assert len(statuses) == 4
     assert all(status["availability_status"] == "unavailable" for status in statuses)
     assert all(status["discovery_status"] == MCPDiscoveryStatus.NOT_CONFIGURED.value for status in statuses)
     assert all(status["tool_count"] == 0 for status in statuses)
@@ -29,7 +29,7 @@ def test_t6_discovery_failure_is_redacted_and_non_fatal(tmp_path):
     clear_mcp_provider_discovery_cache()
     config_file = tmp_path / "mcp_config.json"
     config_file.write_text(
-        json.dumps({"mcpServers": {"whatsapp": {"transport": "stdio", "command": "fake-whatsapp"}}}),
+        json.dumps({"mcpServers": {"gmail": {"transport": "stdio", "command": "fake-gmail"}}}),
         encoding="utf-8",
     )
 
@@ -38,12 +38,12 @@ def test_t6_discovery_failure_is_redacted_and_non_fatal(tmp_path):
         refresh=True,
         client_factory=lambda _provider: FakeMCPClient(RuntimeError("authorization token should not leak")),
     )
-    whatsapp = {status["provider_id"]: status for status in statuses}["whatsapp"]
+    gmail = {status["provider_id"]: status for status in statuses}["gmail"]
 
-    assert whatsapp["availability_status"] == "unavailable"
-    assert whatsapp["discovery_status"] == MCPDiscoveryStatus.FAILED.value
-    assert whatsapp["last_error"] == "[REDACTED]"
-    assert "should not leak" not in str(whatsapp)
+    assert gmail["availability_status"] == "unavailable"
+    assert gmail["discovery_status"] == MCPDiscoveryStatus.FAILED.value
+    assert gmail["last_error"] == "[REDACTED]"
+    assert "should not leak" not in str(gmail)
 
 
 def test_t6_unsupported_transport_is_unavailable_without_startup_failure(tmp_path):

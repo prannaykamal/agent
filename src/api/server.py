@@ -669,6 +669,23 @@ def api_discover_mcp_provider(provider_id: str):
     return status
 
 
+
+@app.get("/api/tools/external/providers")
+def api_get_external_provider_statuses():
+    from src.external_providers.registry import get_external_provider_statuses
+
+    return {"providers": get_external_provider_statuses()}
+
+
+@app.get("/api/tools/external/providers/{provider_id}")
+def api_get_external_provider_status(provider_id: str):
+    from src.external_providers.registry import get_external_provider_status
+
+    status = get_external_provider_status(provider_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Unknown external API provider")
+    return status
+
 @app.get("/api/tools/personal-os/status")
 def api_personal_os_status():
     from src.personal_os.observability import get_personal_os_status
@@ -951,9 +968,11 @@ def api_system_restore(req: RestoreRequest):
 
 @app.get("/api/integrations/status")
 def api_get_integrations_status():
+    from src.external_providers.registry import get_external_provider_statuses
     from src.tools.mcp_provider_registry import get_mcp_provider_statuses
 
     providers = {item["provider_id"]: item for item in get_mcp_provider_statuses(include_config=False)}
+    external = {item["provider_id"]: item for item in get_external_provider_statuses()}
 
     def provider_entry(provider_id: str, name: str) -> Dict[str, Any]:
         status = providers.get(provider_id, {})
@@ -967,13 +986,27 @@ def api_get_integrations_status():
             "provider_id": provider_id,
         }
 
+    def external_entry(provider_id: str, name: str) -> Dict[str, Any]:
+        status = external.get(provider_id, {})
+        configured = status.get("availability_status") == "configured"
+        return {
+            "name": name,
+            "status": "API_CONFIGURED" if configured else "API_MISSING_CONFIG",
+            "mode": "direct_external_api",
+            "description": "Direct API provider configured" if configured else "Direct API provider missing configuration",
+            "truthfulness": "DIRECT_API" if configured else "UNAVAILABLE",
+            "provider_id": provider_id,
+            "credential_status": status.get("credential_status", "unknown"),
+            "required_env_vars": status.get("required_env_vars", []),
+        }
+
     return {
         "integrations": {
             "calendar": provider_entry("google_calendar", "Google Calendar MCP"),
             "email_smtp": provider_entry("gmail", "Gmail MCP"),
             "email_imap": provider_entry("gmail", "Gmail MCP"),
-            "whatsapp": provider_entry("whatsapp", "WhatsApp MCP"),
-            "telegram": provider_entry("telegram", "Telegram MCP"),
+            "whatsapp": external_entry("whatsapp_api", "WhatsApp API"),
+            "telegram": external_entry("telegram_bot_api", "Telegram Bot API"),
             "search": {
                 "name": "Search MCP",
                 "status": "MCP_AVAILABLE" if any(providers.get(pid, {}).get("availability_status") == "available" for pid in ("search_tavily", "search_duckduckgo")) else "MCP_UNAVAILABLE",
@@ -1007,6 +1040,7 @@ if os.path.exists(target_static):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("src.api.server:app", host="0.0.0.0", port=8000, reload=True)
+
 
 
 

@@ -40,8 +40,8 @@ The following target providers are not validated in the current config:
 
 - Tavily / DuckDuckGo Search MCP
 - Google Calendar MCP
-- WhatsApp MCP
-- Telegram MCP
+- WhatsApp API (direct external API, not MCP)
+- Telegram Bot API (direct external API, not MCP)
 - Gmail MCP
 
 Before implementation phases replace local adapters, each provider must be manually validated with safe credentials and a safe test account/environment.
@@ -154,7 +154,7 @@ Expected policy:
 
 Local code must not implement Google Calendar CRUD or direct Google Calendar REST calls in the final architecture.
 
-## WhatsApp MCP
+## WhatsApp API Direct Provider
 
 Manual validation required:
 
@@ -173,7 +173,7 @@ Expected policy:
 
 Local code must not call Meta Graph WhatsApp APIs directly in the final architecture.
 
-## Telegram MCP
+## Telegram Bot API Direct Provider
 
 Manual validation required:
 
@@ -244,3 +244,8 @@ Phase T10 documents and tests the completed local tools architecture, but it doe
 Automated tests use mocked MCP clients. They prove local discovery, metadata, policy, invocation, and unavailable-state behavior, not real provider availability.
 
 The final local rule remains unchanged: do not add local duplicate implementations for Tavily, DuckDuckGo, Google Calendar, Gmail, WhatsApp, or Telegram. If a provider is unavailable, return a safe unavailable result and fix MCP provider configuration instead of adding a local fallback.
+
+
+## Provider Architecture Update
+
+WhatsApp and Telegram are no longer target MCP providers. Do not configure them under `.agent/mcp_config.json` as MCP servers for ASTRA. Use direct API environment configuration and keep send actions behind HITL approval. Gmail, Google Calendar, and Tavily/DuckDuckGo Search remain provider-managed MCP integrations.

@@ -31,6 +31,7 @@ export default function ToolsOpsCockpit() {
   const [toolsStatus, setToolsStatus] = useState(null);
   const [overview, setOverview] = useState(null);
   const [providers, setProviders] = useState([]);
+  const [externalProviders, setExternalProviders] = useState([]);
   const [personalStatus, setPersonalStatus] = useState(null);
   const [personalActions, setPersonalActions] = useState([]);
   const [personalAudit, setPersonalAudit] = useState([]);
@@ -60,6 +61,7 @@ export default function ToolsOpsCockpit() {
         statusData,
         overviewData,
         providersData,
+        externalProvidersData,
         personalStatusData,
         personalActionsData,
         personalAuditData,
@@ -69,6 +71,7 @@ export default function ToolsOpsCockpit() {
         api.get('/api/tools/status'),
         api.get('/api/tools/observability/overview'),
         api.get('/api/tools/mcp/providers'),
+        api.get('/api/tools/external/providers'),
         api.get('/api/tools/personal-os/status'),
         api.get('/api/tools/personal-os/actions'),
         api.get('/api/tools/personal-os/audit'),
@@ -78,7 +81,8 @@ export default function ToolsOpsCockpit() {
 
       setToolsStatus(statusData);
       setOverview(overviewData);
-      setProviders(providersData.providers || []);
+      setProviders((providersData.providers || []).map(p => ({ ...p, provider_layer: 'mcp' })));
+      setExternalProviders((externalProvidersData.providers || []).map(p => ({ ...p, provider_layer: 'external_api' })));
       setPersonalStatus(personalStatusData);
       setPersonalActions(personalActionsData.actions || []);
       setPersonalAudit(personalAuditData.audit_events || []);
@@ -115,17 +119,24 @@ export default function ToolsOpsCockpit() {
     }
   };
 
-  const handleInspectProvider = async (providerId) => {
+  const handleInspectProvider = async (providerId, providerLayer = 'mcp') => {
     setError(null);
     try {
-      const data = await api.get(`/api/tools/mcp/providers/${providerId}`);
-      setSelectedProviderDetail(data);
+      const endpoint = providerLayer === 'external_api'
+        ? `/api/tools/external/providers/${providerId}`
+        : `/api/tools/mcp/providers/${providerId}`;
+      const data = await api.get(endpoint);
+      setSelectedProviderDetail({ ...data, provider_layer: providerLayer });
     } catch (e) {
       setError(`Failed to inspect provider '${providerId}': ${e.message}`);
     }
   };
 
   const handleSafeDiscoverRefresh = async (providerId) => {
+    if (providerId === 'whatsapp_api' || providerId === 'telegram_bot_api') {
+      setNotice(`'${providerId}' is a direct API provider; MCP discovery is not applicable.`);
+      return;
+    }
     setRefreshingProviderId(providerId);
     setError(null);
     setNotice(null);
@@ -143,6 +154,7 @@ export default function ToolsOpsCockpit() {
     }
   };
 
+  const allProviders = [...providers, ...externalProviders];
   const calls = overview?.tool_calls?.tool_calls || [];
   const results = overview?.tool_results?.tool_results || [];
   const blocked = overview?.blocked?.blocked_attempts || [];
@@ -155,7 +167,7 @@ export default function ToolsOpsCockpit() {
         <div>
           <h2 style={{ fontFamily: 'var(--font-heading)', margin: 0 }}>🧰 Tools Ops & MCP Discovery</h2>
           <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-            System Status: <strong>{toolsStatus?.status || 'OK'}</strong> | MCP Provider Registry & Policy Engine
+            System Status: <strong>{toolsStatus?.status || 'OK'}</strong> | Provider Registry & Policy Engine
           </span>
         </div>
         <button onClick={load} style={{ padding: '8px 16px', background: 'var(--primary-glow)', border: 'none', borderRadius: '6px', color: 'white', cursor: 'pointer' }}>
@@ -183,12 +195,12 @@ export default function ToolsOpsCockpit() {
               <h4 style={{ color: 'var(--text-secondary)', marginBottom: '4px' }}>Bindable Tools</h4>
               <strong style={{ fontSize: '18px' }}>{toolsStatus?.registry?.total_bindable_tools || 0}</strong>
               <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                OS: {toolsStatus?.registry?.group_counts?.personal_os || 0} | MCP: {toolsStatus?.registry?.group_counts?.mcp_provider_managed || 0}
+                OS: {toolsStatus?.registry?.group_counts?.personal_os || 0} | MCP: {toolsStatus?.registry?.group_counts?.mcp || 0} | API: {toolsStatus?.registry?.group_counts?.external_api || 0}
               </div>
             </div>
 
             <div className="glass-card">
-              <h4 style={{ color: 'var(--text-secondary)', marginBottom: '4px' }}>MCP Providers</h4>
+              <h4 style={{ color: 'var(--text-secondary)', marginBottom: '4px' }}>Providers</h4>
               <strong style={{ fontSize: '18px', color: '#2ecc71' }}>
                 {toolsStatus?.providers?.available_providers || 0}/{toolsStatus?.providers?.total_providers || 0}
               </strong>
@@ -269,8 +281,8 @@ export default function ToolsOpsCockpit() {
 
           {/* MCP Providers List */}
           <div className="glass-card">
-            <h3 style={{ margin: '0 0 12px 0', fontFamily: 'var(--font-heading)', fontSize: '16px' }}>🛠️ MCP Provider Registry</h3>
-            {providers.length === 0 ? <Empty>No provider status available.</Empty> : providers.map(provider => (
+            <h3 style={{ margin: '0 0 12px 0', fontFamily: 'var(--font-heading)', fontSize: '16px' }}>🛠️ Provider Registry</h3>
+            {allProviders.length === 0 ? <Empty>No provider status available.</Empty> : allProviders.map(provider => (
               <div key={provider.provider_id} style={{ borderTop: '1px solid var(--border-glass)', padding: '12px 0', display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
                 <div>
                   <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
@@ -278,17 +290,17 @@ export default function ToolsOpsCockpit() {
                     <code>({provider.provider_id})</code>
                   </div>
                   <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                    Transport: <code>{provider.transport_type}</code> | Credentials: <Badge value={provider.credential_status} />
+                    Layer: <code>{provider.provider_layer === 'external_api' ? 'Direct API' : 'MCP'}</code> | Transport: <code>{provider.transport_type || 'external_api'}</code> | Credentials: <Badge value={provider.credential_status} />
                   </div>
                   {provider.last_error && <div style={{ fontSize: '12px', color: '#ff6b6b', marginTop: '4px' }}>Last error: {provider.last_error}</div>}
                 </div>
 
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
                   <Badge value={provider.availability_status} />
-                  <Badge value={provider.discovery_status} />
-                  <span style={{ fontSize: '12px' }}>{provider.tool_count || 0} tools</span>
+                  {provider.discovery_status && <Badge value={provider.discovery_status} />}
+                  <span style={{ fontSize: '12px' }}>{provider.tool_count ?? (provider.capabilities?.length || 0)} tools</span>
                   <button
-                    onClick={() => handleInspectProvider(provider.provider_id)}
+                    onClick={() => handleInspectProvider(provider.provider_id, provider.provider_layer)}
                     style={{ padding: '5px 12px', background: 'rgba(255,255,255,0.08)', border: '1px solid var(--border-glass)', borderRadius: '4px', color: 'white', cursor: 'pointer', fontSize: '12px' }}
                   >
                     🔍 Inspect

@@ -17,8 +17,6 @@ def test_t6_all_target_provider_ids_are_represented_without_config(tmp_path):
         "search_tavily",
         "search_duckduckgo",
         "google_calendar",
-        "whatsapp",
-        "telegram",
         "gmail",
     }
     assert set(configs) == set(target_mcp_provider_ids())
@@ -64,11 +62,11 @@ def test_t6_target_provider_config_is_loaded_from_mcp_config(tmp_path):
 def test_t6_provider_status_redacts_config_secrets(tmp_path):
     config_file = tmp_path / "mcp_config.json"
     config_file.write_text(
-        json.dumps({"mcpServers": {"telegram": {"command": "telegram-mcp", "env": {"ACCESS_TOKEN": "abc"}}}}),
+        json.dumps({"mcpServers": {"gmail": {"command": "gmail-mcp", "env": {"ACCESS_TOKEN": "abc"}}}}),
         encoding="utf-8",
     )
 
-    provider = load_target_mcp_provider_configs(config_file)["telegram"]
+    provider = load_target_mcp_provider_configs(config_file)["gmail"]
     status = provider.to_status_dict(include_config=True)
 
     assert status["env"]["ACCESS_TOKEN"] == "[REDACTED]"

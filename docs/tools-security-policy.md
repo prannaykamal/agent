@@ -22,10 +22,10 @@ Tool execution is controlled by centralized policy, HITL approval, and a single 
 | Gmail read/search | no approval needed or confirmation recommended depending scope |
 | Gmail draft | confirmation recommended |
 | Gmail send/delete/archive/label write | approval required |
-| WhatsApp read | no approval needed or confirmation recommended depending scope |
-| WhatsApp send | approval required |
-| Telegram read | no approval needed or confirmation recommended depending scope |
-| Telegram send | approval required |
+| WhatsApp API status/read boundary | no approval needed or confirmation recommended depending scope |
+| WhatsApp API send | approval required |
+| Telegram Bot API status/read boundary | no approval needed or confirmation recommended depending scope |
+| Telegram Bot API send | approval required |
 | Personal OS read/status/list/heartbeat | no approval needed |
 | Personal OS bounded local write | policy-known; confirmation recommended or approval required by impact |
 | Personal OS sub-agent lifecycle write | approval required unless explicitly low-impact |
@@ -69,7 +69,7 @@ Approval resume must revalidate:
 
 - tool metadata exists
 - tool is not removed
-- provider is available for MCP tools
+- provider is available for MCP tools or configured for direct external API tools
 - policy still permits execution
 - approval has not already executed
 - arguments remain valid
@@ -93,3 +93,8 @@ Old approval requests for these names cannot execute.
 ## Observability Redaction
 
 Tools observability is read-only and redacts credential-like keys, raw provider payloads, message bodies, hidden reasoning, scratchpads, and chain-of-thought. It preserves IDs, status, timestamps, counts, provider IDs, risk class, approval policy, and redacted previews.
+
+
+## Direct API Provider Boundary
+
+WhatsApp and Telegram are direct external API providers, not MCP providers. Their status surfaces expose only provider IDs, environment variable names, configured/missing state, and redacted errors. Token values are never returned to API or frontend callers. Send operations are external side effects and require HITL approval before execution.

@@ -1,6 +1,6 @@
 # MCP Wiring Guide
 
-MCP providers are provider-managed. The local assistant does not implement Tavily, DuckDuckGo, Google Calendar, Gmail, WhatsApp, or Telegram behavior.
+MCP providers are provider-managed. The local assistant does not implement Tavily, DuckDuckGo, Google Calendar, or Gmail behavior. WhatsApp and Telegram are intentionally not MCP providers; they use direct API provider boundaries documented in the tools architecture and security policy.
 
 ## Local Responsibilities
 
@@ -34,8 +34,6 @@ Target provider IDs:
 - `search_duckduckgo`
 - `google_calendar`
 - `gmail`
-- `whatsapp`
-- `telegram`
 
 Example sanitized `.agent/mcp_config.json` shape:
 
@@ -67,7 +65,7 @@ Discovery should:
 5. Mark the provider unavailable on failure.
 6. Avoid any provider action invocation.
 
-Discovery must not call send, create, update, delete, search, calendar, email, WhatsApp, or Telegram provider APIs directly.
+Discovery must not call send, create, update, delete, search, calendar, or email provider APIs directly. WhatsApp and Telegram are outside MCP discovery and must not appear in MCP provider refresh flows.
 
 ## Invocation
 
@@ -98,3 +96,8 @@ For each provider:
 - provider errors are redacted in observability
 
 Manual validation status must remain explicit. Automated mocked tests do not prove real provider availability.
+
+
+## WhatsApp / Telegram Direct API Note
+
+WhatsApp API and Telegram Bot API were intentionally removed from the MCP provider list. They are reported by direct external API provider status endpoints and do not participate in MCP `tools/list` or `tools/call`. Their send actions remain HITL approval-required.
