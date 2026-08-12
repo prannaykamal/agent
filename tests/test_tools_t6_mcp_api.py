@@ -26,7 +26,8 @@ def test_t6_mcp_provider_status_api_lists_all_target_providers():
     assert all("tools" in provider for provider in data["providers"])
 
 
-def test_t6_mcp_provider_detail_api_returns_unavailable_missing_provider():
+def test_t6_mcp_provider_detail_api_returns_unavailable_missing_provider(monkeypatch):
+    monkeypatch.setattr("src.tools.mcp_provider_config.load_mcp_config_data", lambda config_path=None: {})
     clear_mcp_provider_discovery_cache()
 
     response = client.get("/api/tools/mcp/providers/gmail")
