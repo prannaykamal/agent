@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { api } from '../api/client.js';
 
 export default function LoopCockpit({ activeSessionId, onRefresh }) {
   const [events, setEvents] = useState([]);
@@ -10,24 +11,8 @@ export default function LoopCockpit({ activeSessionId, onRefresh }) {
     setError(null);
     try {
       const sess = activeSessionId || "default_session";
-      let res = await fetch(`/api/history/${sess}`);
-      if (!res.ok) {
-        res = await fetch(`/api/loop/events/${sess}`);
-      }
-      if (!res.ok) {
-        let errDetail = `HTTP error ${res.status}`;
-        try {
-          const errData = await res.json();
-          if (errData && errData.detail) errDetail = errData.detail;
-        } catch (_) {}
-
-        if (res.status >= 500) {
-          errDetail = `Backend server error (${res.status}). Ensure the FastAPI backend is running on port 8000 (python src/api/server.py). (${errDetail})`;
-        }
-        throw new Error(errDetail);
-      }
-      const data = await res.json();
-      setEvents(data.loop_trace || data.loop_events || []);
+      const data = await api.get(`/api/history/${sess}`);
+      setEvents(data.loop_trace || data.loop_events || data.turns || []);
     } catch (e) {
       console.error(e);
       setError(e.message || "Failed to load loop events");

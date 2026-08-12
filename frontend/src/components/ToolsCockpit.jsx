@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { api } from '../api/client.js';
 
 function Badge({ value }) {
   const text = String(value || 'unknown');
@@ -60,14 +61,12 @@ export default function ToolsCockpit({ onRefresh }) {
     setLoading(true);
     setError(null);
     try {
-      const [catalogRes, overviewRes] = await Promise.all([
-        fetch('/api/tools'),
-        fetch('/api/tools/observability/overview')
+      const [catalogData, overviewData] = await Promise.all([
+        api.get('/api/tools'),
+        api.get('/api/tools/observability/overview')
       ]);
-      if (!catalogRes.ok) throw new Error(`Catalog HTTP ${catalogRes.status}`);
-      if (!overviewRes.ok) throw new Error(`Overview HTTP ${overviewRes.status}`);
-      setToolsData(await catalogRes.json());
-      setOverview(await overviewRes.json());
+      setToolsData(catalogData);
+      setOverview(overviewData);
     } catch (e) {
       setError(e.message || 'Failed to load tools catalog');
     } finally {

@@ -1,4 +1,5 @@
-﻿import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { api } from '../api/client.js';
 
 const endpoints = {
   overview: '/api/memory/observability/overview',
@@ -82,36 +83,28 @@ export default function MemoryObservabilityCockpit() {
     setError(null);
     try {
       const entries = await Promise.all(Object.entries(endpoints).map(async ([key, url]) => {
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`${key}: HTTP ${res.status}`);
-        return [key, await res.json()];
+        const payload = await api.get(url);
+        return [key, payload];
       }));
       setData(Object.fromEntries(entries));
     } catch (err) {
-      setError(err.message || 'Failed to load memory observability');
+      console.error(err);
+      setError(err.message || 'Failed loading memory telemetry');
     } finally {
       setLoading(false);
     }
   };
 
-  const runTrace = async () => {
+  const handleTrace = async (e) => {
+    e.preventDefault();
     setTraceError(null);
     setTrace(null);
     try {
-      const res = await fetch('/api/memory/observability/retrieval/trace', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          query: traceQuery,
-          session_id: traceSession,
-          include_prompt_block: showPromptBlock,
-          include_candidates: true
-        })
-      });
-      if (!res.ok) throw new Error(`Trace failed: HTTP ${res.status}`);
-      setTrace(await res.json());
+      const payload = await api.get(`/api/memory/observability/trace?query=${encodeURIComponent(traceQuery)}&session_id=${encodeURIComponent(traceSession)}&include_prompt_block=${showPromptBlock}`);
+      setTrace(payload);
     } catch (err) {
-      setTraceError(err.message || 'Trace failed');
+      console.error(err);
+      setTraceError(err.message || 'Trace simulation failed');
     }
   };
 

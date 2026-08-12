@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { api } from '../api/client.js';
 
 export default function TaskBoard({ onRefresh }) {
   const [tasks, setTasks] = useState([]);
@@ -11,9 +12,7 @@ export default function TaskBoard({ onRefresh }) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/tasks");
-      if (!res.ok) throw new Error(`HTTP error ${res.status}`);
-      const data = await res.json();
+      const data = await api.get("/api/tasks");
       setTasks(data.tasks || []);
       setTasksSummary(data.tasks_summary || "");
       setSubAgents(data.sub_agents || []);

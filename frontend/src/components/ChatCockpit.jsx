@@ -175,40 +175,32 @@ export default function ChatCockpit({ activeSessionId, onNewSession, onSessionCh
   const handleRenameSession = async () => {
     if (!renameInput.trim()) return;
     try {
-      const res = await fetch(`/api/history/${currentSession}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ new_session_id: renameInput.trim() })
-      });
-      if (res.ok) {
-        const newSess = renameInput.trim();
-        setCurrentSession(newSess);
-        setIsRenaming(false);
-        setRenameInput("");
-        setToastMessage(`Session successfully renamed to '${newSess}'`);
-        setTimeout(() => setToastMessage(""), 3000);
-        loadSessions();
-        if (onSessionChanged) onSessionChanged(newSess);
-      }
+      await api.put(`/api/history/${currentSession}`, { new_session_id: renameInput.trim() });
+      const newSess = renameInput.trim();
+      setCurrentSession(newSess);
+      setIsRenaming(false);
+      setRenameInput("");
+      setToastMessage(`Session successfully renamed to '${newSess}'`);
+      setTimeout(() => setToastMessage(""), 3000);
+      loadSessions();
+      if (onSessionChanged) onSessionChanged(newSess);
     } catch (e) {
       console.error(e);
-      setError("Failed to rename session");
+      setError(e.message || "Failed to rename session");
     }
   };
 
   const handleDeleteSession = async () => {
     if (!window.confirm(`Are you sure you want to delete session '${currentSession}'?`)) return;
     try {
-      const res = await fetch(`/api/history/${currentSession}`, { method: "DELETE" });
-      if (res.ok) {
-        setToastMessage(`Session '${currentSession}' deleted`);
-        setTimeout(() => setToastMessage(""), 3000);
-        loadSessions();
-        onNewSession();
-      }
+      await api.delete(`/api/history/${currentSession}`);
+      setToastMessage(`Session '${currentSession}' deleted`);
+      setTimeout(() => setToastMessage(""), 3000);
+      loadSessions();
+      onNewSession();
     } catch (e) {
       console.error(e);
-      setError("Failed to delete session");
+      setError(e.message || "Failed to delete session");
     }
   };
 
