@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+﻿import React, { useEffect, useState } from 'react';
 import { api } from '../api/client.js';
 
 function Badge({ value }) {
@@ -154,6 +154,22 @@ export default function ToolsOpsCockpit() {
     }
   };
 
+  const handleValidateProviderStatus = async (providerId) => {
+    setRefreshingProviderId(providerId);
+    setError(null);
+    setNotice(null);
+    try {
+      const data = await api.get(`/api/tools/external/providers/${providerId}`);
+      setSelectedProviderDetail({ ...data, provider_layer: 'external_api' });
+      setNotice(`Status validated for '${providerId}'. Availability: ${data.availability_status}`);
+      load();
+    } catch (e) {
+      setError(`Status validation failed for '${providerId}': ${e.message}`);
+    } finally {
+      setRefreshingProviderId(null);
+    }
+  };
+
   const allProviders = [...providers, ...externalProviders];
   const calls = overview?.tool_calls?.tool_calls || [];
   const results = overview?.tool_results?.tool_results || [];
@@ -165,29 +181,29 @@ export default function ToolsOpsCockpit() {
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
-          <h2 style={{ fontFamily: 'var(--font-heading)', margin: 0 }}>🧰 Tools Ops & MCP Discovery</h2>
+          <h2 style={{ fontFamily: 'var(--font-heading)', margin: 0 }}>ðŸ§° Tools Ops & MCP Discovery</h2>
           <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
             System Status: <strong>{toolsStatus?.status || 'OK'}</strong> | Provider Registry & Policy Engine
           </span>
         </div>
         <button onClick={load} style={{ padding: '8px 16px', background: 'var(--primary-glow)', border: 'none', borderRadius: '6px', color: 'white', cursor: 'pointer' }}>
-          🔄 Refresh
+          ðŸ”„ Refresh
         </button>
       </div>
 
       {notice && (
         <div style={{ padding: '10px 16px', background: 'rgba(46, 204, 113, 0.15)', border: '1px solid rgba(46, 204, 113, 0.3)', borderRadius: '8px', color: '#2ecc71', fontSize: '13px' }}>
-          ℹ️ {notice}
+          â„¹ï¸ {notice}
         </div>
       )}
 
       {error && (
         <div style={{ padding: '12px', background: 'rgba(255, 50, 50, 0.15)', borderRadius: '8px', color: '#ff6b6b', fontSize: '13px' }}>
-          ⚠️ {error}
+          âš ï¸ {error}
         </div>
       )}
 
-      {loading ? <Empty>🌀 Loading tools observability & provider registry...</Empty> : (
+      {loading ? <Empty>ðŸŒ€ Loading tools observability & provider registry...</Empty> : (
         <>
           {/* Top Status Cards Summary */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
@@ -229,10 +245,10 @@ export default function ToolsOpsCockpit() {
                 onClick={() => setSelectedProviderDetail(null)}
                 style={{ position: 'absolute', top: '12px', right: '12px', background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '16px' }}
               >
-                ✖
+                âœ–
               </button>
               <h3 style={{ margin: '0 0 10px 0', fontFamily: 'var(--font-heading)', fontSize: '16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <span>🔍 Provider Inspection: <code>{selectedProviderDetail.provider_id}</code></span>
+                <span>ðŸ” Provider Inspection: <code>{selectedProviderDetail.provider_id}</code></span>
                 <Badge value={selectedProviderDetail.availability_status} />
               </h3>
 
@@ -267,21 +283,32 @@ export default function ToolsOpsCockpit() {
               )}
 
               <div style={{ marginTop: '14px', paddingTop: '10px', borderTop: '1px solid var(--border-glass)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>🔒 Secrets and raw credentials are redacted in status inspection.</span>
-                <button
-                  disabled={refreshingProviderId === selectedProviderDetail.provider_id}
-                  onClick={() => handleSafeDiscoverRefresh(selectedProviderDetail.provider_id)}
-                  style={{ padding: '6px 14px', background: 'var(--primary-glow)', border: 'none', borderRadius: '4px', color: 'white', cursor: 'pointer', fontSize: '12px', fontWeight: '600' }}
-                >
-                  {refreshingProviderId === selectedProviderDetail.provider_id ? 'Refreshing...' : '🔄 Refresh Metadata'}
-                </button>
+                <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>ðŸ”’ Secrets and raw credentials are redacted in status inspection.</span>
+                {selectedProviderDetail.provider_layer === 'external_api' ? (
+                  <button
+                    disabled={refreshingProviderId === selectedProviderDetail.provider_id}
+                    onClick={() => handleValidateProviderStatus(selectedProviderDetail.provider_id)}
+                    style={{ padding: '6px 14px', background: 'var(--primary-glow)', border: 'none', borderRadius: '4px', color: 'white', cursor: 'pointer', fontSize: '12px', fontWeight: '600' }}
+                    title="Read-only direct API provider status check"
+                  >
+                    {refreshingProviderId === selectedProviderDetail.provider_id ? 'Validating...' : 'Validate Status'}
+                  </button>
+                ) : (
+                  <button
+                    disabled={refreshingProviderId === selectedProviderDetail.provider_id}
+                    onClick={() => handleSafeDiscoverRefresh(selectedProviderDetail.provider_id)}
+                    style={{ padding: '6px 14px', background: 'var(--primary-glow)', border: 'none', borderRadius: '4px', color: 'white', cursor: 'pointer', fontSize: '12px', fontWeight: '600' }}
+                  >
+                    {refreshingProviderId === selectedProviderDetail.provider_id ? 'Refreshing...' : 'Refresh Metadata'}
+                  </button>
+                )}
               </div>
             </div>
           )}
 
           {/* MCP Providers List */}
           <div className="glass-card">
-            <h3 style={{ margin: '0 0 12px 0', fontFamily: 'var(--font-heading)', fontSize: '16px' }}>🛠️ Provider Registry</h3>
+            <h3 style={{ margin: '0 0 12px 0', fontFamily: 'var(--font-heading)', fontSize: '16px' }}>ðŸ› ï¸ Provider Registry</h3>
             {allProviders.length === 0 ? <Empty>No provider status available.</Empty> : allProviders.map(provider => (
               <div key={provider.provider_id} style={{ borderTop: '1px solid var(--border-glass)', padding: '12px 0', display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
                 <div>
@@ -303,16 +330,27 @@ export default function ToolsOpsCockpit() {
                     onClick={() => handleInspectProvider(provider.provider_id, provider.provider_layer)}
                     style={{ padding: '5px 12px', background: 'rgba(255,255,255,0.08)', border: '1px solid var(--border-glass)', borderRadius: '4px', color: 'white', cursor: 'pointer', fontSize: '12px' }}
                   >
-                    🔍 Inspect
+                    ðŸ” Inspect
                   </button>
-                  <button
-                    disabled={refreshingProviderId === provider.provider_id}
-                    onClick={() => handleSafeDiscoverRefresh(provider.provider_id)}
-                    style={{ padding: '5px 12px', background: 'var(--primary-glow)', border: 'none', borderRadius: '4px', color: 'white', cursor: 'pointer', fontSize: '12px' }}
-                    title="Safe Metadata Refresh (No write side-effects)"
-                  >
-                    {refreshingProviderId === provider.provider_id ? 'Refreshing...' : '🔄 Refresh Metadata'}
-                  </button>
+                  {provider.provider_layer === 'external_api' ? (
+                    <button
+                      disabled={refreshingProviderId === provider.provider_id}
+                      onClick={() => handleValidateProviderStatus(provider.provider_id)}
+                      style={{ padding: '5px 12px', background: 'var(--primary-glow)', border: 'none', borderRadius: '4px', color: 'white', cursor: 'pointer', fontSize: '12px' }}
+                      title="Read-only direct API provider status check"
+                    >
+                      {refreshingProviderId === provider.provider_id ? 'Validating...' : 'Validate Status'}
+                    </button>
+                  ) : (
+                    <button
+                      disabled={refreshingProviderId === provider.provider_id}
+                      onClick={() => handleSafeDiscoverRefresh(provider.provider_id)}
+                      style={{ padding: '5px 12px', background: 'var(--primary-glow)', border: 'none', borderRadius: '4px', color: 'white', cursor: 'pointer', fontSize: '12px' }}
+                      title="Safe MCP metadata refresh (No write side-effects)"
+                    >
+                      {refreshingProviderId === provider.provider_id ? 'Refreshing...' : 'Refresh Metadata'}
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
@@ -323,11 +361,11 @@ export default function ToolsOpsCockpit() {
             <div style={{ display: 'flex', gap: '10px', alignItems: 'center', borderBottom: '1px solid var(--border-glass)', paddingBottom: '10px', marginBottom: '12px' }}>
               <strong style={{ fontSize: '14px', fontFamily: 'var(--font-heading)' }}>Observability Views:</strong>
               {[
-                { id: 'overview', label: '📊 Overview' },
-                { id: 'calls', label: '📞 Tool Calls' },
-                { id: 'results', label: '📥 Tool Results' },
-                { id: 'audit', label: '🛡️ Personal OS Audit' },
-                { id: 'blocked', label: '⛔ Blocked Attempts' }
+                { id: 'overview', label: 'ðŸ“Š Overview' },
+                { id: 'calls', label: 'ðŸ“ž Tool Calls' },
+                { id: 'results', label: 'ðŸ“¥ Tool Results' },
+                { id: 'audit', label: 'ðŸ›¡ï¸ Personal OS Audit' },
+                { id: 'blocked', label: 'â›” Blocked Attempts' }
               ].map(tab => (
                 <button
                   key={tab.id}
@@ -483,4 +521,7 @@ export default function ToolsOpsCockpit() {
 if (typeof window !== 'undefined') {
   window.ToolsOpsCockpit = ToolsOpsCockpit;
 }
+
+
+
 
