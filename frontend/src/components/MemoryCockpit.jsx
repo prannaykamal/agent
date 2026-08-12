@@ -89,20 +89,11 @@ export default function MemoryCockpit({ onRefresh }) {
     setError(null);
     setSuccessNotice(null);
     try {
-      const trigger_keywords = skillKeywords
-        .split(",")
-        .map(k => k.trim())
-        .filter(Boolean);
-      const execution_steps = skillSteps
-        .split("\n")
-        .map(s => s.trim())
-        .filter(Boolean);
-
       await api.post("/api/skills", {
         name: skillName.trim(),
         description: skillDescription.trim(),
-        trigger_keywords,
-        execution_steps
+        trigger_keywords: skillKeywords.trim(),
+        execution_steps: skillSteps.trim()
       });
 
       setSuccessNotice(`Active skill '${skillName.trim()}' created successfully.`);
@@ -117,6 +108,22 @@ export default function MemoryCockpit({ onRefresh }) {
     } finally {
       setSubmittingSkill(false);
     }
+  };
+
+  const getKeywordsList = (val) => {
+    if (Array.isArray(val)) return val;
+    if (typeof val === 'string' && val.trim()) {
+      return val.split(',').map(k => k.trim()).filter(Boolean);
+    }
+    return [];
+  };
+
+  const getStepsList = (val) => {
+    if (Array.isArray(val)) return val;
+    if (typeof val === 'string' && val.trim()) {
+      return val.split('\n').map(s => s.trim()).filter(Boolean);
+    }
+    return [];
   };
 
   const handleDeleteSkill = async (name) => {
@@ -360,38 +367,42 @@ export default function MemoryCockpit({ onRefresh }) {
                   <div style={{ color: "var(--text-secondary)", fontStyle: "italic", padding: "16px 0" }}>📭 No active skills registered in backend registry.</div>
                 ) : (
                   <div style={{ display: "grid", gap: "12px" }}>
-                    {skillsList.map(s => (
-                      <div key={s.name} style={{ padding: "12px", background: "rgba(255,255,255,0.03)", border: "1px solid var(--border-glass)", borderRadius: "8px", display: "flex", justifyContent: "space-between", gap: "12px" }}>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                            <strong style={{ fontSize: "14px" }}>{s.name}</strong>
-                          </div>
-                          <p style={{ margin: "4px 0 8px 0", fontSize: "13px", color: "var(--text-secondary)" }}>{s.description}</p>
-                          {s.trigger_keywords && s.trigger_keywords.length > 0 && (
-                            <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginBottom: "6px" }}>
-                              {s.trigger_keywords.map((k, idx) => (
-                                <span key={idx} style={{ padding: "2px 6px", background: "rgba(52, 152, 219, 0.18)", color: "#3498db", borderRadius: "4px", fontSize: "11px" }}>
-                                  #{k}
-                                </span>
-                              ))}
+                    {skillsList.map(s => {
+                      const keywords = getKeywordsList(s.trigger_keywords);
+                      const steps = getStepsList(s.execution_steps);
+                      return (
+                        <div key={s.name} style={{ padding: "12px", background: "rgba(255,255,255,0.03)", border: "1px solid var(--border-glass)", borderRadius: "8px", display: "flex", justifyContent: "space-between", gap: "12px" }}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                              <strong style={{ fontSize: "14px" }}>{s.name}</strong>
                             </div>
-                          )}
-                          {s.execution_steps && s.execution_steps.length > 0 && (
-                            <ol style={{ margin: "4px 0 0 16px", padding: 0, fontSize: "12px", color: "var(--text-secondary)" }}>
-                              {s.execution_steps.map((step, idx) => <li key={idx}>{step}</li>)}
-                            </ol>
-                          )}
+                            <p style={{ margin: "4px 0 8px 0", fontSize: "13px", color: "var(--text-secondary)" }}>{s.description}</p>
+                            {keywords.length > 0 && (
+                              <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginBottom: "6px" }}>
+                                {keywords.map((k, idx) => (
+                                  <span key={idx} style={{ padding: "2px 6px", background: "rgba(52, 152, 219, 0.18)", color: "#3498db", borderRadius: "4px", fontSize: "11px" }}>
+                                    #{k}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                            {steps.length > 0 && (
+                              <ol style={{ margin: "4px 0 0 16px", padding: 0, fontSize: "12px", color: "var(--text-secondary)" }}>
+                                {steps.map((step, idx) => <li key={idx}>{step}</li>)}
+                              </ol>
+                            )}
+                          </div>
+                          <div>
+                            <button
+                              onClick={() => handleDeleteSkill(s.name)}
+                              style={{ padding: "6px 12px", background: "rgba(255,71,87,0.15)", border: "1px solid rgba(255,71,87,0.3)", borderRadius: "6px", color: "#ff6b6b", cursor: "pointer", fontSize: "12px" }}
+                            >
+                              🗑️ Delete
+                            </button>
+                          </div>
                         </div>
-                        <div>
-                          <button
-                            onClick={() => handleDeleteSkill(s.name)}
-                            style={{ padding: "6px 12px", background: "rgba(255,71,87,0.15)", border: "1px solid rgba(255,71,87,0.3)", borderRadius: "6px", color: "#ff6b6b", cursor: "pointer", fontSize: "12px" }}
-                          >
-                            🗑️ Delete
-                          </button>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>

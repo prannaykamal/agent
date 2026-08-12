@@ -96,11 +96,20 @@ export default function MemoryObservabilityCockpit() {
   };
 
   const handleTrace = async (e) => {
-    e.preventDefault();
+    if (e && e.preventDefault) e.preventDefault();
     setTraceError(null);
     setTrace(null);
+    if (!traceQuery.trim()) {
+      setTraceError('Query must be non-empty.');
+      return;
+    }
     try {
-      const payload = await api.get(`/api/memory/observability/trace?query=${encodeURIComponent(traceQuery)}&session_id=${encodeURIComponent(traceSession)}&include_prompt_block=${showPromptBlock}`);
+      const payload = await api.post('/api/memory/observability/retrieval/trace', {
+        query: traceQuery.trim(),
+        session_id: traceSession || 'default_session',
+        include_prompt_block: showPromptBlock,
+        include_candidates: true
+      });
       setTrace(payload);
     } catch (err) {
       console.error(err);
@@ -161,7 +170,7 @@ export default function MemoryObservabilityCockpit() {
               <label style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--text-secondary)' }}>
                 <input type="checkbox" checked={showPromptBlock} onChange={e => setShowPromptBlock(e.target.checked)} /> Show redacted prompt block
               </label>
-              <button onClick={runTrace} style={{ padding: '10px 16px', background: 'var(--primary-glow)', border: 'none', borderRadius: '6px', color: 'white', cursor: 'pointer' }}>Trace</button>
+              <button onClick={handleTrace} style={{ padding: '10px 16px', background: 'var(--primary-glow)', border: 'none', borderRadius: '6px', color: 'white', cursor: 'pointer' }}>Trace</button>
             </div>
             {traceError && <div style={{ color: '#ff6b6b' }}>{traceError}</div>}
             {trace ? (

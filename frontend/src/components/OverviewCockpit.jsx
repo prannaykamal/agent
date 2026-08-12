@@ -217,11 +217,11 @@ export default function OverviewCockpit({ activeSessionId, onRefresh }) {
 
             <div className="glass-card">
               <h4 style={{ color: 'var(--text-secondary)', marginBottom: '8px' }}>Memory Workers Real State</h4>
-              <div style={{ fontSize: '16px', fontWeight: '600', color: workerObs?.stale_workers > 0 ? '#ff6b6b' : '#2ecc71' }}>
-                {workerObs ? `${workerObs.active_workers} Active / ${workerObs.total_workers} Total` : '1 Worker Active'}
+              <div style={{ fontSize: '16px', fontWeight: '600', color: (workerObs?.stale ?? 0) > 0 ? '#ff6b6b' : '#2ecc71' }}>
+                {workerObs ? `${workerObs.active ?? 0} Active / ${workerObs.total ?? 0} Total` : '1 Worker Active'}
               </div>
               <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                Stale Workers: {workerObs?.stale_workers || 0} (Heartbeat threshold {workerObs?.stale_after_seconds || 60}s)
+                Stale Workers: {workerObs ? (workerObs.stale ?? 0) : 0} (Heartbeat threshold 120s)
               </div>
             </div>
           </div>
