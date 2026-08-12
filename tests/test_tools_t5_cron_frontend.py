@@ -2,7 +2,7 @@ from pathlib import Path
 
 
 def test_t5_scheduled_cockpit_uses_new_cron_endpoints():
-    source = Path("frontend/src/components/ScheduledCockpit.jsx").read_text()
+    source = Path("frontend/src/components/ScheduledCockpit.jsx").read_text(encoding="utf-8")
     assert "/api/tools/cron/schedules" in source
     assert "/api/tools/cron/runs" in source
     assert "schedule_type" in source
@@ -11,6 +11,6 @@ def test_t5_scheduled_cockpit_uses_new_cron_endpoints():
 
 
 def test_t5_scheduled_cockpit_does_not_call_removed_or_provider_routes():
-    source = Path("frontend/src/components/ScheduledCockpit.jsx").read_text()
+    source = Path("frontend/src/components/ScheduledCockpit.jsx").read_text(encoding="utf-8")
     forbidden = ["/api/browser", "/api/github", "gmail", "whatsapp", "telegram", "google-calendar"]
     assert all(term not in source.lower() for term in forbidden)
