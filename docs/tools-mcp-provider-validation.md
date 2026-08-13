@@ -71,7 +71,7 @@ The status layer exposes provider IDs, display names, enabled/configured state, 
 Discovery rules:
 
 - Load target entries from `.agent/mcp_config.json` only.
-- Connect through MCP transports only (`stdio` and `sse` are currently discoverable by the local bridge; `http`, `app_connector`, and `unknown` require manual/provider validation until supported safely).
+- Connect through MCP transports only (`stdio`, `sse`, and `http` are discoverable by the local bridge; `app_connector` and `unknown` require manual/provider validation until supported safely).
 - Call MCP `tools/list` only during explicit discovery/refresh flows in code or tests.
 - Normalize discovered MCP tools into provider-managed `ToolMetadata`.
 - Mark failed providers unavailable without affecting other providers.

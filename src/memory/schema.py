@@ -15,6 +15,7 @@ PHASE_X_MEMORY_TABLES = [
     "structured_episodes",
     "pending_fact_candidates",
     "semantic_embeddings",
+    "memory_entities",
     "semantic_dedup_events",
     "consolidation_runs",
     "skill_candidates",
@@ -188,6 +189,17 @@ def create_phase_x_memory_schema(conn: Connection) -> None:
     cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_semantic_embeddings_owner_model_unique ON semantic_embeddings(owner_type, owner_id, embedding_model);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_semantic_embeddings_owner ON semantic_embeddings(owner_type, owner_id);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_semantic_embeddings_hash ON semantic_embeddings(content_hash);")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS memory_entities (
+            entity_norm TEXT NOT NULL,
+            fact_rowid INTEGER NOT NULL,
+            kind TEXT NOT NULL CHECK (kind IN ('email','name','token')),
+            PRIMARY KEY (entity_norm, fact_rowid, kind)
+        );
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_memory_entities_entity ON memory_entities(entity_norm);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_memory_entities_fact ON memory_entities(fact_rowid);")
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS semantic_dedup_events (

@@ -28,8 +28,7 @@ def test_search_mcp_tool_reports_unavailable_without_provider():
     assert "Unavailable" in search_res
 
 
-def test_mcp_registry_and_risk(monkeypatch):
-    monkeypatch.setattr("src.mcp_gateway.registry.load_live_mcp_tools", lambda: [])
+def test_mcp_registry_and_risk():
     all_tools = get_all_mcp_tools()
     tool_names = [t.name for t in all_tools]
 

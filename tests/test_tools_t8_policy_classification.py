@@ -64,6 +64,23 @@ def test_t8_personal_os_read_direct_and_write_policy_known():
     assert create_task.risk_class == RiskClass.MEDIUM
 
 
+def test_t8_gmail_draft_metadata_is_not_unknown_to_policy():
+    decision = evaluate_tool_policy(
+        "gmail_create_draft",
+        {"to": ["a@example.com"]},
+        metadata=meta(
+            "gmail_create_draft",
+            "gmail",
+            RiskClass.MEDIUM,
+            ApprovalPolicy.CONFIRMATION_RECOMMENDED,
+            ReadWriteCapability.WRITE_CAPABLE,
+            external=True,
+        ),
+    )
+    assert decision.blocked is False
+    assert decision.decision == ToolPolicyDecisionType.CONFIRMATION_RECOMMENDED
+
+
 def test_t8_removed_demo_tools_and_real_high_risk_classification_delegate_to_policy():
     assert classify_tool_risk("run_code")[0] == "Blocked"
     assert classify_tool_risk("delete_database")[0] == "Blocked"

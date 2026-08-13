@@ -25,17 +25,10 @@ ACTIVE_PERSONAL_OS_TOOLS: List[BaseTool] = [
     checkpoint, restore_checkpoint,
 ]
 
-ALL_PERSONAL_OS_TOOLS: List[BaseTool] = ACTIVE_PERSONAL_OS_TOOLS
-
 
 def get_all_personal_os_tools() -> List[BaseTool]:
     """Returns active bounded Personal OS tools for LangChain/LangGraph binding."""
     return list(ACTIVE_PERSONAL_OS_TOOLS)
-
-
-def get_deprecated_personal_os_tools() -> List[BaseTool]:
-    """Deprecated synthetic Personal OS implementations were removed after T4 cleanup."""
-    return []
 
 
 def get_os_tool_catalog() -> List[dict]:

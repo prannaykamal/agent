@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List
 
 from src.db import get_connection
 from src.tools.policy import ToolCallerSource, evaluate_tool_policy
@@ -211,20 +211,6 @@ def get_provider_status_observability() -> Dict[str, Any]:
         "available_providers": sum(1 for provider in all_providers if provider.get("availability_status") in ("available", "configured")),
         "mcp_provider_count": len(mcp_providers),
         "external_api_provider_count": len(external_providers),
-    }
-
-
-def get_cron_observability(limit: int = 50) -> Dict[str, Any]:
-    from src.personal_os.scheduler_store import ToolScheduleRepository
-
-    repo = ToolScheduleRepository()
-    schedules = [redact_observability_value(item.to_dict()) for item in repo.list_schedules(limit=limit)]
-    runs = [redact_observability_value(item.to_dict()) for item in repo.list_runs(limit=limit)]
-    return {
-        "schedules": schedules,
-        "runs": runs,
-        "schedule_counts": _count_table("tool_schedules", "status"),
-        "run_counts": _count_table("tool_schedule_runs", "status"),
     }
 
 

@@ -50,12 +50,37 @@ def test_stdio_transport_mock(tmp_path):
     mock_server_code = """
 import sys, json
 
-for line in sys.stdin:
-    if not line.strip():
-        continue
-    req = json.loads(line)
-    req_id = req.get("id", 1)
+def read_message():
+    headers = {}
+    while True:
+        line = sys.stdin.readline()
+        if not line:
+            return None
+        if line in ("\\n", "\\r\\n"):
+            break
+        stripped = line.strip()
+        if stripped.startswith("{") and "content-length" not in headers:
+            return json.loads(stripped)
+        if ":" in stripped:
+            key, value = stripped.split(":", 1)
+            headers[key.strip().lower()] = value.strip()
+    length = int(headers["content-length"])
+    body = sys.stdin.read(length)
+    return json.loads(body)
+
+def write_message(payload):
+    raw = json.dumps(payload)
+    sys.stdout.write("Content-Length: %s\\r\\n\\r\\n%s" % (len(raw), raw))
+    sys.stdout.flush()
+
+while True:
+    req = read_message()
+    if req is None:
+        break
+    req_id = req.get("id")
     method = req.get("method", "")
+    if req_id is None:
+        continue
 
     if method == "initialize":
         res = {"jsonrpc": "2.0", "id": req_id, "result": {"serverInfo": {"name": "Mock Stdio Server"}}}
@@ -66,9 +91,7 @@ for line in sys.stdin:
         res = {"jsonrpc": "2.0", "id": req_id, "result": {"content": [{"type": "text", "text": f"Echo: {args.get('text', '')}"}]}}
     else:
         res = {"jsonrpc": "2.0", "id": req_id, "result": {}}
-
-    sys.stdout.write(json.dumps(res) + "\\n")
-    sys.stdout.flush()
+    write_message(res)
 """
     mock_server_script.write_text(mock_server_code, encoding="utf-8")
 
@@ -109,3 +132,110 @@ def test_mcp_bridge_and_langchain_wrapping(tmp_path):
     target_tool = lc_tools[0]
     out = target_tool.invoke({"url": "https://test.org"})
     assert "[Remote SSE Tool" in out
+
+
+def test_stdio_resolves_npx_from_extra_bin_dirs(tmp_path, monkeypatch):
+    from src.mcp_gateway.protocol.transports import command_resolve
+
+    bin_dir = tmp_path / "bins"
+    bin_dir.mkdir()
+    npx = bin_dir / "npx"
+    npx.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    npx.chmod(0o755)
+    monkeypatch.setattr(command_resolve, "extra_bin_dirs", lambda: [str(bin_dir)])
+
+    env = command_resolve.merge_stdio_env({"CUSTOM": "1"})
+    command, args, launch_env = command_resolve.resolve_stdio_launch("npx", ["-y", "pkg"], env)
+    assert command == str(npx)
+    assert args == ["-y", "pkg"]
+    assert launch_env["CUSTOM"] == "1"
+    assert str(bin_dir) in launch_env["PATH"]
+
+
+def test_uvx_falls_back_to_uv_tool_run(tmp_path, monkeypatch):
+    from src.mcp_gateway.protocol.transports import command_resolve
+
+    bin_dir = tmp_path / "bins"
+    bin_dir.mkdir()
+    uv = bin_dir / "uv"
+    uv.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    uv.chmod(0o755)
+    monkeypatch.setattr(command_resolve, "extra_bin_dirs", lambda: [str(bin_dir)])
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+
+    command, args, _env = command_resolve.resolve_stdio_launch(
+        "uvx",
+        ["--with", "example-mcp-server", "example-mcp-server"],
+        {},
+    )
+    assert command == str(uv)
+    assert args[:2] == ["tool", "run"]
+    assert args[2:] == ["--with", "example-mcp-server", "example-mcp-server"]
+
+
+def test_http_transport_json_and_empty_notification(tmp_path):
+    import json
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    from src.mcp_gateway.protocol.transports.http import HTTPMCPTransport, _parse_sse_jsonrpc
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, format, *args):
+            return
+
+        def do_POST(self):
+            length = int(self.headers.get("Content-Length") or "0")
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            req_id = payload.get("id")
+            method = payload.get("method")
+            if req_id is None:
+                self.send_response(202)
+                self.end_headers()
+                return
+            if method == "initialize":
+                result = {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {"tools": {}},
+                    "serverInfo": {"name": "HTTP Test Server", "version": "1.0.0"},
+                }
+            elif method == "tools/list":
+                result = {
+                    "tools": [
+                        {
+                            "name": "http_echo",
+                            "description": "Echo",
+                            "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}}},
+                        }
+                    ]
+                }
+            elif method == "tools/call":
+                text = payload.get("params", {}).get("arguments", {}).get("text", "")
+                result = {"content": [{"type": "text", "text": f"HTTP Echo: {text}"}]}
+            else:
+                result = {}
+            body = json.dumps({"jsonrpc": "2.0", "id": req_id, "result": result}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        url = f"http://127.0.0.1:{server.server_port}/mcp"
+        client = MCPClient(HTTPMCPTransport(url=url))
+        client.connect_and_initialize()
+        assert client.server_info["name"] == "HTTP Test Server"
+        tools = client.list_tools()
+        assert tools[0]["name"] == "http_echo"
+        assert "HTTP Echo: ping" in client.call_tool("http_echo", {"text": "ping"})
+        client.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    parsed = _parse_sse_jsonrpc('event: message\ndata: {"jsonrpc":"2.0","id":1,"result":{"ok":true}}\n\n')
+    assert parsed[0]["result"]["ok"] is True

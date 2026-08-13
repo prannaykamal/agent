@@ -14,7 +14,7 @@ def test_t7_telegram_read_send_use_direct_api_boundary(monkeypatch):
         calls.append(("send", chat_id, text))
         return ExternalProviderResult(status=ExternalProviderInvocationStatus.SUCCEEDED, provider_id="telegram_bot_api", content="telegram send ok")
 
-    monkeypatch.setattr("src.mcp_gateway.communication.telegram_bot_api.read_status", fake_read_status)
+    monkeypatch.setattr("src.mcp_gateway.communication.telegram_bot_api.read_messages", fake_read_status)
     monkeypatch.setattr("src.mcp_gateway.communication.telegram_bot_api.send_message", fake_send_message)
 
     assert telegram_read.invoke({"limit": 3}) == "telegram status ok"

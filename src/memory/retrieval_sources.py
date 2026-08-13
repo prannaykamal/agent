@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Protocol, Sequence, Tuple
 
@@ -8,19 +8,25 @@ from src.db import get_connection
 from src.memory.embeddings import (
     DEFAULT_EMBEDDING_MODEL,
     SEMANTIC_FACT_OWNER_TYPE,
-    canonical_semantic_fact_text,
     cosine_similarity,
     get_embedding_provider,
     SemanticEmbeddingStore,
 )
 from src.memory.episode_store import StructuredEpisodeRecord, StructuredEpisodeRepository
+from src.memory.entity_index import extract_query_entities, lookup_facts_for_query
+from src.memory.fact_keys import keep_newest_semantic_candidates
 from src.memory.retrieval_ranker import (
     clamp_score,
+    distinctive_token_overlap,
+    entity_overlap_score,
     estimate_retrieval_candidate_tokens,
     lexical_similarity,
     normalize_candidates,
+    normalize_fusion_scores,
     rank_candidates,
     recency_score,
+    reciprocal_rank_fusion,
+    tokenize_retrieval_text,
     trim_retrieval_candidates_to_budget,
     weighted_score,
 )
@@ -38,6 +44,19 @@ from src.memory.semantic_store import SemanticFactRecord, SemanticFactStore
 from src.memory.skill_reloader import ActiveSkillSnapshot
 from src.memory.skill_store import SkillVersionRecord, SkillVersionStore
 from src.memory.summary_blocks import SummaryBlockRecord, SummaryBlockRepository
+
+
+SEMANTIC_MIN_SIMILARITY = 0.18
+SEMANTIC_CANDIDATE_POOL = 40
+IDENTITY_TASK_TYPES = {"identity_or_preference"}
+IDENTITY_FACT_CATEGORIES = {"user_profile", "profile", "user_fact", "user_preference"}
+SEMANTIC_SCORE_WEIGHTS = {
+    "similarity": 0.45,
+    "entity": 0.15,
+    "fts": 0.10,
+    "confidence": 0.10,
+    "recency": 0.20,
+}
 
 
 @dataclass(frozen=True)
@@ -62,6 +81,10 @@ def _text_token_count(text: str) -> int:
     if not text:
         return 0
     return max(1, len(text) // 4)
+
+
+def _best_lexical(query: str, text: str) -> float:
+    return max(lexical_similarity(query, text), distinctive_token_overlap(query, text))
 
 
 def _fields_matched(query: str, fields: Dict[str, Any]) -> Tuple[str, ...]:
@@ -96,6 +119,18 @@ def _created_newest(records: Iterable[Any]) -> Optional[str]:
     values = [str(getattr(record, "created_at", "") or "") for record in records]
     values = [value for value in values if value]
     return max(values) if values else None
+
+
+def _embedding_is_semantic(provider: object, fallback_used: object) -> bool:
+    name = str(provider or "").strip().lower()
+    if not name or name == "deterministic":
+        return False
+    return not bool(fallback_used)
+
+
+def _stored_embedding_is_semantic(record: Any) -> bool:
+    metadata = getattr(record, "metadata", None) or {}
+    return _embedding_is_semantic(metadata.get("provider"), metadata.get("fallback_used"))
 
 
 class SummaryBlockRetrievalSource:
@@ -188,12 +223,33 @@ class StructuredEpisodeRetrievalSource:
         limit = max(request.per_source_limit * 4, request.per_source_limit)
         records: List[StructuredEpisodeRecord] = []
         if request.query:
-            records = self.repository.search_text(request.query, session_id=request.session_id, limit=limit)
+            records = self._search_episodes(request.query, request.session_id, limit)
         if request.session_id:
             existing_ids = {record.id for record in records}
             fallback = self.repository.list_by_session(request.session_id, limit=limit, newest_first=True)
             records.extend(record for record in fallback if record.id not in existing_ids)
+        if request.query and not records:
+            records = self._search_episodes(request.query, None, limit)
         return records[:limit]
+
+    def _search_episodes(
+        self,
+        query: str,
+        session_id: Optional[str],
+        limit: int,
+    ) -> List[StructuredEpisodeRecord]:
+        found: Dict[str, StructuredEpisodeRecord] = {}
+        pool = SEMANTIC_CANDIDATE_POOL
+        for record in self.repository.search_text(query, session_id=session_id, limit=pool):
+            found[record.id] = record
+        for token in tokenize_retrieval_text(query):
+            if len(token) < 4:
+                continue
+            for record in self.repository.search_text(token, session_id=session_id, limit=pool):
+                found[record.id] = record
+            if len(found) >= pool:
+                break
+        return list(found.values())[:pool]
 
     def _candidate(
         self,
@@ -212,8 +268,8 @@ class StructuredEpisodeRetrievalSource:
             "topics": record.topics,
         }
         components = {
-            "lexical": lexical_similarity(request.query, content),
-            "topic_overlap": lexical_similarity(request.query, " ".join(record.topics + record.goals + record.artifacts)),
+            "lexical": _best_lexical(request.query, content),
+            "topic_overlap": _best_lexical(request.query, " ".join(record.topics + record.goals + record.artifacts)),
             "importance": clamp_score(record.importance),
             "recency": recency_score(record.created_at, newest_at=newest_at),
         }
@@ -268,17 +324,99 @@ class SemanticFactRetrievalSource:
     def retrieve(self, request: RetrievalRequest) -> RetrievalSourceResult:
         if request.per_source_limit <= 0:
             return RetrievalSourceResult(self.source_name, self.memory_kind)
-        facts = self.store.list_facts()
-        newest = _created_newest(facts)
+        all_facts = self.store.list_facts()
+        selected = self._select_facts(request, all_facts)
+        newest = _created_newest(selected)
         query_vector = None
         if request.query:
             try:
-                query_vector = get_embedding_provider().embed_text(request.query)
+                provider = get_embedding_provider()
+                vector = provider.embed_text(request.query)
+                if _embedding_is_semantic(getattr(vector, "provider", None), getattr(vector, "fallback_used", True)):
+                    query_vector = vector
             except Exception:
                 query_vector = None
-        candidates = [self._candidate(fact, request, newest, query_vector) for fact in facts]
-        ranked = rank_candidates(normalize_candidates(candidates))[: request.per_source_limit]
-        return RetrievalSourceResult(self.source_name, self.memory_kind, tuple(ranked))
+        query_entities = extract_query_entities(request.query)
+        fts_rank = self._fts_ranks(request.query)
+        candidates = [
+            self._candidate(fact, request, newest, query_vector, query_entities, fts_rank)
+            for fact in selected
+        ]
+        lexical_order = [
+            candidate.id
+            for candidate in sorted(candidates, key=lambda item: -item.score.components.get("lexical", 0.0))
+        ]
+        fts_order = [f"semantic:{fact_id}" for fact_id, _rank in sorted(fts_rank.items(), key=lambda item: item[1])]
+        rrf = normalize_fusion_scores(reciprocal_rank_fusion((fts_order, lexical_order)))
+        fused = []
+        for candidate in candidates:
+            rrf_score = rrf.get(candidate.id, 0.0)
+            components = dict(candidate.score.components)
+            components["rrf"] = rrf_score
+            rank_score = clamp_score((0.70 * candidate.score.raw_score) + (0.30 * rrf_score))
+            fused.append(
+                replace(
+                    candidate,
+                    score=RetrievalScore(
+                        raw_score=rank_score,
+                        normalized_score=rank_score,
+                        rank_score=rank_score,
+                        components=components,
+                        strategy=candidate.score.strategy,
+                    ),
+                )
+            )
+        relevant = [
+            candidate
+            for candidate in fused
+            if candidate.score.components.get("similarity", 0.0) >= SEMANTIC_MIN_SIMILARITY
+            or candidate.score.components.get("entity", 0.0) >= 0.55
+        ]
+        if not relevant and request.task_type in IDENTITY_TASK_TYPES:
+            relevant = [
+                candidate
+                for candidate in fused
+                if str(candidate.provenance.metadata.get("category") or "") in IDENTITY_FACT_CATEGORIES
+            ]
+        ranked = rank_candidates(normalize_candidates(relevant))
+        superseded = keep_newest_semantic_candidates(ranked)
+        return RetrievalSourceResult(self.source_name, self.memory_kind, tuple(superseded[: request.per_source_limit]))
+
+    def _select_facts(self, request: RetrievalRequest, all_facts: List[SemanticFactRecord]) -> List[SemanticFactRecord]:
+        by_id = {int(fact.id): fact for fact in all_facts}
+        if not request.query:
+            return all_facts[: max(request.per_source_limit * 3, request.per_source_limit)]
+        selected: Dict[int, SemanticFactRecord] = {}
+        pool = max(SEMANTIC_CANDIDATE_POOL, request.per_source_limit * 8)
+        for row in self.store.search_facts(request.query, limit=pool):
+            fact_id = int(row.get("id") or 0)
+            if fact_id in by_id:
+                selected[fact_id] = by_id[fact_id]
+        for token in tokenize_retrieval_text(request.query):
+            if len(token) < 4:
+                continue
+            for row in self.store.search_facts(token, limit=pool):
+                fact_id = int(row.get("id") or 0)
+                if fact_id in by_id:
+                    selected[fact_id] = by_id[fact_id]
+            if len(selected) >= pool:
+                break
+        for fact_id in lookup_facts_for_query(request.query, db_path=self.store.db_path, limit=pool):
+            if fact_id in by_id:
+                selected[fact_id] = by_id[fact_id]
+        if not selected:
+            return all_facts
+        return list(selected.values())
+
+    def _fts_ranks(self, query: str) -> Dict[int, int]:
+        if not query:
+            return {}
+        ranks: Dict[int, int] = {}
+        for index, row in enumerate(self.store.search_facts(query, limit=SEMANTIC_CANDIDATE_POOL), start=1):
+            fact_id = int(row.get("id") or 0)
+            if fact_id and fact_id not in ranks:
+                ranks[fact_id] = index
+        return ranks
 
     def _candidate(
         self,
@@ -286,8 +424,9 @@ class SemanticFactRetrievalSource:
         request: RetrievalRequest,
         newest_at: Optional[str],
         query_vector: Any,
+        query_entities: Tuple[str, ...] = tuple(),
+        fts_rank: Optional[Dict[int, int]] = None,
     ) -> RetrievedMemoryCandidate:
-        content = canonical_semantic_fact_text(fact.category, fact.fact_text, fact.source)
         embedding_score = 0.0
         strategy = "lexical_fallback"
         embedding_model = None
@@ -298,21 +437,30 @@ class SemanticFactRetrievalSource:
                 str(fact.id),
                 embedding_model,
             )
-            if embedding is not None:
+            if embedding is not None and _stored_embedding_is_semantic(embedding):
                 embedding_score = clamp_score((cosine_similarity(query_vector.values, embedding.embedding) + 1.0) / 2.0)
                 strategy = "existing_embedding"
-        lexical = lexical_similarity(request.query, content)
-        base_similarity = max(lexical, embedding_score)
+        lexical = _best_lexical(request.query, fact.fact_text)
+        if strategy == "lexical_fallback" and distinctive_token_overlap(request.query, fact.fact_text) > lexical_similarity(request.query, fact.fact_text):
+            strategy = "distinctive_token_overlap"
+        entity = entity_overlap_score(query_entities, fact.fact_text)
+        rank_map = fts_rank or {}
+        fts_score = 0.0
+        if int(fact.id) in rank_map:
+            fts_score = clamp_score(1.0 / (1.0 + rank_map[int(fact.id)]))
+        base_similarity = max(lexical, embedding_score, entity)
         components = {
             "similarity": base_similarity,
             "lexical": lexical,
             "embedding": embedding_score,
+            "entity": entity,
+            "fts": fts_score,
             "confidence": clamp_score(fact.confidence),
             "recency": recency_score(fact.created_at, newest_at=newest_at),
         }
         score = _score(
             components=components,
-            weights={"similarity": 0.65, "confidence": 0.25, "recency": 0.10},
+            weights=SEMANTIC_SCORE_WEIGHTS,
             strategy=strategy,
         )
         provenance = RetrievalProvenance(

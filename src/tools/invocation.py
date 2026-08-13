@@ -4,7 +4,14 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Mapping
 
 from src.tools.errors import ToolErrorCode
-from src.tools.policy import ToolCallerSource, ToolPolicyDecision, ToolPolicyDecisionType, evaluate_tool_policy
+from src.tools.policy import (
+    ToolCallerSource,
+    ToolPolicyDecision,
+    ToolPolicyDecisionType,
+    bind_tool_policy_context,
+    evaluate_tool_policy,
+    reset_tool_policy_context,
+)
 
 
 @dataclass(frozen=True)
@@ -99,6 +106,7 @@ def invoke_registered_tool(
             policy_decision=decision,
         )
 
+    token = bind_tool_policy_context(source=source, approval_context=approval_context)
     try:
         result = target_tool.invoke(args)
         return ToolInvocationResult(
@@ -119,3 +127,5 @@ def invoke_registered_tool(
             error=str(exc)[:500],
             policy_decision=decision,
         )
+    finally:
+        reset_tool_policy_context(token)

@@ -8,13 +8,25 @@ import Badge from "./ui/Badge.jsx";
 
 export default function LoopCockpit({ activeSessionId, onRefresh }) {
   const [events, setEvents] = useState([]);
+  const [sessions, setSessions] = useState([]);
+  const [selectedSession, setSelectedSession] = useState(activeSessionId || "");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  const loadLoopTrace = async () => {
+  useEffect(() => {
+    setSelectedSession(activeSessionId || "");
+  }, [activeSessionId]);
+
+  useEffect(() => {
+    api.get("/api/sessions").then((data) => {
+      setSessions(data.sessions || []);
+    }).catch(() => {});
+  }, []);
+
+  const loadLoopTrace = async (sessionId) => {
     setLoading(true);
     setError(null);
-    const sess = activeSessionId || "default_session";
+    const sess = sessionId || selectedSession || activeSessionId || "default_session";
     try {
       let data;
       try {
@@ -22,7 +34,10 @@ export default function LoopCockpit({ activeSessionId, onRefresh }) {
       } catch {
         data = await api.get(`/api/loop/events/${sess}`);
       }
-      setEvents(data.loop_trace || data.loop_events || data.turns || []);
+      const trace = Array.isArray(data.loop_trace)
+        ? data.loop_trace
+        : (Array.isArray(data.loop_events) ? data.loop_events : []);
+      setEvents(trace);
     } catch (e) {
       setError(e.message || "Failed to load loop events");
     } finally {
@@ -31,21 +46,36 @@ export default function LoopCockpit({ activeSessionId, onRefresh }) {
   };
 
   useEffect(() => {
-    loadLoopTrace();
-  }, [activeSessionId]);
+    loadLoopTrace(selectedSession || activeSessionId);
+  }, [selectedSession, activeSessionId]);
+
+  const sessionOptions = Array.from(new Set([selectedSession, activeSessionId, ...sessions].filter(Boolean)));
 
   return (
     <div className="page">
       <PageHeader
         title="Loop"
-        subtitle={`Session ${activeSessionId || "default_session"}`}
-        actions={<button className="btn btn-primary" onClick={() => { loadLoopTrace(); if (onRefresh) onRefresh(); }}>Refresh</button>}
+        subtitle={`Session ${selectedSession || activeSessionId || "default_session"}`}
+        actions={
+          <div className="actions">
+            <select
+              value={selectedSession || activeSessionId || ""}
+              onChange={(e) => setSelectedSession(e.target.value)}
+            >
+              {sessionOptions.length === 0 ? <option value="">No sessions yet</option> : null}
+              {sessionOptions.map((sid) => (
+                <option key={sid} value={sid}>{sid}</option>
+              ))}
+            </select>
+            <button className="btn btn-primary" onClick={() => { loadLoopTrace(selectedSession); if (onRefresh) onRefresh(); }}>Refresh</button>
+          </div>
+        }
       />
       {error ? <Notice kind="error">Error loading loop events: {error}</Notice> : null}
       {loading ? (
         <Spinner label="Loading loop trace..." />
       ) : events.length === 0 ? (
-        <EmptyState title="No activity yet" body="No loop events recorded for this session." />
+        <EmptyState title="No activity yet" body="No loop events for this session. Send a chat message, or pick another session above." />
       ) : (
         <div className="timeline">
           {events.map((ev, idx) => (

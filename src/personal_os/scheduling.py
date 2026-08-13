@@ -16,7 +16,7 @@ def schedule_job(cron_or_timestamp: str, task_payload: str) -> str:
         payload={"cron_or_timestamp": cron_or_timestamp, "task_payload": task_payload, "schedule_id": schedule.id},
         target_resource=schedule.id,
     )
-    return f"[Personal OS Scheduled Job] Job '{schedule.id}' registered for schedule '{cron_or_timestamp}'."
+    return f"[Personal OS Scheduled Job] Job '{schedule.id}' registered for schedule '{cron_or_timestamp}' targeting {schedule.target_tool_id}."
 
 
 @tool

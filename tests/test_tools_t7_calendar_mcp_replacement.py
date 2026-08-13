@@ -28,7 +28,8 @@ def test_t7_calendar_read_and_writes_use_mcp_boundary(monkeypatch):
     assert any("delete" in call[1] for call in calls)
 
 
-def test_t7_calendar_local_conflict_detection_is_not_source_of_truth():
+def test_t7_calendar_conflict_detection_without_token(monkeypatch):
+    monkeypatch.setattr("src.mcp_gateway.calendar.access_token_from_env", lambda: "")
     assert detect_calendar_conflicts("10:00", "11:00") == []
 
 

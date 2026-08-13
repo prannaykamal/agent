@@ -1,10 +1,8 @@
 import pytest
 import sqlite3
-from pathlib import Path
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
 from src.db import init_db, add_fact, query_facts_fts
-from src.memory.episodic import log_episode
 from src.memory.soul_loader import load_soul_prompt
 
 from src.memory.short_term import manage_short_term_memory
@@ -58,11 +56,84 @@ def test_short_term_memory_compatibility_wrapper_does_not_trim_by_message_count(
     assert summary == ""
     assert not any("[Context Summary]" in m.content for m in returned_messages if isinstance(m, SystemMessage))
 
-def test_langgraph_agent_invocation(temp_db, monkeypatch):
-    # Set DB_PATH for the test
-    monkeypatch.setattr("src.harness.graph.log_episode", lambda session_id, content: log_episode(session_id, content, db_path=temp_db))
 
-    
+def test_normalize_llm_messages_moves_trailing_system_to_front():
+    from src.harness.graph import _normalize_llm_messages
+
+    normalized = _normalize_llm_messages(
+        [
+            SystemMessage(content="You are Astra."),
+            HumanMessage(content="send mail to a@gmail.com saying hi"),
+            SystemMessage(content="[Retrieved Long-Term Memory]\n- fact"),
+        ]
+    )
+    assert [type(message).__name__ for message in normalized] == ["SystemMessage", "HumanMessage"]
+    assert "You are Astra." in normalized[0].content
+    assert "[Retrieved Long-Term Memory]" in normalized[0].content
+    assert normalized[1].content == "send mail to a@gmail.com saying hi"
+
+
+def test_sanitize_drops_orphan_tool_messages():
+    from langchain_core.messages import ToolMessage
+    from src.harness.graph import _sanitize_llm_messages
+
+    sanitized = _sanitize_llm_messages(
+        [
+            SystemMessage(content="You are Astra."),
+            HumanMessage(content="yes"),
+            AIMessage(content="[HUMAN APPROVAL REQUIRED]"),
+            ToolMessage(content="Sent.", tool_call_id="call_1", name="email_send"),
+        ]
+    )
+    assert [type(message).__name__ for message in sanitized] == ["SystemMessage", "HumanMessage", "AIMessage"]
+    assert not any(type(message).__name__ == "ToolMessage" for message in sanitized)
+
+
+def test_sanitize_keeps_paired_tool_results():
+    from langchain_core.messages import ToolMessage
+    from src.harness.graph import _sanitize_llm_messages
+
+    assistant = AIMessage(
+        content="",
+        tool_calls=[{"name": "email_draft", "args": {"to": "a@x.com"}, "id": "call_1"}],
+    )
+    sanitized = _sanitize_llm_messages(
+        [
+            HumanMessage(content="draft it"),
+            assistant,
+            ToolMessage(content="Draft created", tool_call_id="call_1", name="email_draft"),
+        ]
+    )
+    assert sanitized[-1].content == "Draft created"
+    assert sanitized[-2].tool_calls[0]["id"] == "call_1"
+
+
+def test_sanitize_strips_unpaired_tool_calls():
+    from src.harness.graph import _sanitize_llm_messages
+
+    sanitized = _sanitize_llm_messages(
+        [
+            HumanMessage(content="send it"),
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "email_send", "args": {"to": "a@x.com"}, "id": "call_1"}],
+            ),
+            AIMessage(content="[HUMAN APPROVAL REQUIRED]"),
+        ]
+    )
+    assert [type(message).__name__ for message in sanitized] == ["HumanMessage", "AIMessage", "AIMessage"]
+    assert not getattr(sanitized[1], "tool_calls", None)
+
+
+def test_resume_user_response_ignores_approval_stall():
+    from src.harness.graph import _resume_user_response
+
+    stall = AIMessage(content="I attempted to send the email, but it requires additional approval due to safety protocols.")
+    assert _resume_user_response([stall], "Sent Gmail message 19ff to a@x.com.") == "Sent Gmail message 19ff to a@x.com."
+    assert _resume_user_response([AIMessage(content="Email sent to a@x.com.")], "Sent.") == "Email sent to a@x.com."
+
+
+def test_langgraph_agent_invocation(temp_db):
     input_state = {
         "messages": [HumanMessage(content="Hello assistant!")],
         "session_id": "test_session_001",

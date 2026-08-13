@@ -49,7 +49,7 @@ def test_semantic_retrieval_reads_permanent_facts_without_writes(temp_db):
     assert _count(temp_db, "semantic_dedup_events") == before_dedup
 
 
-def test_semantic_retrieval_uses_existing_embeddings_when_present(temp_db):
+def test_semantic_retrieval_ignores_deterministic_embeddings(temp_db):
     fact_text = "User prefers FastAPI for backend services"
     add_fact("profile", fact_text, db_path=temp_db)
     fact_id = _fact_id(temp_db, fact_text)
@@ -60,8 +60,9 @@ def test_semantic_retrieval_uses_existing_embeddings_when_present(temp_db):
 
     result = retrieve_semantic_facts(RetrievalRequest(query="FastAPI backend", per_source_limit=3), db_path=temp_db)
 
-    assert result.candidates[0].score.strategy == "existing_embedding"
-    assert result.candidates[0].provenance.metadata["embedding_used"] is True
+    assert result.candidates
+    assert result.candidates[0].score.strategy != "existing_embedding"
+    assert result.candidates[0].provenance.metadata["embedding_used"] is False
     assert _count(temp_db, "semantic_embeddings") == before
 
 
@@ -78,4 +79,29 @@ def test_semantic_retrieval_does_not_modify_memory_md_or_call_upsert(temp_db, tm
 
     assert result.candidates
     assert not memory_path.exists()
+
+
+def test_distinctive_tokens_rank_matching_facts_first(temp_db):
+    add_fact("profile", "User prefers FastAPI for backend services", db_path=temp_db)
+    add_fact("user_fact", "Priya's timezone is IST", db_path=temp_db)
+
+    result = retrieve_semantic_facts(
+        RetrievalRequest(query="what timezone does Priya use?", per_source_limit=3),
+        db_path=temp_db,
+    )
+
+    assert result.candidates
+    assert result.candidates[0].content == "Priya's timezone is IST"
+    assert all("FastAPI" not in candidate.content for candidate in result.candidates)
     assert _count(temp_db, "semantic_dedup_events") == 0
+
+
+def test_unrelated_facts_are_not_retrieved(temp_db):
+    add_fact("profile", "User prefers FastAPI for backend services", db_path=temp_db)
+
+    result = retrieve_semantic_facts(
+        RetrievalRequest(query="what timezone does Priya use?", per_source_limit=3),
+        db_path=temp_db,
+    )
+
+    assert result.candidates == tuple()

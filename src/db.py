@@ -329,6 +329,13 @@ def add_fact(category: str, fact_text: str, source: str = "user", confidence: fl
         "INSERT INTO facts (category, fact_text, source, confidence, created_at) VALUES (?, ?, ?, ?, datetime('now'))",
         (category, fact_text, source, str(confidence))
     )
+    rowid = int(cursor.lastrowid)
+    try:
+        from src.memory.entity_index import EntityIndexStore
+
+        EntityIndexStore(db_path=db_path).index_fact(rowid, fact_text, conn=conn)
+    except Exception:
+        pass
     conn.commit()
     conn.close()
 

@@ -1,4 +1,3 @@
-import time
 import signal
 from threading import Event
 from src.personal_os.scheduler_worker import process_due_schedules_once, process_legacy_due_scheduled_jobs
@@ -49,7 +48,7 @@ def run_scheduled_worker_loop(interval_seconds: int = 5, stop_event: Event = Non
 if __name__ == "__main__":
     shutdown_event = Event()
 
-    def handle_signal(sig, frame):
+    def handle_signal(sig, _frame):
         print(f"\n[Scheduler Worker] Signal {sig} received. Requesting graceful shutdown...")
         shutdown_event.set()
 

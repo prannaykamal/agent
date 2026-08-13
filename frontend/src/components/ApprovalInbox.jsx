@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { api } from "../api/client.js";
 import PageHeader from "./ui/PageHeader.jsx";
 import Notice from "./ui/Notice.jsx";
@@ -12,6 +12,8 @@ export default function ApprovalInbox({ onRefresh }) {
   const [error, setError] = useState(null);
   const [actionStatus, setActionStatus] = useState(null);
   const [lastDecisionResult, setLastDecisionResult] = useState(null);
+  const [busyId, setBusyId] = useState(null);
+  const busyRef = useRef(false);
 
   const loadApprovals = async () => {
     setLoading(true);
@@ -31,7 +33,10 @@ export default function ApprovalInbox({ onRefresh }) {
   }, []);
 
   const handleDecision = async (reqId, decision) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
     try {
+      setBusyId(reqId);
       setActionStatus(`Processing ${decision} decision for request '${reqId}'...`);
       setLastDecisionResult(null);
       const data = await api.post(`/api/approvals/${reqId}/decision`, { decision });
@@ -46,6 +51,10 @@ export default function ApprovalInbox({ onRefresh }) {
     } catch (e) {
       setActionStatus(`Error processing decision: ${e.message}`);
       setLastDecisionResult({ error: e.message, status: "ERROR" });
+      loadApprovals();
+    } finally {
+      busyRef.current = false;
+      setBusyId(null);
     }
   };
 
@@ -103,7 +112,7 @@ export default function ApprovalInbox({ onRefresh }) {
           const isUnavailable = (req.reason || "").toLowerCase().includes("unavailable") || (req.tool_name || "").toLowerCase().includes("unavailable");
           const isBlocked = (req.reason || "").toLowerCase().includes("blocked") || (req.reason || "").toLowerCase().includes("policy");
           return (
-            <article key={req.id} className="glass-card">
+            <article key={req.id || req.request_id} className="glass-card">
               <div className="row-card" style={{ border: 0, padding: 0 }}>
                 <div>
                   <div className="chip-row" style={{ marginBottom: 8 }}>
@@ -112,14 +121,14 @@ export default function ApprovalInbox({ onRefresh }) {
                     {isUnavailable ? <Badge value="Provider Unavailable" tone="warn" /> : null}
                     {isBlocked ? <Badge value="Policy Blocked" tone="danger" /> : null}
                   </div>
-                  <div className="lede">Session: <code>{req.session_id || "global"}</code> · Request ID: <code>{req.id}</code></div>
+                  <div className="lede">Session: <code>{req.session_id || "global"}</code> · Request ID: <code>{req.id || req.request_id}</code></div>
                   <div style={{ marginTop: 8 }}><strong>Reason:</strong> {req.reason}</div>
                   {req.created_at ? <div className="lede">Requested at: {req.created_at}</div> : null}
                   {req.tool_args ? <pre className="json-block">{JSON.stringify(req.tool_args, null, 2)}</pre> : null}
                 </div>
                 <div className="actions">
-                  <button className="btn btn-ok" onClick={() => handleDecision(req.id, "APPROVED")}>Approve</button>
-                  <button className="btn btn-danger" onClick={() => handleDecision(req.id, "REJECTED")}>Reject</button>
+                  <button className="btn btn-ok" disabled={Boolean(busyId)} onClick={() => handleDecision(req.id || req.request_id, "APPROVED")}>Approve</button>
+                  <button className="btn btn-danger" disabled={Boolean(busyId)} onClick={() => handleDecision(req.id || req.request_id, "REJECTED")}>Reject</button>
                 </div>
               </div>
             </article>

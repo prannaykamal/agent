@@ -59,21 +59,22 @@ def test_t6_discovery_failure_marks_only_that_provider_unavailable(tmp_path):
     _write_config(
         config_file,
         {
-            "gmail": {"transport": "stdio", "command": "fake-gmail"},
+            "gmail": {"transport": "stdio", "command": "fake-gmail", "env": {"GMAIL_TOKEN": "super-secret-token"}},
             "google_calendar": {"transport": "stdio", "command": "fake-calendar"},
         },
     )
 
     def factory(provider):
         if provider.provider_id == "gmail":
-            return FakeMCPClient(RuntimeError("missing gmail credential token abc"))
+            return FakeMCPClient(RuntimeError("missing gmail credential token super-secret-token"))
         return FakeMCPClient([{"name": "calendar_list_events", "inputSchema": {"type": "object"}}])
 
     results = {item.provider.provider_id: item for item in get_mcp_provider_results(config_path=config_file, refresh=True, client_factory=factory)}
 
     assert results["gmail"].provider.discovery_status == MCPDiscoveryStatus.FAILED
     assert results["gmail"].provider.availability_status == "unavailable"
-    assert results["gmail"].provider.last_error == "[REDACTED]"
+    assert results["gmail"].provider.last_error
+    assert "super-secret-token" not in (results["gmail"].provider.last_error or "")
     assert results["google_calendar"].provider.discovery_status == MCPDiscoveryStatus.DISCOVERED
     assert results["google_calendar"].tools
 

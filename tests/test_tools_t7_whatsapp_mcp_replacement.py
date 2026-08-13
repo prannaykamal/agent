@@ -14,7 +14,7 @@ def test_t7_whatsapp_read_send_use_direct_api_boundary(monkeypatch):
         calls.append(("send", recipient, message))
         return ExternalProviderResult(status=ExternalProviderInvocationStatus.SUCCEEDED, provider_id="whatsapp_api", content="whatsapp send ok")
 
-    monkeypatch.setattr("src.mcp_gateway.communication.whatsapp_api.read_status", fake_read_status)
+    monkeypatch.setattr("src.mcp_gateway.communication.whatsapp_api.read_messages", fake_read_status)
     monkeypatch.setattr("src.mcp_gateway.communication.whatsapp_api.send_message", fake_send_message)
 
     assert whatsapp_read.invoke({"limit": 3}) == "whatsapp status ok"

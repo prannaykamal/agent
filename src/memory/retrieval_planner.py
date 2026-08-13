@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, Literal, Optional, Sequence, Tuple
 
 from langchain_core.messages import BaseMessage
@@ -219,6 +220,17 @@ def _calculate_retrieval_budget(
     return retrieval_budget, diagnostics
 
 
+def query_should_weight_identity(query: str, db_path: Optional[Path] = None) -> bool:
+    from src.memory.entity_index import extract_emails, query_hits_entity_index
+
+    if extract_emails(query):
+        return True
+    try:
+        return query_hits_entity_index(query, db_path=db_path)
+    except Exception:
+        return False
+
+
 def build_retrieval_plan(
     *,
     query: str,
@@ -228,12 +240,14 @@ def build_retrieval_plan(
     messages: Sequence[BaseMessage],
     gate_allows_retrieval: bool,
     include_debug: bool = False,
+    db_path: Optional[Path] = None,
 ) -> RetrievalPlan:
     normalized_query = " ".join(str(query or "").split())
     resolved_provider = provider or "openai"
     resolved_model = model_name or "gpt-4o-mini"
     task_type = classify_retrieval_task(normalized_query)
-    memory_kinds = select_memory_kinds(task_type)
+    entity_weighted = bool(normalized_query) and query_should_weight_identity(normalized_query, db_path=db_path)
+    memory_kinds = select_memory_kinds("identity_or_preference" if entity_weighted else task_type)
 
     if not gate_allows_retrieval or not normalized_query:
         return RetrievalPlan(
@@ -249,7 +263,7 @@ def build_retrieval_plan(
             total_token_budget=0,
             budget_by_kind={kind: 0 for kind in memory_kinds},
             retrieval_request=None,
-            debug={} if not include_debug else {"gate_allows_retrieval": gate_allows_retrieval},
+            debug={} if not include_debug else {"gate_allows_retrieval": gate_allows_retrieval, "entity_weighted": entity_weighted},
         )
 
     retrieval_budget, diagnostics = _calculate_retrieval_budget(
@@ -257,7 +271,8 @@ def build_retrieval_plan(
         model_name=resolved_model,
         messages=messages,
     )
-    allocation = allocate_retrieval_budget(task_type, retrieval_budget, memory_kinds)
+    budget_task = "identity_or_preference" if entity_weighted else task_type
+    allocation = allocate_retrieval_budget(budget_task, retrieval_budget, memory_kinds)
     should_retrieve = retrieval_budget > 0
     per_source_limit = 5 if retrieval_budget >= 1024 else 3
     request = None
@@ -271,6 +286,7 @@ def build_retrieval_plan(
             provider=resolved_provider,
             model_name=resolved_model,
             include_debug=include_debug,
+            task_type=task_type,
         )
 
     return RetrievalPlan(
@@ -286,5 +302,5 @@ def build_retrieval_plan(
         total_token_budget=retrieval_budget,
         budget_by_kind=allocation,
         retrieval_request=request,
-        debug={"budget": diagnostics, "task_type": task_type} if include_debug else {},
+        debug={"budget": diagnostics, "task_type": task_type, "entity_weighted": entity_weighted} if include_debug else {},
     )

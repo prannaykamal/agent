@@ -1,13 +1,11 @@
 ﻿import hashlib
 import json
-import re
 import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Sequence
 
 from src.db import get_connection
-from src.memory.semantic_store import SemanticFactWrite
 
 
 CandidateStatus = Literal[
@@ -521,60 +519,4 @@ class PendingFactCandidateStore:
             updated_at=str(row["updated_at"]),
             processed_at=row["processed_at"],
         )
-
-
-def _clean_extracted_fact(value: str) -> str:
-    cleaned = _normalize_whitespace(value)
-    cleaned = cleaned.strip(" .!?,;:")
-    return cleaned
-
-
-def extract_explicit_facts_from_user_text(user_text: str) -> List[SemanticFactWrite]:
-    text = str(user_text or "")
-    if not text.strip():
-        return []
-
-    patterns = [
-        (r"\bremember that\s+(.+?)(?:[.!?](?:\s|$)|$)", "user_fact", 0.98, "Remember that {fact}"),
-        (r"\bplease remember(?: that)?\s+(.+?)(?:[.!?](?:\s|$)|$)", "user_fact", 0.98, "Remember that {fact}"),
-        (r"\bdo not forget(?: that)?\s+(.+?)(?:[.!?](?:\s|$)|$)", "user_fact", 0.98, "Do not forget that {fact}"),
-        (r"\bdon't forget(?: that)?\s+(.+?)(?:[.!?](?:\s|$)|$)", "user_fact", 0.98, "Do not forget that {fact}"),
-        (
-            r"\bmy name is\s+([A-Za-z][A-Za-z0-9 .'\-]{0,80}?)(?:\s+and\b|[.!?;,](?:\s|$)|$)",
-            "user_profile",
-            0.99,
-            "User's name is {fact}",
-        ),
-        (
-            r"\bmy email is\s+([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,})",
-            "user_contact",
-            0.99,
-            "User's email is {fact}",
-        ),
-    ]
-
-    facts: List[SemanticFactWrite] = []
-    seen = set()
-    for pattern, category, confidence, template in patterns:
-        for match in re.finditer(pattern, text, flags=re.IGNORECASE | re.DOTALL):
-            extracted = _clean_extracted_fact(match.group(1))
-            if not extracted:
-                continue
-            fact_text = template.format(fact=extracted)
-            key = (category, fact_text.lower())
-            if key in seen:
-                continue
-            seen.add(key)
-            facts.append(
-                SemanticFactWrite(
-                    category=category,
-                    fact_text=fact_text,
-                    source="deterministic_explicit_chat",
-                    confidence=confidence,
-                    explicit=True,
-                )
-            )
-    return facts
-
-
 

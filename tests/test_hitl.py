@@ -83,6 +83,37 @@ def test_graph_hitl_interrupt_and_pause(temp_db):
     assert pending[0]["tool_name"] == "spawn_agent"
 
 
+def test_graph_hitl_passes_mixed_low_and_high(temp_db):
+    """Low+High in one turn must not pause in hitl_check; node_tools creates the approval after running Low."""
+    state = {
+        "messages": [
+            HumanMessage(content="What is India celebrating tomorrow? Add it to my calendar in Delhi."),
+            AIMessage(
+                content="I will search and then add a calendar event.",
+                tool_calls=[
+                    {"name": "search_web", "args": {"query": "India holiday August 15 2026"}, "id": "call_search"},
+                    {
+                        "name": "calendar_create_event",
+                        "args": {
+                            "title": "Independence Day",
+                            "start_time": "2026-08-15T09:00:00+05:30",
+                            "end_time": "2026-08-15T10:00:00+05:30",
+                            "location": "Delhi",
+                        },
+                        "id": "call_cal",
+                    },
+                ],
+            ),
+        ],
+        "session_id": "test_mixed_hitl",
+        "loop_events": [],
+    }
+
+    hitl = node_hitl_check(state)
+    assert hitl.get("approval_status") != "PENDING"
+    assert not hitl.get("pending_approval_id")
+
+
 def test_resume_after_approval_granted(temp_db):
     req = create_approval_request(
         "sess_grant",
@@ -102,3 +133,76 @@ def test_resume_after_approval_rejected(temp_db):
     res = resume_graph_after_approval(req["request_id"], "REJECTED")
     assert res["status"] == "REJECTED"
     assert "Approval DENIED" in res["message"]
+
+
+def test_pending_hitl_does_not_route_to_tools():
+    from src.harness.graph import route_after_hitl
+
+    assert route_after_hitl({"approval_status": "PENDING"}) == "end"
+    assert route_after_hitl({"approval_status": "NONE"}) == "tools"
+
+
+def test_match_chat_approval_decision():
+    from src.hitl.approval_engine import match_chat_approval_decision
+
+    assert match_chat_approval_decision("yes") == "APPROVED"
+    assert match_chat_approval_decision("Yes!") == "APPROVED"
+    assert match_chat_approval_decision("send it") == "APPROVED"
+    assert match_chat_approval_decision("no") == "REJECTED"
+    assert match_chat_approval_decision("sent??") is None
+    assert match_chat_approval_decision("yes, but change the subject") is None
+
+
+def test_email_send_guidance_does_not_ask_for_chat_confirmation():
+    from src.harness.graph import _tool_use_guidance
+
+    class Tool:
+        name = "email_send"
+
+    text = _tool_use_guidance([Tool()])
+    assert "email_send" in text
+    assert "Wait for HITL" not in text
+    assert "Do not ask the user to confirm in chat" in text
+
+
+def test_chat_yes_approves_single_pending_request(temp_db):
+    from fastapi.testclient import TestClient
+    from src.api.server import app
+    from src.hitl.approval_engine import get_approval_request
+
+    req = create_approval_request(
+        "sess_chat_yes",
+        "spawn_agent",
+        {"role": "Reviewer", "instructions": "Review notes"},
+        "Launch sub-agent",
+        "chk_yes",
+        db_path=temp_db,
+    )
+    client = TestClient(app)
+    response = client.post("/api/chat", json={"message": "yes", "session_id": "sess_chat_yes"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["approval_status"] == "APPROVED"
+    stored = get_approval_request(req["request_id"], db_path=temp_db)
+    assert stored["status"] in ("APPROVED", "EXECUTED")
+
+
+def test_chat_unrelated_message_does_not_approve_pending(temp_db):
+    from fastapi.testclient import TestClient
+    from src.api.server import app
+    from src.hitl.approval_engine import get_approval_request
+
+    req = create_approval_request(
+        "sess_chat_hold",
+        "spawn_agent",
+        {"role": "Reviewer", "instructions": "Review notes"},
+        "Launch sub-agent",
+        "chk_hold",
+        db_path=temp_db,
+    )
+    client = TestClient(app)
+    response = client.post("/api/chat", json={"message": "what is pending?", "session_id": "sess_chat_hold"})
+    assert response.status_code == 200
+    stored = get_approval_request(req["request_id"], db_path=temp_db)
+    assert stored["status"] == "PENDING"
+

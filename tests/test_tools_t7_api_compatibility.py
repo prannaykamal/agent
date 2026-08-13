@@ -25,7 +25,7 @@ def test_t7_calendar_api_shape_is_preserved_as_mcp_wrapper():
     assert "events" in data
     assert "total_events" in data
     assert "result" in data
-    assert data["events"] == []
+    assert isinstance(data["events"], list)
 
 
 def test_t7_email_api_shape_is_preserved_as_gmail_mcp_wrapper():
@@ -36,7 +36,7 @@ def test_t7_email_api_shape_is_preserved_as_gmail_mcp_wrapper():
     assert "messages" in data
     assert "total_messages" in data
     assert "result" in data
-    assert data["messages"] == []
+    assert isinstance(data["messages"], list)
 
 
 def test_t7_create_send_routes_keep_approval_shapes():

@@ -15,7 +15,6 @@ def client(tmp_path, monkeypatch):
     db_file = tmp_path / "tools_t10_provider_unavailable.db"
     monkeypatch.setattr("src.db.DB_PATH", db_file)
     monkeypatch.setattr("src.tools.mcp_provider_config.AGENT_DIR", tmp_path / ".agent")
-    monkeypatch.setattr("src.mcp_gateway.registry.load_live_mcp_tools", lambda: [])
     clear_mcp_provider_discovery_cache()
     init_db(db_file)
     return TestClient(app)

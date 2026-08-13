@@ -2,7 +2,7 @@ import json
 import sqlite3
 from pathlib import Path
 from typing import List, Dict, Any, Optional
-from src.db import get_connection, DB_PATH
+from src.db import get_connection
 from src.harness.models import get_secondary_llm
 
 def should_trigger_episode(
@@ -171,5 +171,26 @@ def search_episodes_fts(
         )
         rows = cursor.fetchall()
         return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def list_recent_episodes(limit: int = 20, db_path: Optional[Path] = None) -> List[Dict[str, Any]]:
+    """Returns recent episodic memories without requiring a search query."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            """
+            SELECT rowid as id, session_id, timestamp, content, tool_calls, outcome
+            FROM episodes
+            ORDER BY timestamp DESC
+            LIMIT ?
+            """,
+            (max(1, min(int(limit or 20), 100)),),
+        )
+        return [dict(row) for row in cursor.fetchall()]
+    except sqlite3.OperationalError:
+        return []
     finally:
         conn.close()

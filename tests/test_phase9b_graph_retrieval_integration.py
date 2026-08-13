@@ -181,3 +181,45 @@ def test_retrieval_path_does_not_write_embeddings_or_dedup_events(temp_db, monke
     finally:
         conn.close()
     assert result["retrieval_triggered"] is True
+
+
+def test_named_fact_is_retrieved_in_a_new_session(temp_db):
+    add_fact("user_fact", "Prannay's email is prannay@kamal.dev", db_path=temp_db)
+
+    result = node_retrieval_gate(
+        {
+            "messages": [HumanMessage(content="send 5 mails to Prannay saying hi in Spanish")],
+            "session_id": "brand_new_session",
+        }
+    )
+
+    blocks = _memory_blocks(result["messages"])
+    assert result["retrieval_triggered"] is True
+    assert blocks
+    assert "prannay@kamal.dev" in blocks[0].content
+
+
+def test_ingest_persists_explicit_facts_for_later_chats(temp_db, tmp_path, monkeypatch):
+    monkeypatch.setattr("src.config.MEMORY_PATH", tmp_path / "MEMORY.md")
+    from src.harness.graph import node_ingest
+
+    node_ingest(
+        {
+            "messages": [HumanMessage(content="Priya's timezone is IST. Remember that staging VPN needs approval.")],
+            "session_id": "chat_one",
+        }
+    )
+
+    result = node_retrieval_gate(
+        {
+            "messages": [HumanMessage(content="what is Priya's timezone, and does staging VPN need approval?")],
+            "session_id": "chat_two",
+        }
+    )
+
+    blocks = _memory_blocks(result["messages"])
+    assert result["retrieval_triggered"] is True
+    assert blocks
+    content = blocks[0].content
+    assert "IST" in content
+    assert "staging VPN needs approval" in content

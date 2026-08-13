@@ -29,13 +29,13 @@ export function asList(value, splitter = ",") {
 
 export function statusTone(status) {
   const s = String(status || "unknown").toLowerCase();
-  if (["ok", "online", "healthy", "available", "mcp_available", "running", "succeeded", "active", "configured", "api_configured"].some((k) => s.includes(k))) {
+  if (["ok", "online", "healthy", "available", "mcp_available", "running", "succeeded", "active", "configured", "api_configured", "completed", "done"].some((k) => s.includes(k))) {
     return "ok";
   }
-  if (["pending", "paused", "waiting", "unavailable", "not_configured", "mcp_unavailable", "api_missing", "stale", "retry"].some((k) => s.includes(k))) {
+  if (["pending", "paused", "waiting", "unavailable", "not_configured", "mcp_unavailable", "api_missing", "stale", "retry", "queued", "in_progress"].some((k) => s.includes(k))) {
     return "warn";
   }
-  if (["fail", "error", "blocked", "cancelled", "expired", "danger", "discovery_failed"].some((k) => s.includes(k))) {
+  if (["fail", "error", "blocked", "cancelled", "canceled", "expired", "danger", "discovery_failed", "dead_letter"].some((k) => s.includes(k))) {
     return "danger";
   }
   return "idle";

@@ -175,10 +175,10 @@ class SemanticCandidateExtractionJobHandler:
                 },
             )
 
+        from src.memory.explicit_facts import extract_explicit_facts_from_user_text
         from src.memory.semantic_candidates import (
             PendingFactCandidateStore,
             PendingFactCandidateWrite,
-            extract_explicit_facts_from_user_text,
         )
 
         session_id = str(payload.get("session_id") or job.get("session_id") or "default_session")
@@ -261,13 +261,11 @@ class SemanticCandidateExtractionJobHandler:
                 },
             )
 
+        from src.memory.durable_facts import DURABLE_FACT_PROMPT, durable_flag_from_mapping, promote_durable_candidates
+
         prompt = (
-            "Extract candidate semantic facts from this completed chat turn. "
-            "Return only JSON in the form {\"candidates\":[{\"fact\":\"...\",\"category\":\"...\",\"confidence\":0.0,\"rationale\":\"...\"}]}. "
-            "Do not deduplicate, consolidate, promote, write permanent memory, create embeddings, or infer skills. "
-            "If there are no stable candidate facts, return {\"candidates\":[]} .\n\n"
-            f"User: {user_text}\n"
-            f"Assistant: {assistant_text}"
+            DURABLE_FACT_PROMPT
+            + f"\nUser: {user_text}\nAssistant: {assistant_text}"
         )
         try:
             response = route.llm.invoke(prompt)
@@ -327,6 +325,7 @@ class SemanticCandidateExtractionJobHandler:
                 "model_name": secondary_model_name,
                 "extraction_method": "secondary_llm",
                 "candidate_index": index,
+                "durable": durable_flag_from_mapping(candidate),
             }
             if candidate.get("rationale") is not None:
                 metadata["rationale"] = str(candidate.get("rationale"))
@@ -361,6 +360,12 @@ class SemanticCandidateExtractionJobHandler:
                 },
             )
 
+        promoted_fact_count = 0
+        try:
+            promoted_fact_count = promote_durable_candidates(llm_records)
+        except Exception:
+            promoted_fact_count = 0
+
         return JobHandlerResult(
             success=True,
             result={
@@ -372,9 +377,11 @@ class SemanticCandidateExtractionJobHandler:
                 "candidate_count": len(deterministic_records) + len(llm_records),
                 "deterministic_candidate_count": len(deterministic_records),
                 "llm_candidate_count": len(llm_records),
+                "promoted_fact_count": promoted_fact_count,
                 "llm_available": True,
             },
         )
+
 @dataclass(frozen=True)
 class SemanticConsolidationJobHandler:
     job_type: str = "semantic_consolidation"

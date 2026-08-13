@@ -40,6 +40,7 @@ def test_task_classification_for_all_task_types():
     assert classify_retrieval_task("continue the phase 9 architecture migration") == "project_context"
     assert classify_retrieval_task("catch me up with a recap") == "summary_context"
     assert classify_retrieval_task("what should I remember about this?") == "broad_memory"
+    assert classify_retrieval_task("send 5 mails to Prannay saying hi in Spanish") == "broad_memory"
 
 
 def test_ambiguous_queries_use_deterministic_priority():

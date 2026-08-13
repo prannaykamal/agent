@@ -6,11 +6,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from src.config import AGENT_DIR
 from src.external_providers.registry import get_external_provider_status
 from src.tools.mcp_provider_config import (
-    MCPTransportType,
-    TARGET_MCP_PROVIDER_DEFAULTS,
     load_mcp_config_data,
     mcp_config_path,
     redact_mcp_configured_secrets,

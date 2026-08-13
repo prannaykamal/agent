@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from src.db import get_connection
-from src.personal_os.cron_parser import next_cron_run_at, parse_run_at, utc_iso, ensure_aware_utc
+from src.personal_os.cron_parser import next_cron_run_at, parse_run_at, utc_iso
 
 SCHEDULE_TYPES = {"one_time", "recurring"}
 MISSED_POLICIES = {"skip", "run_once", "catch_up_limited"}

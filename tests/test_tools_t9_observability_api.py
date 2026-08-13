@@ -12,7 +12,6 @@ from src.hitl.audit_logger import log_audit_event
 def client(tmp_path, monkeypatch):
     db_file = tmp_path / "tools_t9_api.db"
     monkeypatch.setattr("src.db.DB_PATH", db_file)
-    monkeypatch.setattr("src.mcp_gateway.registry.load_live_mcp_tools", lambda: [])
     init_db(db_file)
     return TestClient(app)
 

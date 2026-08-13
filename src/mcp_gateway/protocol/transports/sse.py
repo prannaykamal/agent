@@ -1,5 +1,4 @@
 from typing import Dict, Any, Optional
-from src.mcp_gateway.protocol.json_rpc import parse_json_rpc
 
 class SSEMCPTransport:
     """

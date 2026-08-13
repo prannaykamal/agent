@@ -59,6 +59,31 @@ def test_t6_target_provider_config_is_loaded_from_mcp_config(tmp_path):
     assert configs["search_tavily"].discovery_status == MCPDiscoveryStatus.NOT_CONFIGURED
 
 
+def test_t6_http_config_and_json_comments_are_loaded(tmp_path):
+    config_file = tmp_path / "mcp_config.json"
+    config_file.write_text(
+        "{\n"
+        "  // operator note\n"
+        '  "mcpServers": {\n'
+        '    "gmail": {\n'
+        '      "transport": "http",\n'
+        '      "url": "https://gmailmcp.googleapis.com/mcp/v1",\n'
+        '      "oauth": {"clientId": "demo-client", "clientSecret": "super-secret"}\n'
+        "    }\n"
+        "  }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    configs = load_target_mcp_provider_configs(config_file)
+    assert configs["gmail"].transport_type == MCPTransportType.HTTP
+    assert configs["gmail"].url.endswith("/mcp/v1")
+    assert configs["gmail"].oauth["clientId"] == "demo-client"
+    assert configs["gmail"].credential_status == MCPCredentialStatus.CONFIGURED
+    status = configs["gmail"].to_status_dict(include_config=True)
+    assert "super-secret" not in str(status)
+
+
 def test_t6_provider_status_redacts_config_secrets(tmp_path):
     config_file = tmp_path / "mcp_config.json"
     config_file.write_text(

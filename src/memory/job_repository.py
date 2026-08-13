@@ -516,6 +516,45 @@ class MemoryJobRepository:
             )
         return results
 
+    def get_worker_heartbeat_metadata(self, worker_id: str) -> Dict[str, Any]:
+        conn = get_connection(self.db_path)
+        try:
+            row = conn.execute(
+                "SELECT metadata_json FROM worker_heartbeats WHERE worker_id = ?",
+                (str(worker_id),),
+            ).fetchone()
+            if row is None:
+                return {}
+            raw = row["metadata_json"] if hasattr(row, "keys") else row[0]
+            parsed = json.loads(raw or "{}")
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
+        finally:
+            conn.close()
+
+    def get_worker_heartbeat(self, worker_id: str) -> Optional[Dict[str, Any]]:
+        conn = get_connection(self.db_path)
+        try:
+            row = conn.execute(
+                "SELECT * FROM worker_heartbeats WHERE worker_id = ?",
+                (str(worker_id),),
+            ).fetchone()
+            if row is None:
+                return None
+            data = dict(row)
+            metadata = data.get("metadata_json")
+            try:
+                parsed = json.loads(metadata or "{}")
+            except Exception:
+                parsed = {}
+            data["metadata"] = parsed if isinstance(parsed, dict) else {}
+            return data
+        except Exception:
+            return None
+        finally:
+            conn.close()
+
     def upsert_worker_heartbeat(
         self,
         worker_id: str,

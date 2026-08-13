@@ -1,5 +1,6 @@
 from src.memory.retrieval_ranker import (
     clamp_score,
+    distinctive_token_overlap,
     lexical_similarity,
     normalize_candidates,
     normalize_retrieval_text,
@@ -47,6 +48,11 @@ def test_lexical_similarity_is_stable_and_bounded():
     assert first == second
     assert 0 < first <= 1
     assert lexical_similarity("", "anything") == 0
+
+
+def test_distinctive_token_overlap_boosts_specific_shared_terms():
+    assert distinctive_token_overlap("what timezone does Priya use?", "Priya's timezone is IST") >= 0.55
+    assert distinctive_token_overlap("hello there", "User prefers FastAPI") == 0
 
 
 def test_clamp_and_weighted_score():

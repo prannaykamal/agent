@@ -61,6 +61,9 @@ class MCPProviderConfig:
     args: List[str] = field(default_factory=list)
     env: Dict[str, str] = field(default_factory=dict)
     url: Optional[str] = None
+    headers: Dict[str, str] = field(default_factory=dict)
+    oauth: Dict[str, str] = field(default_factory=dict)
+    scopes: List[str] = field(default_factory=list)
     redaction_values: Tuple[str, ...] = field(default_factory=tuple)
     expected_tool_hints: List[str] = field(default_factory=list)
     credential_status: MCPCredentialStatus = MCPCredentialStatus.MISSING
@@ -106,6 +109,7 @@ class MCPProviderConfig:
             "availability_status": self.availability_status,
             "configured": self.is_configured,
             "expected_tool_hints": list(self.expected_tool_hints),
+            "oauth_signed_in": bool((self.oauth or {}).get("accessToken") or (self.oauth or {}).get("access_token")),
             "last_discovered_at": self.last_discovered_at,
             "last_error": redact_observability_text(self.last_error, extra_values=self.redaction_values),
         }
@@ -116,6 +120,7 @@ class MCPProviderConfig:
                     "args": list(self.args),
                     "env": redact_observability_value(self.env, extra_values=self.redaction_values),
                     "url": redact_url(self.url, extra_values=self.redaction_values),
+                    "headers": redact_observability_value(self.headers, extra_values=self.redaction_values),
                 }
             )
         return data
@@ -135,12 +140,21 @@ TARGET_MCP_PROVIDER_DEFAULTS: Dict[str, MCPProviderConfig] = {
     "google_calendar": MCPProviderConfig(
         provider_id="google_calendar",
         display_name="Google Calendar MCP",
-        expected_tool_hints=["calendar", "events"],
+        expected_tool_hints=["create_event", "list_events", "update_event", "delete_event"],
+        scopes=[
+            "https://www.googleapis.com/auth/calendar.events",
+            "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+        ],
     ),
     "gmail": MCPProviderConfig(
         provider_id="gmail",
         display_name="Gmail MCP",
-        expected_tool_hints=["mail", "messages", "send"],
+        expected_tool_hints=["create_draft", "send_message", "gmail_search", "list_messages"],
+        scopes=[
+            "https://www.googleapis.com/auth/gmail.readonly",
+            "https://www.googleapis.com/auth/gmail.compose",
+            "https://www.googleapis.com/auth/gmail.send",
+        ],
     ),
 }
 
@@ -216,8 +230,6 @@ def redact_observability_text(
     for secret_value in sorted(set(extra_values), key=len, reverse=True):
         if _is_redaction_candidate(secret_value):
             text = text.replace(str(secret_value), "[REDACTED]")
-    if any(marker in text.lower() for marker in SECRET_KEY_MARKERS):
-        return "[REDACTED]"
     if len(text) > limit:
         return text[:limit] + "..."
     return text
@@ -253,12 +265,47 @@ def mcp_config_path() -> Path:
     return AGENT_DIR / "mcp_config.json"
 
 
+def _strip_json_comments(text: str) -> str:
+    """Remove // line comments outside of JSON strings so operator notes do not break parsing."""
+    out: List[str] = []
+    in_string = False
+    escape = False
+    index = 0
+    length = len(text)
+    while index < length:
+        char = text[index]
+        if in_string:
+            out.append(char)
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_string = False
+            index += 1
+            continue
+        if char == '"':
+            in_string = True
+            out.append(char)
+            index += 1
+            continue
+        if char == "/" and index + 1 < length and text[index + 1] == "/":
+            while index < length and text[index] != "\n":
+                index += 1
+            continue
+        out.append(char)
+        index += 1
+    return "".join(out)
+
+
 def load_mcp_config_data(config_path: Optional[Path] = None) -> Dict[str, Any]:
     path = Path(config_path) if config_path else mcp_config_path()
     if not path.exists():
         return {}
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        raw = _strip_json_comments(path.read_text(encoding="utf-8"))
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else {}
     except Exception:
         return {}
 
@@ -295,11 +342,26 @@ def _transport_type(raw_value: Any) -> MCPTransportType:
         return MCPTransportType.UNKNOWN
 
 
+def _scalar_map(value: Any) -> Dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    mapped: Dict[str, str] = {}
+    for key, item in value.items():
+        if item is None:
+            continue
+        if isinstance(item, (str, int, float, bool)):
+            mapped[str(key)] = str(item)
+    return mapped
+
+
 def _credential_status(server_config: Dict[str, Any], transport: MCPTransportType) -> MCPCredentialStatus:
     if bool(server_config.get("provider_managed")) or transport == MCPTransportType.APP_CONNECTOR:
         return MCPCredentialStatus.PROVIDER_MANAGED
     env = server_config.get("env")
     if isinstance(env, dict) and env:
+        return MCPCredentialStatus.CONFIGURED
+    oauth = server_config.get("oauth")
+    if isinstance(oauth, dict) and oauth:
         return MCPCredentialStatus.CONFIGURED
     if server_config.get("url") or server_config.get("command"):
         return MCPCredentialStatus.CONFIGURED
@@ -329,14 +391,19 @@ def load_target_mcp_provider_configs(config_path: Optional[Path] = None) -> Dict
             continue
         base = configs[provider_id]
         transport = _transport_type(server_config.get("transport"))
+        raw_scopes = server_config.get("scopes")
+        scopes = [str(item) for item in raw_scopes] if isinstance(raw_scopes, list) and raw_scopes else list(base.scopes)
         configs[provider_id] = replace(
             base,
             enabled=bool(server_config.get("enabled", True)),
             transport_type=transport,
             command=server_config.get("command"),
             args=list(server_config.get("args") or []),
-            env=dict(server_config.get("env") or {}),
+            env=_scalar_map(server_config.get("env")),
             url=server_config.get("url"),
+            headers=_scalar_map(server_config.get("headers")),
+            oauth=_scalar_map(server_config.get("oauth")),
+            scopes=scopes,
             redaction_values=collect_mcp_secret_values(server_config),
             credential_status=_credential_status(server_config, transport),
             discovery_status=MCPDiscoveryStatus.NOT_DISCOVERED,

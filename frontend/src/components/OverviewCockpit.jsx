@@ -154,17 +154,17 @@ export default function OverviewCockpit({ activeSessionId, onRefresh }) {
             </div>
             <div className="metric-card">
               <h4>Database</h4>
-              <div className="metric-value">SQLite v{health?.schema_version || 7}</div>
-              <div className="metric-meta">{health?.database_path ? String(health.database_path).split(/[\\/]/).pop() : "state.db"}</div>
+              <div className="metric-value">{health?.schema_version != null ? `SQLite v${health.schema_version}` : "SQLite"}</div>
+              <div className="metric-meta">{health?.database_path ? String(health.database_path).split(/[\\/]/).pop() : "unavailable"}</div>
             </div>
             <div className="metric-card">
               <h4>Health</h4>
-              <div className="metric-value">{health?.status || "HEALTHY"}</div>
-              <div className="metric-meta">Worker: {health?.worker_status || "RUNNING"}</div>
+              <div className="metric-value">{health?.status || "unknown"}</div>
+              <div className="metric-meta">Worker: {health?.worker_status || "STOPPED"}</div>
             </div>
             <div className="metric-card">
               <h4>Memory workers</h4>
-              <div className="metric-value">{workerObs ? `${workerObs.active ?? 0} active / ${workerObs.total ?? 0}` : "1 Worker Active"}</div>
+              <div className="metric-value">{workerObs ? `${workerObs.active ?? 0} active / ${workerObs.total ?? 0}` : "0 / 0"}</div>
               <div className="metric-meta">Stale: {workerObs ? (workerObs.stale ?? 0) : 0}</div>
             </div>
           </div>

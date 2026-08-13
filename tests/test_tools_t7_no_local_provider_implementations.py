@@ -48,8 +48,7 @@ def test_t7_legacy_provider_imports_are_absent_from_runtime():
             assert marker not in text
 
 
-def test_t7_registry_does_not_bind_unavailable_target_provider_tools(monkeypatch):
-    monkeypatch.setattr("src.mcp_gateway.registry.load_live_mcp_tools", lambda: [])
+def test_t7_registry_does_not_bind_unavailable_target_provider_tools():
 
     from src.mcp_gateway.registry import get_all_mcp_tools
 
@@ -61,7 +60,6 @@ def test_t7_registry_does_not_bind_unavailable_target_provider_tools(monkeypatch
 
 
 def test_t7_compatibility_wrappers_bind_only_when_provider_available(monkeypatch):
-    monkeypatch.setattr("src.mcp_gateway.registry.load_live_mcp_tools", lambda: [])
     monkeypatch.setattr("src.mcp_gateway.registry._available_provider_ids", lambda: {"gmail", "search"})
 
     from src.mcp_gateway.registry import get_all_mcp_tools, get_mcp_gateway_tool_metadata

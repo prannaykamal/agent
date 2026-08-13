@@ -135,6 +135,60 @@ def test_llm_candidates_write_only_pending_candidates(temp_paths, monkeypatch):
     assert fake_llm.prompts
 
 
+def test_durable_llm_candidates_are_promoted_to_permanent_facts(temp_paths, monkeypatch):
+    db_path, mem_path = temp_paths
+    fake_llm = FakeLLM(
+        json.dumps(
+            {
+                "candidates": [
+                    {
+                        "fact": "You can reach Prannay at prannay@kamal.dev",
+                        "category": "user_fact",
+                        "confidence": 0.93,
+                        "durable": True,
+                        "rationale": "The user stated a lasting contact detail.",
+                    },
+                    {
+                        "fact": "User asked to send five emails this turn",
+                        "category": "user_fact",
+                        "confidence": 0.99,
+                        "durable": True,
+                        "rationale": "Current task",
+                    },
+                    {
+                        "fact": "User might like shorter answers",
+                        "category": "user_preference",
+                        "confidence": 0.4,
+                        "durable": False,
+                    },
+                ]
+            }
+        )
+    )
+    monkeypatch.setattr("src.memory.job_handlers._resolve_secondary_route", lambda payload: _route(fake_llm))
+
+    result = SemanticCandidateExtractionJobHandler().handle(
+        job=_job(),
+        payload=_payload(
+            user_text="You can reach Prannay at prannay@kamal.dev. Send him five mails saying hi.",
+            assistant_text="I will use that address.",
+        ),
+    )
+
+    rows = _pending_rows(db_path)
+    facts = [row[0] for row in __import__("sqlite3").connect(db_path).execute("SELECT fact_text FROM facts").fetchall()]
+    assert result.success is True
+    assert result.result["promoted_fact_count"] == 1
+    assert any("prannay@kamal.dev" in fact for fact in facts)
+    assert all("five emails" not in fact.lower() for fact in facts)
+    promoted = [row for row in rows if row["status"] == "PROMOTED"]
+    pending = [row for row in rows if row["status"] == "PENDING"]
+    assert len(promoted) == 1
+    assert len(pending) >= 1
+    assert "prannay@kamal.dev" in mem_path.read_text(encoding="utf-8")
+    assert "lasting contact" in fake_llm.prompts[0] or "durable" in fake_llm.prompts[0].lower()
+
+
 def test_handler_writes_deterministic_explicit_candidates_and_is_idempotent(temp_paths, monkeypatch):
     db_path, _ = temp_paths
     monkeypatch.setattr("src.memory.job_handlers._resolve_secondary_route", lambda payload: _route(None, available=False))

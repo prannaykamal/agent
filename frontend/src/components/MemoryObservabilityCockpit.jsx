@@ -39,8 +39,8 @@ function Panel({ title, children }) {
   );
 }
 
-function SimpleTable({ rows, emptyText }) {
-  return <DataTable rows={rows} emptyText={emptyText} />;
+function SimpleTable({ rows, emptyText, columns }) {
+  return <DataTable rows={rows} emptyText={emptyText} columns={columns} />;
 }
 
 export default function MemoryObservabilityCockpit() {
@@ -59,7 +59,7 @@ export default function MemoryObservabilityCockpit() {
     setLoading(true);
     setError(null);
     try {
-      const entries = await Promise.all(Object.entries(endpoints).map(async ([key, url]) => {
+      const entries = await Promise.allSettled(Object.entries(endpoints).map(async ([key, url]) => {
         let target = url;
         if (key === "jobs") {
           const params = new URLSearchParams();
@@ -71,7 +71,22 @@ export default function MemoryObservabilityCockpit() {
         const payload = await api.get(target);
         return [key, payload];
       }));
-      setData(Object.fromEntries(entries));
+      const next = {};
+      const failed = [];
+      entries.forEach((entry, index) => {
+        const key = Object.keys(endpoints)[index];
+        if (entry.status === "fulfilled") {
+          next[entry.value[0]] = entry.value[1];
+        } else {
+          failed.push(key);
+        }
+      });
+      setData(next);
+      if (failed.length && Object.keys(next).length === 0) {
+        setError("Failed to load memory observability");
+      } else if (failed.length) {
+        setError(`Some panels failed to load: ${failed.join(", ")}`);
+      }
     } catch (err) {
       console.error(err);
       setError(err.message || "Failed to load memory observability");
@@ -123,7 +138,7 @@ export default function MemoryObservabilityCockpit() {
       />
 
       {error ? <Notice kind="error">{error}</Notice> : null}
-      {loading ? <Spinner label="Loading memory observability..." /> : (
+      {loading && !data.health && !(data.jobs) ? <Spinner label="Loading memory observability..." /> : (
         <>
           <Panel title="Health">
             <div className="actions" style={{ marginBottom: 12 }}><span>Status</span><StatusPill value={health.status} /></div>
@@ -141,10 +156,11 @@ export default function MemoryObservabilityCockpit() {
             <div className="actions" style={{ marginBottom: 12 }}>
               <select value={jobStatus} onChange={(e) => setJobStatus(e.target.value)}>
                 <option value="">All job statuses</option>
-                <option value="PENDING">PENDING</option>
+                <option value="QUEUED">QUEUED</option>
                 <option value="RUNNING">RUNNING</option>
+                <option value="RETRYING">RETRYING</option>
                 <option value="SUCCEEDED">SUCCEEDED</option>
-                <option value="FAILED">FAILED</option>
+                <option value="DEAD_LETTERED">DEAD_LETTERED</option>
               </select>
               <label className="chip-row">
                 <input type="checkbox" checked={includePayload} onChange={(e) => setIncludePayload(e.target.checked)} />
@@ -152,12 +168,12 @@ export default function MemoryObservabilityCockpit() {
               </label>
               <button className="btn btn-ghost btn-sm" onClick={loadPanelData}>Apply filters</button>
             </div>
-            <SimpleTable rows={jobs.jobs || []} emptyText="No memory jobs found." />
-            <SimpleTable rows={workers.workers || []} emptyText="No worker heartbeats recorded. The memory worker is not auto-started." />
+            <SimpleTable rows={jobs.jobs || []} emptyText="No memory jobs found." columns={["id", "job_type", "status", "session_id", "attempt_count", "last_error", "created_at"]} />
+            <SimpleTable rows={workers.workers || []} emptyText="No worker heartbeats recorded. The memory worker is not auto-started." columns={["worker_id", "status", "current_job_id", "last_heartbeat_at", "stale"]} />
           </Panel>
 
           <Panel title="Dead Letters">
-            <SimpleTable rows={deadLetters.dead_letters || []} emptyText="No dead-lettered memory jobs." />
+            <SimpleTable rows={deadLetters.dead_letters || []} emptyText="No dead-lettered memory jobs." columns={["id", "job_id", "job_type", "session_id", "error_message", "failed_at"]} />
           </Panel>
 
           <Panel title="Retrieval Trace">
@@ -173,23 +189,35 @@ export default function MemoryObservabilityCockpit() {
             {trace ? (
               <div className="split" style={{ marginTop: 12, gridTemplateColumns: "minmax(220px, 0.8fr) 1fr" }}>
                 <pre className="json-block">{JSON.stringify({ gate: trace.gate, plan: trace.plan, assembly: trace.assembly }, null, 2)}</pre>
-                <SimpleTable rows={trace.candidates || []} emptyText="No candidates selected." />
+                <SimpleTable
+                  rows={(trace.candidates || []).map((candidate) => ({
+                    id: candidate.id,
+                    kind: candidate.memory_kind,
+                    title: candidate.title,
+                    content: candidate.content_preview || candidate.content,
+                    score: candidate.score?.rank_score ?? candidate.score,
+                    strategy: candidate.score?.strategy,
+                    source: candidate.provenance?.source_name,
+                  }))}
+                  emptyText="No candidates selected."
+                  columns={["id", "kind", "title", "content", "score", "strategy", "source"]}
+                />
               </div>
             ) : <div className="lede">Run a trace to inspect planner and retrieval decisions.</div>}
           </Panel>
 
           <Panel title="Semantic Pipeline">
-            <SimpleTable rows={semantic.candidates || []} emptyText="No semantic candidates." />
-            <SimpleTable rows={semantic.recent_consolidation_runs || []} emptyText="No semantic consolidation runs." />
+            <SimpleTable rows={semantic.candidates || []} emptyText="No semantic candidates." columns={["id", "status", "category", "fact_preview", "confidence", "session_id", "created_at"]} />
+            <SimpleTable rows={semantic.recent_consolidation_runs || []} emptyText="No semantic consolidation runs." columns={["id", "status", "trigger_type", "promoted_count", "created_at"]} />
           </Panel>
 
           <Panel title="Procedural Pipeline">
-            <SimpleTable rows={procedural.candidates || []} emptyText="No procedural candidates." />
-            <SimpleTable rows={procedural.approvals || []} emptyText="No procedural approvals." />
+            <SimpleTable rows={procedural.candidates || []} emptyText="No procedural candidates." columns={["id", "title", "status", "confidence", "occurrences", "updated_at"]} />
+            <SimpleTable rows={procedural.approvals || []} emptyText="No procedural approvals." columns={["id", "status", "action", "candidate_id", "created_at"]} />
           </Panel>
 
           <Panel title="Skills">
-            <SimpleTable rows={skills.active_versions || []} emptyText="No active skill versions." />
+            <SimpleTable rows={skills.active_versions || []} emptyText="No active skill versions." columns={["name", "version", "skill_id", "enabled", "created_at"]} />
           </Panel>
         </>
       )}

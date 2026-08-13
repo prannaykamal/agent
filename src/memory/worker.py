@@ -22,14 +22,26 @@ class MemoryWorkerStepResult:
     failure_transition: Optional[FailureTransitionResult] = None
 
 
-def _worker_metadata() -> Dict[str, Any]:
-    return {
+def _worker_metadata(
+    repository: Optional[MemoryJobRepository] = None,
+    worker_id: Optional[str] = None,
+    extra: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    metadata: Dict[str, Any] = {
         "worker_type": "memory",
         "phase": "3B",
         "pid": os.getpid(),
         "hostname": socket.gethostname(),
         "worker_version": 1,
     }
+    if repository is not None and worker_id:
+        existing = repository.get_worker_heartbeat_metadata(worker_id)
+        last_daily = existing.get("last_daily_idle_at")
+        if last_daily:
+            metadata["last_daily_idle_at"] = last_daily
+    if extra:
+        metadata.update(extra)
+    return metadata
 
 
 def process_one_memory_job(
@@ -49,9 +61,19 @@ def process_one_memory_job(
                 worker_id=worker_id,
                 status="IDLE",
                 current_job_id=None,
-                metadata=_worker_metadata(),
+                metadata=_worker_metadata(repository, worker_id),
                 now=now,
             )
+            try:
+                from src.memory.consolidation_scheduler import maybe_enqueue_idle_semantic_consolidation
+
+                maybe_enqueue_idle_semantic_consolidation(
+                    db_path=db_path,
+                    now=now,
+                    worker_id=worker_id,
+                )
+            except Exception:
+                pass
             return MemoryWorkerStepResult(
                 worker_id=worker_id,
                 job_id=None,
@@ -65,7 +87,7 @@ def process_one_memory_job(
             worker_id=worker_id,
             status="RUNNING",
             current_job_id=str(job["id"]),
-            metadata=_worker_metadata(),
+            metadata=_worker_metadata(repository, worker_id),
             now=now,
         )
 
@@ -82,7 +104,7 @@ def process_one_memory_job(
                     worker_id=worker_id,
                     status="IDLE",
                     current_job_id=None,
-                    metadata=_worker_metadata(),
+                    metadata=_worker_metadata(repository, worker_id),
                     now=now,
                 )
                 return MemoryWorkerStepResult(
@@ -111,7 +133,7 @@ def process_one_memory_job(
                 worker_id=worker_id,
                 status="IDLE",
                 current_job_id=None,
-                metadata=_worker_metadata(),
+                metadata=_worker_metadata(repository, worker_id),
                 now=now,
             )
             return MemoryWorkerStepResult(
@@ -140,7 +162,7 @@ def process_one_memory_job(
                 worker_id=worker_id,
                 status="IDLE",
                 current_job_id=None,
-                metadata=_worker_metadata(),
+                metadata=_worker_metadata(repository, worker_id),
                 now=now,
             )
             return MemoryWorkerStepResult(
@@ -158,7 +180,9 @@ def process_one_memory_job(
                 worker_id=worker_id,
                 status="ERROR",
                 current_job_id=None,
-                metadata={**_worker_metadata(), "error_type": type(exc).__name__},
+                metadata=_worker_metadata(
+                    repository, worker_id, extra={"error_type": type(exc).__name__}
+                ),
                 now=now,
             )
         except Exception:
@@ -203,13 +227,13 @@ def run_memory_worker_loop(
         worker_id=worker_id,
         status="STARTING",
         current_job_id=None,
-        metadata=_worker_metadata(),
+        metadata=_worker_metadata(repository, worker_id),
     )
     repository.upsert_worker_heartbeat(
         worker_id=worker_id,
         status="IDLE",
         current_job_id=None,
-        metadata=_worker_metadata(),
+        metadata=_worker_metadata(repository, worker_id),
     )
 
     try:
@@ -222,11 +246,11 @@ def run_memory_worker_loop(
             worker_id=worker_id,
             status="STOPPING",
             current_job_id=None,
-            metadata=_worker_metadata(),
+            metadata=_worker_metadata(repository, worker_id),
         )
         repository.upsert_worker_heartbeat(
             worker_id=worker_id,
             status="STOPPED",
             current_job_id=None,
-            metadata=_worker_metadata(),
+            metadata=_worker_metadata(repository, worker_id),
         )

@@ -92,6 +92,62 @@ def lexical_similarity(left: object, right: object) -> float:
     return clamp_score(score)
 
 
+def reciprocal_rank_fusion(
+    ranked_id_lists: Sequence[Sequence[str]],
+    *,
+    k: int = 60,
+) -> dict[str, float]:
+    """Fuse independently ranked id lists. Higher is better."""
+    scores: dict[str, float] = {}
+    for ranked in ranked_id_lists:
+        for rank, item_id in enumerate(ranked, start=1):
+            key = str(item_id)
+            if not key:
+                continue
+            scores[key] = scores.get(key, 0.0) + (1.0 / (float(k) + rank))
+    return scores
+
+
+def normalize_fusion_scores(scores: Mapping[str, float]) -> dict[str, float]:
+    if not scores:
+        return {}
+    maximum = max(float(value) for value in scores.values())
+    if maximum <= 0:
+        return {str(key): 0.0 for key in scores}
+    return {str(key): clamp_score(float(value) / maximum) for key, value in scores.items()}
+
+
+def entity_overlap_score(query_entities: Sequence[str], text: object) -> float:
+    """Boost when the query names a person, email, or other distinctive entity in the memory."""
+    query_set = []
+    seen = set()
+    for entity in query_entities:
+        normalized = normalize_retrieval_text(entity)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        query_set.append(normalized)
+    if not query_set:
+        return 0.0
+    haystack = normalize_retrieval_text(text)
+    if not haystack:
+        return 0.0
+    hits = [entity for entity in query_set if entity in haystack]
+    if not hits:
+        return 0.0
+    return clamp_score(0.55 + (0.15 * min(3, len(hits))))
+
+
+def distinctive_token_overlap(query: object, text: object) -> float:
+    """Read-only boost when the query and memory share specific tokens (names, topics)."""
+    query_tokens = set(tokenize_retrieval_text(query))
+    text_tokens = set(tokenize_retrieval_text(text))
+    distinctive = [token for token in (query_tokens & text_tokens) if len(token) >= 4]
+    if not distinctive:
+        return 0.0
+    return clamp_score(0.55 + (0.15 * min(3, len(distinctive))))
+
+
 def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
     if not value:
         return None

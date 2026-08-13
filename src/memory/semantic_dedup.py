@@ -1,5 +1,4 @@
-﻿import hashlib
-import json
+﻿import json
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -14,11 +13,10 @@ from src.memory.embeddings import (
     canonical_metadata_json,
     canonical_semantic_fact_text,
     content_hash,
-    lexical_similarity,
     normalize_fact_tokens,
     normalize_embedding_text,
 )
-from src.memory.semantic_store import SemanticFactRecord, SemanticFactWrite
+from src.memory.semantic_store import SemanticFactWrite
 
 
 DedupAction = Literal["NEW", "DUPLICATE", "UPDATE", "MERGE"]

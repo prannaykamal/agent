@@ -36,6 +36,7 @@ def test_taskboard_api_contract(temp_db):
     assert "sub_agents" in data
     assert len(data["tasks"]) == 1
     assert "Prepare Report" in data["tasks_summary"]
+    assert "progress" in data["tasks"][0]
     assert len(data["sub_agents"]) == 1
     assert data["sub_agents"][0]["role"] == "Researcher"
 
@@ -73,3 +74,16 @@ def test_scheduled_job_lifecycle(temp_db):
     jobs3 = resp_get3.json()["scheduled_jobs"]
     cancelled_job = [j for j in jobs3 if j["id"] == new_job_id][0]
     assert cancelled_job["status"] == "CANCELLED"
+
+
+def test_task_create_and_update_via_api(temp_db):
+    created = client.post("/api/tasks", json={"title": "Sidebar task", "description": "From UI", "priority": "High"})
+    assert created.status_code == 200
+    listed = client.get("/api/tasks")
+    assert listed.status_code == 200
+    tasks = listed.json()["tasks"]
+    match = next(item for item in tasks if item["title"] == "Sidebar task")
+    updated = client.patch(f"/api/tasks/{match['id']}", json={"status": "COMPLETED", "progress": 100})
+    assert updated.status_code == 200
+    after = client.get("/api/tasks").json()["tasks"]
+    assert next(item for item in after if item["id"] == match["id"])["status"] == "COMPLETED"

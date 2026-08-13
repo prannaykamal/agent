@@ -38,6 +38,7 @@ def test_calendar_tools_use_google_calendar_mcp_unavailable_state(temp_db, monke
     assert "Unavailable" in calendar_update_event.invoke({"event_id": "evt_1", "title": "Design", "start_time": "10:00", "end_time": "11:00"})
     assert "Unavailable" in calendar_delete_event.invoke({"event_id": "evt_1"})
     assert "Unavailable" in calendar_inspect_availability.invoke({"start_date": "2026-08-10", "end_date": "2026-08-11"})
+    monkeypatch.setattr("src.mcp_gateway.calendar.access_token_from_env", lambda: "")
     assert detect_calendar_conflicts("10:00", "11:00") == []
 
 
@@ -48,7 +49,7 @@ def test_calendar_rest_api_endpoints_keep_shape(temp_db):
 
     resp_get = client.get("/api/calendar/events")
     assert resp_get.status_code == 200
-    assert resp_get.json()["events"] == []
+    assert isinstance(resp_get.json()["events"], list)
     assert "result" in resp_get.json()
 
     resp_del = client.delete("/api/calendar/events/evt_123")

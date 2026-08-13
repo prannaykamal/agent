@@ -18,8 +18,6 @@ REMOVED_SANDBOX_TOOLS = {
     "github_merge",
 }
 
-
-
 @pytest.fixture
 def temp_db(tmp_path, monkeypatch):
     db_file = tmp_path / "test_tools_t2_removed_tool_blocking.db"
@@ -27,14 +25,7 @@ def temp_db(tmp_path, monkeypatch):
     init_db(db_file)
     return db_file
 
-
-@pytest.fixture(autouse=True)
-def disable_live_mcp_discovery(monkeypatch):
-    monkeypatch.setattr("src.mcp_gateway.registry.load_live_mcp_tools", lambda: [])
-
-
 client = TestClient(app)
-
 
 def test_t2_removed_tools_classify_as_blocked():
     for name in REMOVED_SANDBOX_TOOLS:
@@ -43,10 +34,8 @@ def test_t2_removed_tools_classify_as_blocked():
         assert "Removed tool" in reason
         assert get_mcp_tool_risk(name) == "Blocked"
 
-
 def test_t2_run_code_is_not_low_risk_anymore():
     assert classify_tool_risk("run_code")[0] == "Blocked"
-
 
 def test_t2_graph_tool_execution_blocks_removed_tool_without_invoking_old_function(temp_db, monkeypatch):
     def fail_if_called(self, _args, *args, **kwargs):
@@ -75,14 +64,12 @@ def test_t2_graph_tool_execution_blocks_removed_tool_without_invoking_old_functi
     assert "No execution occurred" in tool_messages[0].content
     assert result["tools_used"] == []
 
-
 def test_t2_api_browser_and_github_routes_are_removed_after_t3(temp_db):
     browse = client.post("/" + 'api' + "/" + 'browser' + "/" + 'browse', json={"url": "https://example.com"})
     clone = client.post("/" + 'api' + "/" + 'github' + "/" + 'clone', json={"repo_url": "https://github.com/example/repo.git"})
 
     assert browse.status_code == 404
     assert clone.status_code == 404
-
 
 def test_t2_non_removed_tool_risk_still_works():
     assert classify_tool_risk("search_web")[0] == "Low"

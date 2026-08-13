@@ -4,7 +4,6 @@ from fastapi.testclient import TestClient
 from src.api.server import app
 from src.db import init_db
 
-
 BASELINE_PERSONAL_OS_TOOLS = {
     "create_task",
     "update_task",
@@ -45,7 +44,6 @@ BASELINE_CODE_SANDBOX_TOOLS_TO_REMOVE = {
     "github_merge",
 }
 
-
 @pytest.fixture
 def temp_db(tmp_path, monkeypatch):
     db_file = tmp_path / "test_tools_t0_baseline_registry.db"
@@ -53,15 +51,7 @@ def temp_db(tmp_path, monkeypatch):
     init_db(db_file)
     return db_file
 
-
-@pytest.fixture(autouse=True)
-def disable_live_mcp_discovery(monkeypatch):
-    # T0 documents current local/static exposure without depending on external MCP servers.
-    monkeypatch.setattr("src.mcp_gateway.registry.load_live_mcp_tools", lambda: [])
-
-
 client = TestClient(app)
-
 
 def test_t0_migration_baseline_current_tool_registry_loads_successfully():
     from src.harness.graph import get_registered_tools
@@ -72,14 +62,12 @@ def test_t0_migration_baseline_current_tool_registry_loads_successfully():
     assert tool_map
     assert len(tools) == len(tool_map)
 
-
 def test_t0_migration_baseline_personal_os_tools_are_currently_present():
     from src.personal_os.registry import get_all_personal_os_tools
 
     tool_names = {tool.name for tool in get_all_personal_os_tools()}
 
     assert BASELINE_PERSONAL_OS_TOOLS <= tool_names
-
 
 def test_t0_migration_baseline_provider_wrappers_not_active_without_mcp_after_t7():
     from src.mcp_gateway.registry import get_all_mcp_tools
@@ -88,7 +76,6 @@ def test_t0_migration_baseline_provider_wrappers_not_active_without_mcp_after_t7
 
     assert tool_names.isdisjoint(BASELINE_LOCAL_ADAPTER_MCP_TOOLS)
 
-
 def test_t0_migration_baseline_browser_sandbox_tools_no_longer_active_after_t2():
     from src.mcp_gateway.registry import get_all_mcp_tools
 
@@ -96,14 +83,12 @@ def test_t0_migration_baseline_browser_sandbox_tools_no_longer_active_after_t2()
 
     assert tool_names.isdisjoint(BASELINE_BROWSER_SANDBOX_TOOLS_TO_REMOVE)
 
-
 def test_t0_migration_baseline_code_sandbox_tools_no_longer_active_after_t2():
     from src.mcp_gateway.registry import get_all_mcp_tools
 
     tool_names = {tool.name for tool in get_all_mcp_tools()}
 
     assert tool_names.isdisjoint(BASELINE_CODE_SANDBOX_TOOLS_TO_REMOVE)
-
 
 def test_t0_migration_baseline_api_tools_shape_and_groups_are_unchanged(temp_db):
     response = client.get("/api/tools")
@@ -115,7 +100,6 @@ def test_t0_migration_baseline_api_tools_shape_and_groups_are_unchanged(temp_db)
     assert isinstance(data["personal_os_tools"], list)
     assert isinstance(data["mcp_tools"], list)
     assert data["total_tools"] == len(data["personal_os_tools"]) + len(data["mcp_tools"]) + len(data["external_api_tools"])
-
 
 def test_t0_migration_baseline_api_tools_includes_personal_os_and_filters_unavailable_mcp(temp_db):
     response = client.get("/api/tools")

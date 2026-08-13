@@ -1,4 +1,3 @@
-import sys
 from langchain_core.messages import HumanMessage
 from src.db import init_db
 from src.harness.graph import agent_app

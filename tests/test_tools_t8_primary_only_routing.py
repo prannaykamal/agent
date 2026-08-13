@@ -2,8 +2,7 @@ from src.harness.graph import get_registered_tools
 from src.tools.registry import get_bindable_tool_metadata
 
 
-def test_t8_primary_bindable_registry_excludes_removed_and_unavailable_tools(monkeypatch):
-    monkeypatch.setattr("src.mcp_gateway.registry.load_live_mcp_tools", lambda: [])
+def test_t8_primary_bindable_registry_excludes_removed_and_unavailable_tools():
     tools, tool_map = get_registered_tools()
     names = {tool.name for tool in tools}
     metadata_names = {item.legacy_name for item in get_bindable_tool_metadata()}

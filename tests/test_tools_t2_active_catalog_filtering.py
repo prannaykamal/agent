@@ -14,8 +14,6 @@ REMOVED_SANDBOX_TOOLS = {
     "github_merge",
 }
 
-
-
 @pytest.fixture
 def temp_db(tmp_path, monkeypatch):
     db_file = tmp_path / "test_tools_t2_active_catalog_filtering.db"
@@ -23,14 +21,7 @@ def temp_db(tmp_path, monkeypatch):
     init_db(db_file)
     return db_file
 
-
-@pytest.fixture(autouse=True)
-def disable_live_mcp_discovery(monkeypatch):
-    monkeypatch.setattr("src.mcp_gateway.registry.load_live_mcp_tools", lambda: [])
-
-
 client = TestClient(app)
-
 
 def test_t2_api_tools_active_catalog_excludes_removed_sandbox_tools(temp_db):
     response = client.get("/api/tools")
@@ -43,7 +34,6 @@ def test_t2_api_tools_active_catalog_excludes_removed_sandbox_tools(temp_db):
     mcp_names = {tool["name"] for tool in data["mcp_tools"]}
     assert mcp_names.isdisjoint(REMOVED_SANDBOX_TOOLS)
 
-
 def test_t2_api_tools_keeps_personal_os_and_non_removed_mcp_tools(temp_db):
     data = client.get("/api/tools").json()
     personal_names = {tool["name"] for tool in data["personal_os_tools"]}
@@ -53,7 +43,6 @@ def test_t2_api_tools_keeps_personal_os_and_non_removed_mcp_tools(temp_db):
     assert "schedule_job" in personal_names
     assert "search_web" not in mcp_names
     assert "email_send" not in mcp_names
-
 
 def test_t2_removed_target_metadata_remains_available_and_disabled():
     from src.tools.registry import get_removed_tool_metadata
@@ -65,7 +54,6 @@ def test_t2_removed_target_metadata_remains_available_and_disabled():
         assert item.implementation_type == ImplementationType.REMOVED
         assert item.enabled is False
         assert item.removal_reason
-
 
 def test_t2_removed_target_metadata_is_not_bindable():
     from src.tools.registry import get_bindable_tool_metadata, get_tool_metadata_by_legacy_name

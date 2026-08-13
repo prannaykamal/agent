@@ -1,6 +1,6 @@
 from typing import Dict, List, Optional
 
-from src.tools.registry_types import ToolMetadata
+from src.tools.registry_types import ToolMetadata, normalize_tool_id_part
 from src.tools.removed_tools import (
     get_removed_tool_metadata as _get_removed_tool_metadata,
     is_removed_tool_name,
@@ -93,6 +93,14 @@ def get_tool_metadata_for_policy_by_legacy_name(legacy_name: str) -> Optional[To
     clean_name = str(legacy_name or "").strip()
     for item in get_all_tool_metadata_for_policy():
         if item.legacy_name == clean_name:
+            return item
+        raw = str((item.observability_metadata or {}).get("raw_tool_name") or "").strip()
+        if not raw:
+            continue
+        if raw == clean_name:
+            return item
+        alias = f"{item.provider}_{normalize_tool_id_part(raw)}"
+        if alias == clean_name:
             return item
     return None
 def get_unified_tool_metadata_by_id() -> Dict[str, ToolMetadata]:

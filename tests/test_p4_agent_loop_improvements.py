@@ -89,3 +89,16 @@ def test_max_iteration_stopping_behavior(temp_db):
 
     next_step = should_continue(state_at_limit)
     assert next_step == "consolidate"
+
+
+def test_approved_resume_does_not_reenter_hitl(temp_db):
+    state = make_initial_state(user_input="send it", session_id="sess_approved_skip")
+    state["approval_status"] = "APPROVED"
+    state["messages"] = [
+        HumanMessage(content="send it"),
+        AIMessage(
+            content="",
+            tool_calls=[{"name": "email_send", "args": {"to": "a@x.com"}, "id": "call_send"}],
+        ),
+    ]
+    assert should_continue(state) == "consolidate"

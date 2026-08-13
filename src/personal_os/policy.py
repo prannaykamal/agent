@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Dict
 
 from src.tools.registry_types import ApprovalPolicy, ReadWriteCapability, RiskClass
 
@@ -106,10 +106,6 @@ class PersonalOSPolicyDecision:
         }
 
 
-def is_deprecated_synthetic_tool(tool_name: str) -> bool:
-    return str(tool_name or "").strip().lower() in DEPRECATED_SYNTHETIC_TOOLS
-
-
 def classify_personal_os_action(tool_name: str) -> PersonalOSPolicyDecision:
     clean_name = str(tool_name or "").strip().lower()
     category = TOOL_CATEGORIES.get(clean_name, "personal_os")
@@ -179,10 +175,3 @@ def classify_personal_os_action(tool_name: str) -> PersonalOSPolicyDecision:
         destructive=destructive,
         scheduled_capable=scheduled_capable,
     )
-
-
-def get_personal_os_policy(tool_name: str) -> Optional[PersonalOSPolicyDecision]:
-    clean_name = str(tool_name or "").strip().lower()
-    if clean_name not in TOOL_CATEGORIES:
-        return None
-    return classify_personal_os_action(clean_name)
