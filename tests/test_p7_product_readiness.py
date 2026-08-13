@@ -272,7 +272,13 @@ def test_p7_10_real_provider_openai():
     """P7 Item 10: Real OpenAI provider test gated behind environment variables."""
     llm, _ = get_primary_llm(provider="openai", model_name="gpt-4o-mini")
     if llm is not None:
-        res = llm.invoke([HumanMessage(content="Respond with 'OK'")])
+        try:
+            res = llm.invoke([HumanMessage(content="Respond with 'OK'")])
+        except Exception as exc:
+            name = type(exc).__name__
+            if any(token in name for token in ("Connection", "Proxy", "Timeout")):
+                pytest.skip(f"OpenAI unreachable from this environment: {name}")
+            raise
         assert "OK" in res.content
 
 @pytest.mark.skipif(not os.getenv("ANTHROPIC_API_KEY"), reason="ANTHROPIC_API_KEY not configured")

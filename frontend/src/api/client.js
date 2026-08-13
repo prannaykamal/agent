@@ -45,6 +45,7 @@ export async function fetchApi(url, options = {}) {
 
     return data;
   } catch (err) {
+    if (err?.name === "AbortError") throw err;
     if (!err.status) {
       console.error(`API Fetch Error [${url}]:`, err.message);
     }

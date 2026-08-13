@@ -1,3 +1,4 @@
+import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,6 +41,32 @@ def target_mcp_provider_ids() -> List[str]:
     return list(TARGET_MCP_PROVIDER_DEFAULTS.keys())
 
 
+def _provider_cache_key(provider: MCPProviderConfig) -> str:
+    """Bind cache entries to config identity so a later config cannot reuse stale discovery."""
+    env_blob = repr(sorted((provider.env or {}).items()))
+    env_fingerprint = hashlib.sha256(env_blob.encode("utf-8")).hexdigest()[:16]
+    return "|".join(
+        (
+            provider.provider_id,
+            str(bool(provider.enabled)),
+            str(provider.transport_type.value if provider.transport_type else ""),
+            str(provider.command or ""),
+            ",".join(provider.args or []),
+            str(provider.url or ""),
+            env_fingerprint,
+        )
+    )
+
+
+def _store_discovery(provider: MCPProviderConfig, result: MCPProviderDiscoveryResult) -> MCPProviderDiscoveryResult:
+    _DISCOVERY_CACHE[_provider_cache_key(provider)] = result
+    return result
+
+
+def _cached_discovery(provider: MCPProviderConfig) -> Optional[MCPProviderDiscoveryResult]:
+    return _DISCOVERY_CACHE.get(_provider_cache_key(provider))
+
+
 def _build_mcp_client(provider: MCPProviderConfig) -> MCPClient:
     if provider.transport_type == MCPTransportType.STDIO:
         if not provider.command:
@@ -74,8 +101,7 @@ def discover_mcp_provider(
             now=now,
         )
         result = MCPProviderDiscoveryResult(provider=discovered, tools=[])
-        _DISCOVERY_CACHE[provider.provider_id] = result
-        return result
+        return _store_discovery(provider, result)
 
     client = None
     try:
@@ -93,8 +119,7 @@ def discover_mcp_provider(
             if isinstance(tool, dict) and str(tool.get("name") or "").strip()
         ]
         result = MCPProviderDiscoveryResult(provider=discovered_provider, tools=tools)
-        _DISCOVERY_CACHE[provider.provider_id] = result
-        return result
+        return _store_discovery(provider, result)
     except Exception as exc:
         failed_provider = provider.with_discovery(
             discovery_status=MCPDiscoveryStatus.FAILED,
@@ -102,8 +127,7 @@ def discover_mcp_provider(
             now=now,
         )
         result = MCPProviderDiscoveryResult(provider=failed_provider, tools=[])
-        _DISCOVERY_CACHE[provider.provider_id] = result
-        return result
+        return _store_discovery(provider, result)
     finally:
         close = getattr(client, "close", None)
         if callable(close):
@@ -124,15 +148,15 @@ def get_mcp_provider_results(
     results: List[MCPProviderDiscoveryResult] = []
     for provider_id in target_mcp_provider_ids():
         config = configs[provider_id]
-        if not refresh and config.is_configured and provider_id in _DISCOVERY_CACHE:
-            results.append(_DISCOVERY_CACHE[provider_id])
+        cached = _cached_discovery(config)
+        if not refresh and config.is_configured and cached is not None:
+            results.append(cached)
             continue
         if refresh and config.is_configured:
             results.append(discover_mcp_provider(config, client_factory=client_factory, now=now))
         else:
-            cached_or_config = _DISCOVERY_CACHE.get(provider_id)
-            if cached_or_config and config.is_configured:
-                results.append(cached_or_config)
+            if cached is not None and config.is_configured:
+                results.append(cached)
             else:
                 results.append(MCPProviderDiscoveryResult(provider=config, tools=[]))
     return results

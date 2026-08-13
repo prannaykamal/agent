@@ -55,6 +55,7 @@ def load_live_mcp_tools(config_path: Optional[Path] = None) -> List[BaseTool]:
     Parses mcp_config.json, connects to defined Stdio/SSE MCP servers,
     and returns a list of dynamic LangChain BaseTool wrappers.
     """
+    explicit_config = config_path is not None
     target_config = config_path or MCP_CONFIG_PATH
     if not target_config.exists():
         return []
@@ -68,10 +69,13 @@ def load_live_mcp_tools(config_path: Optional[Path] = None) -> List[BaseTool]:
 
     from src.tools.mcp_provider_registry import target_mcp_provider_ids
 
+    retired_mcp_server_names = {"whatsapp", "telegram"}
     allowed_provider_ids = set(target_mcp_provider_ids())
     tools: List[BaseTool] = []
     for server_name, server_cfg in mcp_servers.items():
-        if server_name not in allowed_provider_ids:
+        if server_name in retired_mcp_server_names:
+            continue
+        if not explicit_config and server_name not in allowed_provider_ids:
             continue
         transport_type = server_cfg.get("transport", "stdio").lower()
         client: Optional[MCPClient] = None

@@ -3,10 +3,11 @@ from pathlib import Path
 from dotenv import load_dotenv
 from src.memory.config import load_memory_config
 
-load_dotenv()
+# Load .env from the project root even if the process was started elsewhere.
+BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / ".env")
 
 # Base paths
-BASE_DIR = Path(__file__).resolve().parent.parent
 AGENT_DIR = BASE_DIR / ".agent"
 AGENT_DIR.mkdir(parents=True, exist_ok=True)
 

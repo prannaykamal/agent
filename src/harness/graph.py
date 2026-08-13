@@ -37,6 +37,16 @@ from src.memory.jobs import enqueue_post_turn_memory_jobs
 
 _ORIGINAL_GET_PRIMARY_LLM = get_primary_llm
 
+def _offline_ai_message(messages, provider, model_name, hint):
+    last_user_msg = next((m.content for m in reversed(messages) if isinstance(m, HumanMessage)), "Hello")
+    return AIMessage(
+        content=(
+            f"[{provider.capitalize()}/{model_name} Primary LLM (Offline)]: Processed request -> '{last_user_msg}'\n\n"
+            f"{hint}"
+        )
+    )
+
+
 def get_registered_tools():
     """Lazily fetches and maps bindable local, MCP, and direct external API tools."""
     from src.personal_os.registry import get_all_personal_os_tools
@@ -217,31 +227,27 @@ def node_retrieval_gate(state: AgentState) -> dict:
             messages=messages,
             gate_allows_retrieval=needs_retrieval,
         )
-        if not plan.should_retrieve or plan.retrieval_request is None:
-            return {
-                "messages": messages,
-                "retrieval_triggered": False,
-                "retrieved_memories": [],
-            }
-
-        bundle = retrieve_all_sources(plan.retrieval_request)
-        assembled = assemble_retrieved_memory_context(
-            bundle,
-            ContextAssemblyOptions(
-                total_token_budget=plan.total_token_budget,
-                budget_by_kind=plan.budget_by_kind,
-            ),
-        )
-        if assembled.block_text:
-            messages.append(SystemMessage(content=assembled.block_text))
-
-        return {
-            "messages": messages,
-            "retrieval_triggered": bool(assembled.block_text),
-            "retrieved_memories": assembled.legacy_retrieved_items,
-        }
+        if plan.should_retrieve and plan.retrieval_request is not None:
+            bundle = retrieve_all_sources(plan.retrieval_request)
+            assembled = assemble_retrieved_memory_context(
+                bundle,
+                ContextAssemblyOptions(
+                    total_token_budget=max(plan.total_token_budget, 512),
+                    budget_by_kind=plan.budget_by_kind,
+                ),
+            )
+            if assembled.block_text:
+                messages.append(SystemMessage(content=assembled.block_text))
+            if assembled.block_text or assembled.legacy_retrieved_items:
+                return {
+                    "messages": messages,
+                    "retrieval_triggered": True,
+                    "retrieved_memories": assembled.legacy_retrieved_items,
+                }
     except Exception:
-        return _legacy_retrieval_gate_fallback(messages, query_str)
+        pass
+
+    return _legacy_retrieval_gate_fallback(messages, query_str)
 
 def node_agent(state: AgentState) -> dict:
     """Node: Invokes Primary LLM bound with tools and advances loop step."""
@@ -258,20 +264,31 @@ def node_agent(state: AgentState) -> dict:
 
     tools, _ = get_registered_tools()
     primary_route = resolve_primary_llm(provider=provider, model_name=model_name)
-    llm = primary_route.llm
     provider = primary_route.selector.provider
     model_name = primary_route.selector.model_name
 
-    if llm is None and get_primary_llm is not _ORIGINAL_GET_PRIMARY_LLM:
+    # Tests inject DeterministicFakeLLM via get_primary_llm. Honor that even when
+    # a real API key is present in the local .env.
+    if get_primary_llm is not _ORIGINAL_GET_PRIMARY_LLM:
         llm, _ = get_primary_llm(provider=provider, model_name=model_name)
-
-    if llm and hasattr(llm, "bind_tools"):
-        llm_with_tools = llm.bind_tools(tools)
-        response = llm_with_tools.invoke(messages)
     else:
-        last_user_msg = next((m.content for m in reversed(messages) if isinstance(m, HumanMessage)), "Hello")
-        response_text = f"[{provider.capitalize()}/{model_name} Primary LLM (Offline)]: Processed request -> '{last_user_msg}'"
-        response = AIMessage(content=response_text)
+        llm = primary_route.llm
+
+    response = None
+    if llm and hasattr(llm, "bind_tools"):
+        try:
+            response = llm.bind_tools(tools).invoke(messages)
+        except Exception as exc:
+            response = _offline_ai_message(messages, provider, model_name, f"Model call failed: {type(exc).__name__}")
+    if response is None:
+        env_key = {
+            "openai": "OPENAI_API_KEY",
+            "anthropic": "ANTHROPIC_API_KEY",
+            "gemini": "GOOGLE_API_KEY",
+            "grok": "XAI_API_KEY",
+        }.get(provider, "API_KEY")
+        hint = primary_route.error or f"No usable {env_key}. Add it to .env and restart the backend."
+        response = _offline_ai_message(messages, provider, model_name, hint)
 
     tool_calls = getattr(response, "tool_calls", []) or []
 
