@@ -1,30 +1,13 @@
-import React, { useEffect, useState } from 'react';
-import { api } from '../api/client.js';
-
-function Badge({ value }) {
-  const text = String(value || 'unknown');
-  const good = ['available', 'OK', 'SUCCEEDED', 'no_approval_needed', 'configured', 'discovered'].includes(text.toLowerCase());
-  const warn = ['unavailable', 'approval_required', 'blocked', 'FAILED', 'FAILED_TERMINAL', 'not_configured', 'discovery_failed'].some(marker => text.toLowerCase().includes(marker));
-  
-  return (
-    <span
-      className="retrieval-badge"
-      style={{
-        background: good ? 'rgba(46, 204, 113, 0.18)' : warn ? 'rgba(255, 99, 99, 0.18)' : 'rgba(255,255,255,0.06)',
-        color: good ? '#2ecc71' : warn ? '#ff6b6b' : 'var(--text-secondary)',
-        padding: '3px 8px',
-        borderRadius: '4px',
-        fontSize: '11px',
-        fontWeight: '600'
-      }}
-    >
-      {text}
-    </span>
-  );
-}
+import React, { useEffect, useState } from "react";
+import { api } from "../api/client.js";
+import PageHeader from "./ui/PageHeader.jsx";
+import Notice from "./ui/Notice.jsx";
+import Spinner from "./ui/Spinner.jsx";
+import Badge from "./ui/Badge.jsx";
+import { statusTone } from "../lib/format.js";
 
 function Empty({ children }) {
-  return <div style={{ color: 'var(--text-secondary)', padding: '12px 0', fontStyle: 'italic' }}>{children}</div>;
+  return <div className="lede">{children}</div>;
 }
 
 export default function ToolsOpsCockpit() {
@@ -40,19 +23,14 @@ export default function ToolsOpsCockpit() {
   const [personalAudit, setPersonalAudit] = useState([]);
   const [cronSchedules, setCronSchedules] = useState([]);
   const [cronRuns, setCronRuns] = useState([]);
-
-  // Detail & Refresh states
   const [selectedProviderDetail, setSelectedProviderDetail] = useState(null);
   const [refreshingProviderId, setRefreshingProviderId] = useState(null);
   const [notice, setNotice] = useState(null);
-
-  // Standalone observability state
-  const [activeSubTab, setActiveSubTab] = useState('overview'); // 'overview' | 'calls' | 'results' | 'audit' | 'blocked'
+  const [activeSubTab, setActiveSubTab] = useState("overview");
   const [callsList, setCallsList] = useState([]);
   const [resultsList, setResultsList] = useState([]);
   const [auditList, setAuditList] = useState([]);
   const [blockedList, setBlockedList] = useState([]);
-
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -70,24 +48,23 @@ export default function ToolsOpsCockpit() {
         personalActionsData,
         personalAuditData,
         schedulesData,
-        runsData
+        runsData,
       ] = await Promise.all([
-        api.get('/api/tools/status'),
-        api.get('/api/tools/observability/overview'),
-        api.get('/api/tools/mcp/providers'),
-        api.get('/api/tools/external/providers'),
-        api.get('/api/config/providers'),
-        api.get('/api/tools/personal-os/status'),
-        api.get('/api/tools/personal-os/actions'),
-        api.get('/api/tools/personal-os/audit'),
-        api.get('/api/tools/cron/schedules'),
-        api.get('/api/tools/cron/runs?limit=20')
+        api.get("/api/tools/status"),
+        api.get("/api/tools/observability/overview"),
+        api.get("/api/tools/mcp/providers"),
+        api.get("/api/tools/external/providers"),
+        api.get("/api/config/providers"),
+        api.get("/api/tools/personal-os/status"),
+        api.get("/api/tools/personal-os/actions"),
+        api.get("/api/tools/personal-os/audit"),
+        api.get("/api/tools/cron/schedules"),
+        api.get("/api/tools/cron/runs?limit=20"),
       ]);
-
       setToolsStatus(statusData);
       setOverview(overviewData);
-      setProviders((providersData.providers || []).map(p => ({ ...p, provider_layer: 'mcp' })));
-      setExternalProviders((externalProvidersData.providers || []).map(p => ({ ...p, provider_layer: 'external_api' })));
+      setProviders((providersData.providers || []).map((p) => ({ ...p, provider_layer: "mcp" })));
+      setExternalProviders((externalProvidersData.providers || []).map((p) => ({ ...p, provider_layer: "external_api" })));
       setProviderConfigs(providerConfigsData.providers || []);
       setPersonalStatus(personalStatusData);
       setPersonalActions(personalActionsData.actions || []);
@@ -95,7 +72,7 @@ export default function ToolsOpsCockpit() {
       setCronSchedules(schedulesData.schedules || []);
       setCronRuns(runsData.runs || []);
     } catch (e) {
-      setError(e.message || 'Failed to load Tools Ops');
+      setError(e.message || "Failed to load Tools Ops");
     } finally {
       setLoading(false);
     }
@@ -107,17 +84,17 @@ export default function ToolsOpsCockpit() {
     setActiveSubTab(tab);
     setError(null);
     try {
-      if (tab === 'calls') {
-        const data = await api.get('/api/tools/observability/calls?limit=50');
+      if (tab === "calls") {
+        const data = await api.get("/api/tools/observability/calls?limit=50");
         setCallsList(data.tool_calls || []);
-      } else if (tab === 'results') {
-        const data = await api.get('/api/tools/observability/results?limit=50');
+      } else if (tab === "results") {
+        const data = await api.get("/api/tools/observability/results?limit=50");
         setResultsList(data.tool_results || []);
-      } else if (tab === 'audit') {
-        const data = await api.get('/api/tools/observability/audit?limit=50');
+      } else if (tab === "audit") {
+        const data = await api.get("/api/tools/observability/audit?limit=50");
         setAuditList(data.audit_events || []);
-      } else if (tab === 'blocked') {
-        const data = await api.get('/api/tools/observability/blocked?limit=50');
+      } else if (tab === "blocked") {
+        const data = await api.get("/api/tools/observability/blocked?limit=50");
         setBlockedList(data.blocked_attempts || []);
       }
     } catch (e) {
@@ -125,10 +102,10 @@ export default function ToolsOpsCockpit() {
     }
   };
 
-  const handleInspectProvider = async (providerId, providerLayer = 'mcp') => {
+  const handleInspectProvider = async (providerId, providerLayer = "mcp") => {
     setError(null);
     try {
-      const endpoint = providerLayer === 'external_api'
+      const endpoint = providerLayer === "external_api"
         ? `/api/tools/external/providers/${providerId}`
         : `/api/tools/mcp/providers/${providerId}`;
       const data = await api.get(endpoint);
@@ -139,7 +116,7 @@ export default function ToolsOpsCockpit() {
   };
 
   const handleSafeDiscoverRefresh = async (providerId) => {
-    if (providerId === 'whatsapp_api' || providerId === 'telegram_bot_api') {
+    if (providerId === "whatsapp_api" || providerId === "telegram_bot_api") {
       setNotice(`'${providerId}' is a direct API provider; MCP discovery is not applicable.`);
       return;
     }
@@ -166,7 +143,7 @@ export default function ToolsOpsCockpit() {
     setNotice(null);
     try {
       const data = await api.get(`/api/tools/external/providers/${providerId}`);
-      setSelectedProviderDetail({ ...data, provider_layer: 'external_api' });
+      setSelectedProviderDetail({ ...data, provider_layer: "external_api" });
       setNotice(`Status validated for '${providerId}'. Availability: ${data.availability_status}`);
       load();
     } catch (e) {
@@ -177,20 +154,20 @@ export default function ToolsOpsCockpit() {
   };
 
   const updateConfigDraft = (providerId, field, value) => {
-    setConfigDrafts(prev => ({
+    setConfigDrafts((prev) => ({
       ...prev,
       [providerId]: {
         ...(prev[providerId] || {}),
-        [field.name]: field.type === 'boolean' ? Boolean(value) : value
-      }
+        [field.name]: field.type === "boolean" ? Boolean(value) : value,
+      },
     }));
   };
 
   const configValueForSubmit = (field, value) => {
-    if (field.type === 'array') {
-      return String(value || '').split(',').map(item => item.trim()).filter(Boolean);
+    if (field.type === "array") {
+      return String(value || "").split(",").map((item) => item.trim()).filter(Boolean);
     }
-    return field.type === 'boolean' ? Boolean(value) : value;
+    return field.type === "boolean" ? Boolean(value) : value;
   };
 
   const handleSaveProviderConfig = async (provider) => {
@@ -200,14 +177,14 @@ export default function ToolsOpsCockpit() {
     try {
       const draft = configDrafts[provider.provider_id] || {};
       const values = {};
-      (provider.fields || []).forEach(field => {
+      (provider.fields || []).forEach((field) => {
         if (Object.prototype.hasOwnProperty.call(draft, field.name)) {
           values[field.name] = configValueForSubmit(field, draft[field.name]);
         }
       });
       const data = await api.post(`/api/config/providers/${provider.provider_id}`, { values });
-      setProviderConfigs(prev => prev.map(item => item.provider_id === provider.provider_id ? data : item));
-      setConfigDrafts(prev => ({ ...prev, [provider.provider_id]: {} }));
+      setProviderConfigs((prev) => prev.map((item) => (item.provider_id === provider.provider_id ? data : item)));
+      setConfigDrafts((prev) => ({ ...prev, [provider.provider_id]: {} }));
       setNotice(`Configuration saved for '${provider.provider_id}'. Secrets remain hidden.`);
       load();
     } catch (e) {
@@ -223,7 +200,7 @@ export default function ToolsOpsCockpit() {
     setNotice(null);
     try {
       const data = await api.post(`/api/config/providers/${providerId}/validate`);
-      setProviderConfigs(prev => prev.map(item => item.provider_id === providerId ? data : item));
+      setProviderConfigs((prev) => prev.map((item) => (item.provider_id === providerId ? data : item)));
       setNotice(`Validation completed for '${providerId}'. Status: ${data.validation_status}`);
       load();
     } catch (e) {
@@ -239,7 +216,7 @@ export default function ToolsOpsCockpit() {
     setNotice(null);
     try {
       const data = await api.delete(`/api/config/providers/${providerId}/secret`);
-      setProviderConfigs(prev => prev.map(item => item.provider_id === providerId ? data : item));
+      setProviderConfigs((prev) => prev.map((item) => (item.provider_id === providerId ? data : item)));
       setNotice(`Stored secret fields cleared for '${providerId}'.`);
       load();
     } catch (e) {
@@ -256,249 +233,156 @@ export default function ToolsOpsCockpit() {
   const policyEntries = overview?.policy?.entries || [];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-      {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div>
-          <h2 style={{ fontFamily: 'var(--font-heading)', margin: 0 }}>ðŸ§° Tools Ops & MCP Discovery</h2>
-          <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-            System Status: <strong>{toolsStatus?.status || 'OK'}</strong> | Provider Registry & Policy Engine
-          </span>
-        </div>
-        <button onClick={load} style={{ padding: '8px 16px', background: 'var(--primary-glow)', border: 'none', borderRadius: '6px', color: 'white', cursor: 'pointer' }}>
-          ðŸ”„ Refresh
-        </button>
-      </div>
+    <div className="page">
+      <PageHeader
+        title="Tools Ops"
+        subtitle={`Status: ${toolsStatus?.status || "OK"}`}
+        actions={<button className="btn btn-primary" onClick={load}>Refresh</button>}
+      />
 
-      {notice && (
-        <div style={{ padding: '10px 16px', background: 'rgba(46, 204, 113, 0.15)', border: '1px solid rgba(46, 204, 113, 0.3)', borderRadius: '8px', color: '#2ecc71', fontSize: '13px' }}>
-          â„¹ï¸ {notice}
-        </div>
-      )}
+      {notice ? <Notice kind="ok">{notice}</Notice> : null}
+      {error ? <Notice kind="error">{error}</Notice> : null}
 
-      {error && (
-        <div style={{ padding: '12px', background: 'rgba(255, 50, 50, 0.15)', borderRadius: '8px', color: '#ff6b6b', fontSize: '13px' }}>
-          âš ï¸ {error}
-        </div>
-      )}
-
-      {loading ? <Empty>ðŸŒ€ Loading tools observability & provider registry...</Empty> : (
+      {loading ? <Spinner label="Loading tools observability & provider registry..." /> : (
         <>
-          {/* Top Status Cards Summary */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
-            <div className="glass-card">
-              <h4 style={{ color: 'var(--text-secondary)', marginBottom: '4px' }}>Bindable Tools</h4>
-              <strong style={{ fontSize: '18px' }}>{toolsStatus?.registry?.total_bindable_tools || 0}</strong>
-              <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                OS: {toolsStatus?.registry?.group_counts?.personal_os || 0} | MCP: {toolsStatus?.registry?.group_counts?.mcp || 0} | API: {toolsStatus?.registry?.group_counts?.external_api || 0}
-              </div>
+          <div className="metric-grid">
+            <div className="metric-card">
+              <h4>Bindable Tools</h4>
+              <div className="metric-value">{toolsStatus?.registry?.total_bindable_tools || 0}</div>
+              <div className="metric-meta">OS: {toolsStatus?.registry?.group_counts?.personal_os || 0} | MCP: {toolsStatus?.registry?.group_counts?.mcp || 0} | API: {toolsStatus?.registry?.group_counts?.external_api || 0}</div>
             </div>
-
-            <div className="glass-card">
-              <h4 style={{ color: 'var(--text-secondary)', marginBottom: '4px' }}>Providers</h4>
-              <strong style={{ fontSize: '18px', color: '#2ecc71' }}>
-                {toolsStatus?.providers?.available_providers || 0}/{toolsStatus?.providers?.total_providers || 0}
-              </strong>
-              <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px' }}>Available</div>
+            <div className="metric-card">
+              <h4>Providers</h4>
+              <div className="metric-value">{toolsStatus?.providers?.available_providers || 0}/{toolsStatus?.providers?.total_providers || 0}</div>
+              <div className="metric-meta">Available</div>
             </div>
-
-            <div className="glass-card">
-              <h4 style={{ color: 'var(--text-secondary)', marginBottom: '4px' }}>Policy Classifications</h4>
-              <strong style={{ fontSize: '18px', color: '#3498db' }}>{policyEntries.length}</strong>
-              <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px' }}>Classified Rules</div>
+            <div className="metric-card">
+              <h4>Policy Classifications</h4>
+              <div className="metric-value">{policyEntries.length}</div>
+              <div className="metric-meta">Classified Rules</div>
             </div>
-
-            <div className="glass-card">
-              <h4 style={{ color: 'var(--text-secondary)', marginBottom: '4px' }}>Removed Tools</h4>
-              <strong style={{ fontSize: '18px', color: '#ff6b6b' }}>{toolsStatus?.removed_tools?.total || 0}</strong>
-              <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                Active Blocked: {toolsStatus?.removed_tools?.active || 0}
-              </div>
+            <div className="metric-card">
+              <h4>Removed Tools</h4>
+              <div className="metric-value">{toolsStatus?.removed_tools?.total || 0}</div>
+              <div className="metric-meta">Active Blocked: {toolsStatus?.removed_tools?.active || 0}</div>
             </div>
           </div>
 
-          {/* MCP Provider Detail Inspection Panel */}
-          {selectedProviderDetail && (
-            <div className="glass-card" style={{ border: '1px solid var(--primary-glow)', background: 'rgba(0,0,0,0.4)', position: 'relative' }}>
-              <button
-                onClick={() => setSelectedProviderDetail(null)}
-                style={{ position: 'absolute', top: '12px', right: '12px', background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '16px' }}
-              >
-                âœ–
-              </button>
-              <h3 style={{ margin: '0 0 10px 0', fontFamily: 'var(--font-heading)', fontSize: '16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <span>ðŸ” Provider Inspection: <code>{selectedProviderDetail.provider_id}</code></span>
-                <Badge value={selectedProviderDetail.availability_status} />
-              </h3>
-
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '10px', fontSize: '13px', marginBottom: '12px' }}>
+          {selectedProviderDetail ? (
+            <section className="glass-card">
+              <div className="card-head">
+                <h3><code>{selectedProviderDetail.provider_id}</code></h3>
+                <div className="actions">
+                  <Badge value={selectedProviderDetail.availability_status} />
+                  <button className="btn btn-ghost btn-sm" onClick={() => setSelectedProviderDetail(null)}>Close</button>
+                </div>
+              </div>
+              <div className="provider-grid">
                 <div>Display Name: <strong>{selectedProviderDetail.display_name || selectedProviderDetail.provider_id}</strong></div>
-                <div>Transport: <code>{selectedProviderDetail.transport_type || selectedProviderDetail.transport || 'stdio'}</code></div>
+                <div>Transport: <code>{selectedProviderDetail.transport_type || selectedProviderDetail.transport || "stdio"}</code></div>
                 <div>Credential Status: <Badge value={selectedProviderDetail.credential_status} /></div>
                 <div>Discovery Status: <Badge value={selectedProviderDetail.discovery_status} /></div>
-                <div>Enabled: <strong>{selectedProviderDetail.enabled ? 'Yes' : 'No'}</strong></div>
+                <div>Enabled: <strong>{selectedProviderDetail.enabled ? "Yes" : "No"}</strong></div>
                 <div>Tool Count: <strong>{selectedProviderDetail.tool_count || 0}</strong></div>
-                <div>Last Discovered: <strong>{selectedProviderDetail.last_discovered_at || 'Never'}</strong></div>
               </div>
-
-              {selectedProviderDetail.last_error && (
-                <div style={{ padding: '8px 12px', background: 'rgba(255,71,87,0.15)', borderRadius: '6px', color: '#ff6b6b', fontSize: '12px', marginBottom: '12px' }}>
-                  <strong>Last Error:</strong> {selectedProviderDetail.last_error}
+              {selectedProviderDetail.last_error ? <Notice kind="error"><strong>Last Error:</strong> {selectedProviderDetail.last_error}</Notice> : null}
+              {selectedProviderDetail.tools?.length ? (
+                <div style={{ marginTop: 12 }} className="provider-grid">
+                  {selectedProviderDetail.tools.map((t) => (
+                    <div key={t.tool_id} className="provider-card">
+                      <code>{t.tool_id}</code>
+                      <span className="lede">Provider Managed: {t.provider_managed ? "Yes" : "No"}</span>
+                    </div>
+                  ))}
                 </div>
-              )}
-
-              {selectedProviderDetail.tools && selectedProviderDetail.tools.length > 0 && (
-                <div>
-                  <strong style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Discovered Tools ({selectedProviderDetail.tools.length}):</strong>
-                  <div style={{ marginTop: '6px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '8px' }}>
-                    {selectedProviderDetail.tools.map(t => (
-                      <div key={t.tool_id} style={{ padding: '6px 10px', background: 'rgba(255,255,255,0.03)', borderRadius: '4px', fontSize: '12px' }}>
-                        <code>{t.tool_id}</code>
-                        <span style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block' }}>Provider Managed: {t.provider_managed ? 'Yes' : 'No'}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <div style={{ marginTop: '14px', paddingTop: '10px', borderTop: '1px solid var(--border-glass)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>ðŸ”’ Secrets and raw credentials are redacted in status inspection.</span>
-                {selectedProviderDetail.provider_layer === 'external_api' ? (
-                  <button
-                    disabled={refreshingProviderId === selectedProviderDetail.provider_id}
-                    onClick={() => handleValidateProviderStatus(selectedProviderDetail.provider_id)}
-                    style={{ padding: '6px 14px', background: 'var(--primary-glow)', border: 'none', borderRadius: '4px', color: 'white', cursor: 'pointer', fontSize: '12px', fontWeight: '600' }}
-                    title="Read-only direct API provider status check"
-                  >
-                    {refreshingProviderId === selectedProviderDetail.provider_id ? 'Validating...' : 'Validate Status'}
+              ) : null}
+              <div className="actions" style={{ marginTop: 14 }}>
+                <span className="lede">Secrets and raw credentials are redacted in status inspection.</span>
+                {selectedProviderDetail.provider_layer === "external_api" ? (
+                  <button className="btn btn-primary btn-sm" disabled={refreshingProviderId === selectedProviderDetail.provider_id} onClick={() => handleValidateProviderStatus(selectedProviderDetail.provider_id)}>
+                    {refreshingProviderId === selectedProviderDetail.provider_id ? "Validating..." : "Validate Status"}
                   </button>
                 ) : (
-                  <button
-                    disabled={refreshingProviderId === selectedProviderDetail.provider_id}
-                    onClick={() => handleSafeDiscoverRefresh(selectedProviderDetail.provider_id)}
-                    style={{ padding: '6px 14px', background: 'var(--primary-glow)', border: 'none', borderRadius: '4px', color: 'white', cursor: 'pointer', fontSize: '12px', fontWeight: '600' }}
-                  >
-                    {refreshingProviderId === selectedProviderDetail.provider_id ? 'Refreshing...' : 'Refresh Metadata'}
+                  <button className="btn btn-primary btn-sm" disabled={refreshingProviderId === selectedProviderDetail.provider_id} onClick={() => handleSafeDiscoverRefresh(selectedProviderDetail.provider_id)}>
+                    {refreshingProviderId === selectedProviderDetail.provider_id ? "Refreshing..." : "Refresh Metadata"}
                   </button>
                 )}
               </div>
-            </div>
-          )}
+            </section>
+          ) : null}
 
-          {/* MCP Providers List */}
-          <div className="glass-card">
-            <h3 style={{ margin: '0 0 12px 0', fontFamily: 'var(--font-heading)', fontSize: '16px' }}>ðŸ› ï¸ Provider Registry</h3>
-            {allProviders.length === 0 ? <Empty>No provider status available.</Empty> : allProviders.map(provider => (
-              <div key={provider.provider_id} style={{ borderTop: '1px solid var(--border-glass)', padding: '12px 0', display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <section className="glass-card">
+            <h3>Providers</h3>
+            {allProviders.length === 0 ? <Empty>No provider status available.</Empty> : allProviders.map((provider) => (
+              <div key={provider.provider_id} className={`row-card is-${statusTone(provider.availability_status)}`}>
                 <div>
-                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                    <strong style={{ fontSize: '15px' }}>{provider.display_name}</strong>
-                    <code>({provider.provider_id})</code>
+                  <strong>{provider.display_name}</strong> <code>({provider.provider_id})</code>
+                  <div className="lede">
+                    Layer: <code>{provider.provider_layer === "external_api" ? "Direct API" : "MCP"}</code> | Transport: <code>{provider.transport_type || "external_api"}</code> | Credentials: <Badge value={provider.credential_status} />
                   </div>
-                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                    Layer: <code>{provider.provider_layer === 'external_api' ? 'Direct API' : 'MCP'}</code> | Transport: <code>{provider.transport_type || 'external_api'}</code> | Credentials: <Badge value={provider.credential_status} />
-                  </div>
-                  {provider.last_error && <div style={{ fontSize: '12px', color: '#ff6b6b', marginTop: '4px' }}>Last error: {provider.last_error}</div>}
+                  {provider.last_error ? <div className="notice notice-error">{provider.last_error}</div> : null}
                 </div>
-
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <div className="actions">
                   <Badge value={provider.availability_status} />
-                  {provider.discovery_status && <Badge value={provider.discovery_status} />}
-                  <span style={{ fontSize: '12px' }}>{provider.tool_count ?? (provider.capabilities?.length || 0)} tools</span>
-                  <button
-                    onClick={() => handleInspectProvider(provider.provider_id, provider.provider_layer)}
-                    style={{ padding: '5px 12px', background: 'rgba(255,255,255,0.08)', border: '1px solid var(--border-glass)', borderRadius: '4px', color: 'white', cursor: 'pointer', fontSize: '12px' }}
-                  >
-                    ðŸ” Inspect
-                  </button>
-                  {provider.provider_layer === 'external_api' ? (
-                    <button
-                      disabled={refreshingProviderId === provider.provider_id}
-                      onClick={() => handleValidateProviderStatus(provider.provider_id)}
-                      style={{ padding: '5px 12px', background: 'var(--primary-glow)', border: 'none', borderRadius: '4px', color: 'white', cursor: 'pointer', fontSize: '12px' }}
-                      title="Read-only direct API provider status check"
-                    >
-                      {refreshingProviderId === provider.provider_id ? 'Validating...' : 'Validate Status'}
+                  {provider.discovery_status ? <Badge value={provider.discovery_status} /> : null}
+                  <span className="lede">{provider.tool_count ?? (provider.capabilities?.length || 0)} tools</span>
+                  <button className="btn btn-ghost btn-sm" onClick={() => handleInspectProvider(provider.provider_id, provider.provider_layer)}>Inspect</button>
+                  {provider.provider_layer === "external_api" ? (
+                    <button className="btn btn-primary btn-sm" disabled={refreshingProviderId === provider.provider_id} onClick={() => handleValidateProviderStatus(provider.provider_id)}>
+                      {refreshingProviderId === provider.provider_id ? "Validating..." : "Validate Status"}
                     </button>
                   ) : (
-                    <button
-                      disabled={refreshingProviderId === provider.provider_id}
-                      onClick={() => handleSafeDiscoverRefresh(provider.provider_id)}
-                      style={{ padding: '5px 12px', background: 'var(--primary-glow)', border: 'none', borderRadius: '4px', color: 'white', cursor: 'pointer', fontSize: '12px' }}
-                      title="Safe MCP metadata refresh (No write side-effects)"
-                    >
-                      {refreshingProviderId === provider.provider_id ? 'Refreshing...' : 'Refresh Metadata'}
+                    <button className="btn btn-primary btn-sm" disabled={refreshingProviderId === provider.provider_id} onClick={() => handleSafeDiscoverRefresh(provider.provider_id)}>
+                      {refreshingProviderId === provider.provider_id ? "Refreshing..." : "Refresh Metadata"}
                     </button>
                   )}
                 </div>
               </div>
             ))}
-          </div>
+          </section>
 
-          {/* Provider Configuration */}
-          <div className="glass-card">
-            <h3 style={{ margin: '0 0 12px 0', fontFamily: 'var(--font-heading)', fontSize: '16px' }}>Provider Configuration</h3>
-            {providerConfigs.length === 0 ? <Empty>No provider configuration definitions available.</Empty> : providerConfigs.map(provider => {
+          <section className="glass-card">
+            <h3>Configuration</h3>
+            {providerConfigs.length === 0 ? <Empty>No provider configuration definitions available.</Empty> : providerConfigs.map((provider) => {
               const draft = configDrafts[provider.provider_id] || {};
               const busy = configBusyProviderId === provider.provider_id;
               return (
-                <div key={provider.provider_id} style={{ borderTop: '1px solid var(--border-glass)', padding: '14px 0' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '10px' }}>
+                <div key={provider.provider_id} className="row-card" style={{ flexDirection: "column", alignItems: "stretch" }}>
+                  <div className="actions" style={{ justifyContent: "space-between" }}>
                     <div>
                       <strong>{provider.display_name}</strong> <code>({provider.provider_id})</code>
-                      <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '3px' }}>
-                        Type: <code>{provider.provider_type}</code> | Configured: <Badge value={provider.configured ? 'configured' : 'missing_config'} /> | Validation: <Badge value={provider.validation_status} />
-                      </div>
-                      {provider.validation_error && <div style={{ fontSize: '12px', color: '#ff6b6b', marginTop: '4px' }}>Validation error: {provider.validation_error}</div>}
+                      <div className="lede">Type: <code>{provider.provider_type}</code> | Configured: <Badge value={provider.configured ? "configured" : "missing_config"} /> | Validation: <Badge value={provider.validation_status} /></div>
+                      {provider.validation_error ? <div className="notice notice-error">Validation error: {provider.validation_error}</div> : null}
                     </div>
-                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                      <button
-                        disabled={busy}
-                        onClick={() => handleSaveProviderConfig(provider)}
-                        style={{ padding: '5px 12px', background: 'var(--primary-glow)', border: 'none', borderRadius: '4px', color: 'white', cursor: 'pointer', fontSize: '12px' }}
-                      >
-                        {busy ? 'Saving...' : 'Save'}
-                      </button>
-                      <button
-                        disabled={busy}
-                        onClick={() => handleValidateProviderConfig(provider.provider_id)}
-                        style={{ padding: '5px 12px', background: 'rgba(255,255,255,0.08)', border: '1px solid var(--border-glass)', borderRadius: '4px', color: 'white', cursor: 'pointer', fontSize: '12px' }}
-                      >
-                        Validate
-                      </button>
-                      <button
-                        disabled={busy}
-                        onClick={() => handleClearProviderSecret(provider.provider_id)}
-                        style={{ padding: '5px 12px', background: 'rgba(255,71,87,0.15)', border: '1px solid rgba(255,71,87,0.35)', borderRadius: '4px', color: '#ff6b6b', cursor: 'pointer', fontSize: '12px' }}
-                      >
-                        Clear Secret
-                      </button>
+                    <div className="actions">
+                      <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => handleSaveProviderConfig(provider)}>{busy ? "Saving..." : "Save"}</button>
+                      <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => handleValidateProviderConfig(provider.provider_id)}>Validate</button>
+                      <button className="btn btn-danger btn-sm" disabled={busy} onClick={() => handleClearProviderSecret(provider.provider_id)}>Clear Secret</button>
                     </div>
                   </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '10px' }}>
-                    {(provider.fields || []).map(field => {
+                  <div className="form-grid">
+                    {(provider.fields || []).map((field) => {
                       const savedValue = provider.saved_values?.[field.name];
-                      const value = draft[field.name] ?? '';
-                      if (field.type === 'boolean') {
+                      const value = draft[field.name] ?? "";
+                      if (field.type === "boolean") {
                         const checked = Object.prototype.hasOwnProperty.call(draft, field.name) ? Boolean(draft[field.name]) : Boolean(savedValue);
                         return (
-                          <label key={field.name} style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'flex', gap: '8px', alignItems: 'center' }}>
-                            <input type="checkbox" checked={checked} onChange={e => updateConfigDraft(provider.provider_id, field, e.target.checked)} />
+                          <label key={field.name} className="chip-row">
+                            <input type="checkbox" checked={checked} onChange={(e) => updateConfigDraft(provider.provider_id, field, e.target.checked)} />
                             {field.label}
                           </label>
                         );
                       }
                       return (
-                        <label key={field.name} style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                          <span>{field.label}{field.required ? ' *' : ''}</span>
+                        <label key={field.name} className="field">
+                          <span>{field.label}{field.required ? " *" : ""}</span>
                           <input
-                            type={field.secret ? 'password' : 'text'}
+                            type={field.secret ? "password" : "text"}
                             value={value}
-                            placeholder={field.secret && savedValue ? 'Stored secret hidden' : String(savedValue || '')}
-                            onChange={e => updateConfigDraft(provider.provider_id, field, e.target.value)}
-                            style={{ padding: '7px 9px', borderRadius: '4px', border: '1px solid var(--border-glass)', background: 'rgba(255,255,255,0.04)', color: 'white' }}
+                            placeholder={field.secret && savedValue ? "Stored secret hidden" : String(savedValue || "")}
+                            onChange={(e) => updateConfigDraft(provider.provider_id, field, e.target.value)}
                           />
-                          {savedValue && <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.42)' }}>Saved: {String(savedValue)}</span>}
+                          {savedValue ? <span className="lede">Saved: {String(savedValue)}</span> : null}
                         </label>
                       );
                     })}
@@ -506,33 +390,23 @@ export default function ToolsOpsCockpit() {
                 </div>
               );
             })}
-          </div>
-          {/* Observability Sub-Navigation Tabs */}
-          <div className="glass-card" style={{ padding: '12px 16px' }}>
-            <div style={{ display: 'flex', gap: '10px', alignItems: 'center', borderBottom: '1px solid var(--border-glass)', paddingBottom: '10px', marginBottom: '12px' }}>
-              <strong style={{ fontSize: '14px', fontFamily: 'var(--font-heading)' }}>Observability Views:</strong>
+          </section>
+
+          <section className="glass-card">
+            <div className="tabs">
               {[
-                { id: 'overview', label: 'ðŸ“Š Overview' },
-                { id: 'calls', label: 'ðŸ“ž Tool Calls' },
-                { id: 'results', label: 'ðŸ“¥ Tool Results' },
-                { id: 'audit', label: 'ðŸ›¡ï¸ Personal OS Audit' },
-                { id: 'blocked', label: 'â›” Blocked Attempts' }
-              ].map(tab => (
+                { id: "overview", label: "Overview" },
+                { id: "calls", label: "Tool Calls" },
+                { id: "results", label: "Tool Results" },
+                { id: "audit", label: "Personal OS Audit" },
+                { id: "blocked", label: "Blocked Attempts" },
+              ].map((tab) => (
                 <button
                   key={tab.id}
+                  className={`tab ${activeSubTab === tab.id ? "active" : ""}`}
                   onClick={() => {
-                    if (tab.id === 'overview') setActiveSubTab('overview');
+                    if (tab.id === "overview") setActiveSubTab("overview");
                     else loadStandaloneObservability(tab.id);
-                  }}
-                  style={{
-                    padding: '6px 12px',
-                    borderRadius: '6px',
-                    border: 'none',
-                    background: activeSubTab === tab.id ? 'var(--primary-glow)' : 'transparent',
-                    color: activeSubTab === tab.id ? 'white' : 'var(--text-secondary)',
-                    fontSize: '12px',
-                    fontWeight: '600',
-                    cursor: 'pointer'
                   }}
                 >
                   {tab.label}
@@ -540,135 +414,80 @@ export default function ToolsOpsCockpit() {
               ))}
             </div>
 
-            {/* Sub-Tab Content */}
-            {activeSubTab === 'overview' && (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px' }}>
+            {activeSubTab === "overview" && (
+              <div className="provider-grid" style={{ marginTop: 12 }}>
                 <div>
-                  <h4 style={{ margin: '0 0 8px 0' }}>Recent Calls</h4>
-                  {calls.length === 0 ? <Empty>No tool calls logged.</Empty> : calls.slice(0, 6).map(call => <div key={call.id} style={{ fontSize: '13px', padding: '4px 0' }}>{call.tool_name} <Badge value={call.status} /></div>)}
+                  <h4>Recent Calls</h4>
+                  {calls.length === 0 ? <Empty>No tool calls logged.</Empty> : calls.slice(0, 6).map((call) => <div key={call.id} className="row-card">{call.tool_name} <Badge value={call.status} /></div>)}
                 </div>
                 <div>
-                  <h4 style={{ margin: '0 0 8px 0' }}>Recent Results</h4>
-                  {results.length === 0 ? <Empty>No tool results logged.</Empty> : results.slice(0, 6).map(result => <div key={result.id} style={{ fontSize: '13px', padding: '4px 0' }}>{result.tool_name} <Badge value={result.status} /></div>)}
+                  <h4>Recent Results</h4>
+                  {results.length === 0 ? <Empty>No tool results logged.</Empty> : results.slice(0, 6).map((result) => <div key={result.id} className="row-card">{result.tool_name} <Badge value={result.status} /></div>)}
                 </div>
                 <div>
-                  <h4 style={{ margin: '0 0 8px 0' }}>Blocked Attempts</h4>
-                  {blocked.length === 0 ? <Empty>No blocked attempts logged.</Empty> : blocked.slice(0, 6).map(item => <div key={item.id} style={{ fontSize: '13px', padding: '4px 0' }}>{item.tool_name} <Badge value={item.action || item.risk_level} /></div>)}
+                  <h4>Blocked Attempts</h4>
+                  {blocked.length === 0 ? <Empty>No blocked attempts logged.</Empty> : blocked.slice(0, 6).map((item) => <div key={item.id} className="row-card">{item.tool_name} <Badge value={item.action || item.risk_level} /></div>)}
                 </div>
               </div>
             )}
 
-            {activeSubTab === 'calls' && (
-              <div>
-                <h4 style={{ margin: '0 0 10px 0' }}>Standalone Tool Calls Audit Log</h4>
-                {callsList.length === 0 ? <Empty>No standalone tool calls found.</Empty> : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    {callsList.map(item => (
-                      <div key={item.id} style={{ padding: '8px', background: 'rgba(255,255,255,0.03)', borderRadius: '4px', fontSize: '12px', display: 'flex', justifyContent: 'space-between' }}>
-                        <div><strong>{item.tool_name}</strong> | Session: <code>{item.session_id}</code></div>
-                        <Badge value={item.status} />
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+            {activeSubTab === "calls" && (
+              callsList.length === 0 ? <Empty>No standalone tool calls found.</Empty> : callsList.map((item) => (
+                <div key={item.id} className="row-card"><div><strong>{item.tool_name}</strong> | Session: <code>{item.session_id}</code></div><Badge value={item.status} /></div>
+              ))
             )}
-
-            {activeSubTab === 'results' && (
-              <div>
-                <h4 style={{ margin: '0 0 10px 0' }}>Standalone Tool Results Audit Log</h4>
-                {resultsList.length === 0 ? <Empty>No standalone tool results found.</Empty> : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    {resultsList.map(item => (
-                      <div key={item.id} style={{ padding: '8px', background: 'rgba(255,255,255,0.03)', borderRadius: '4px', fontSize: '12px', display: 'flex', justifyContent: 'space-between' }}>
-                        <div><strong>{item.tool_name}</strong> | Session: <code>{item.session_id}</code></div>
-                        <Badge value={item.status} />
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+            {activeSubTab === "results" && (
+              resultsList.length === 0 ? <Empty>No standalone tool results found.</Empty> : resultsList.map((item) => (
+                <div key={item.id} className="row-card"><div><strong>{item.tool_name}</strong> | Session: <code>{item.session_id}</code></div><Badge value={item.status} /></div>
+              ))
             )}
-
-            {activeSubTab === 'audit' && (
-              <div>
-                <h4 style={{ margin: '0 0 10px 0' }}>Personal OS Audit Events Log</h4>
-                {auditList.length === 0 ? <Empty>No audit events found.</Empty> : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    {auditList.map(item => (
-                      <div key={item.id} style={{ padding: '8px', background: 'rgba(255,255,255,0.03)', borderRadius: '4px', fontSize: '12px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <strong>{item.action}</strong>
-                          <Badge value={item.outcome} />
-                        </div>
-                        <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px' }}>{item.reason}</div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+            {activeSubTab === "audit" && (
+              auditList.length === 0 ? <Empty>No audit events found.</Empty> : auditList.map((item) => (
+                <div key={item.id} className="row-card"><div><strong>{item.action}</strong><div className="lede">{item.reason}</div></div><Badge value={item.outcome} /></div>
+              ))
             )}
-
-            {activeSubTab === 'blocked' && (
-              <div>
-                <h4 style={{ margin: '0 0 10px 0' }}>Blocked Attempts Log</h4>
-                {blockedList.length === 0 ? <Empty>No blocked attempts found.</Empty> : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    {blockedList.map(item => (
-                      <div key={item.id} style={{ padding: '8px', background: 'rgba(255,71,87,0.1)', borderRadius: '4px', fontSize: '12px', border: '1px solid rgba(255,71,87,0.3)' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <strong style={{ color: '#ff6b6b' }}>{item.tool_name}</strong>
-                          <Badge value={item.action || item.risk_level} />
-                        </div>
-                        <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px' }}>{item.reason}</div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+            {activeSubTab === "blocked" && (
+              blockedList.length === 0 ? <Empty>No blocked attempts found.</Empty> : blockedList.map((item) => (
+                <div key={item.id} className="row-card"><div><strong>{item.tool_name}</strong><div className="lede">{item.reason}</div></div><Badge value={item.action || item.risk_level} /></div>
+              ))
             )}
-          </div>
+          </section>
 
-          {/* Personal OS Bounded Actions */}
-          <div className="glass-card">
-            <h3>Personal OS Bounded Actions</h3>
-            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '10px' }}>
+          <section className="glass-card">
+            <h3>OS actions</h3>
+            <div className="chip-row" style={{ marginBottom: 10 }}>
               <Badge value={personalStatus?.status} />
               <span>{personalActions.length} bounded actions</span>
               <span>{personalAudit.length} recent audit events</span>
+              <span>{cronSchedules.length} schedules / {cronRuns.length} recent runs</span>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '8px' }}>
-              {personalActions.slice(0, 8).map(action => (
-                <div key={action.tool_id} style={{ background: 'rgba(255,255,255,0.03)', padding: '8px', borderRadius: '6px' }}>
+            <div className="provider-grid">
+              {personalActions.slice(0, 8).map((action) => (
+                <div key={action.tool_id} className="provider-card">
                   <strong>{action.legacy_name}</strong>
-                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{action.category} | {action.approval_policy}</div>
+                  <div className="lede">{action.category} | {action.approval_policy}</div>
                 </div>
               ))}
             </div>
-          </div>
+          </section>
 
-          {/* Policy Matrix */}
-          <div className="glass-card">
-            <h3>Policy Matrix</h3>
-            {policyEntries.length === 0 ? <Empty>No policy metadata available.</Empty> : (
-              <div style={{ display: 'grid', gap: '8px' }}>
-                {policyEntries.slice(0, 16).map(entry => (
-                  <div key={entry.tool_id} style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr 1fr', gap: '8px', alignItems: 'center', fontSize: '13px' }}>
-                    <strong>{entry.legacy_name}</strong>
-                    <span>{entry.provider}</span>
-                    <Badge value={entry.risk_class} />
-                    <Badge value={entry.policy_decision} />
-                  </div>
-                ))}
+          <section className="glass-card">
+            <h3>Policy</h3>
+            {policyEntries.length === 0 ? <Empty>No policy metadata available.</Empty> : policyEntries.slice(0, 16).map((entry) => (
+              <div key={entry.tool_id} className="row-card">
+                <strong>{entry.legacy_name}</strong>
+                <span>{entry.provider}</span>
+                <Badge value={entry.risk_class} />
+                <Badge value={entry.policy_decision} />
               </div>
-            )}
-          </div>
+            ))}
+          </section>
         </>
       )}
     </div>
   );
 }
 
-if (typeof window !== 'undefined') {
+if (typeof window !== "undefined") {
   window.ToolsOpsCockpit = ToolsOpsCockpit;
 }

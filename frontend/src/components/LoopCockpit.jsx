@@ -1,5 +1,10 @@
-import React, { useState, useEffect } from 'react';
-import { api } from '../api/client.js';
+import React, { useEffect, useState } from "react";
+import { api } from "../api/client.js";
+import PageHeader from "./ui/PageHeader.jsx";
+import Notice from "./ui/Notice.jsx";
+import Spinner from "./ui/Spinner.jsx";
+import EmptyState from "./ui/EmptyState.jsx";
+import Badge from "./ui/Badge.jsx";
 
 export default function LoopCockpit({ activeSessionId, onRefresh }) {
   const [events, setEvents] = useState([]);
@@ -9,59 +14,57 @@ export default function LoopCockpit({ activeSessionId, onRefresh }) {
   const loadLoopTrace = async () => {
     setLoading(true);
     setError(null);
+    const sess = activeSessionId || "default_session";
     try {
-      const sess = activeSessionId || "default_session";
-      const data = await api.get(`/api/history/${sess}`);
+      let data;
+      try {
+        data = await api.get(`/api/history/${sess}`);
+      } catch {
+        data = await api.get(`/api/loop/events/${sess}`);
+      }
       setEvents(data.loop_trace || data.loop_events || data.turns || []);
     } catch (e) {
-      console.error(e);
       setError(e.message || "Failed to load loop events");
     } finally {
       setLoading(false);
     }
   };
 
-
   useEffect(() => {
     loadLoopTrace();
   }, [activeSessionId]);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <h2 style={{ fontFamily: "var(--font-heading)", margin: 0 }}>🔁 Step-By-Step Agent Loop Timeline</h2>
-        <button
-          onClick={() => { loadLoopTrace(); if (onRefresh) onRefresh(); }}
-          style={{ padding: "8px 16px", background: "var(--primary-glow)", border: "none", borderRadius: "6px", color: "white", cursor: "pointer" }}
-        >
-          🔄 Refresh
-        </button>
-      </div>
-
-      {error && (
-        <div style={{ padding: "12px", background: "rgba(255, 50, 50, 0.15)", borderRadius: "8px", color: "#ff6b6b" }}>
-          ⚠️ Error loading loop events: {error}
-        </div>
-      )}
-
+    <div className="page">
+      <PageHeader
+        title="Loop"
+        subtitle={`Session ${activeSessionId || "default_session"}`}
+        actions={<button className="btn btn-primary" onClick={() => { loadLoopTrace(); if (onRefresh) onRefresh(); }}>Refresh</button>}
+      />
+      {error ? <Notice kind="error">Error loading loop events: {error}</Notice> : null}
       {loading ? (
-        <div style={{ padding: "32px", textAlign: "center", color: "var(--text-secondary)" }}>🌀 Loading loop trace...</div>
+        <Spinner label="Loading loop trace..." />
       ) : events.length === 0 ? (
-        <div className="glass-card" style={{ textAlign: "center", padding: "48px", color: "var(--text-secondary)", fontStyle: "italic" }}>
-          📭 No loop events recorded for this session.
-        </div>
+        <EmptyState title="No activity yet" body="No loop events recorded for this session." />
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+        <div className="timeline">
           {events.map((ev, idx) => (
-            <div key={idx} className="glass-card" style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <strong style={{ color: "#4ecdc4" }}>Step #{idx + 1} - {ev.step_type || ev.sender || "EVENT"}</strong>
-                {ev.created_at && <span style={{ fontSize: "12px", color: "var(--text-secondary)" }}>{ev.created_at}</span>}
+            <div key={idx} className="step">
+              <div className="step-rail">
+                <div className="step-dot" />
+                {idx < events.length - 1 ? <div className="step-line" /> : null}
               </div>
-              <div style={{ fontSize: "14px", color: "var(--text-primary)" }}>{ev.reasoning || ev.content || ev.text}</div>
-              {ev.tool_name && (
-                <div style={{ fontSize: "12px", color: "#a8ff78" }}>⚙️ Tool: {ev.tool_name}</div>
-              )}
+              <div className="glass-card">
+                <div className="actions" style={{ justifyContent: "space-between", marginBottom: 6 }}>
+                  <strong>Step #{idx + 1} — {ev.step_type || ev.sender || "EVENT"}</strong>
+                  <div className="actions">
+                    {ev.tool_name ? <Badge value={ev.tool_name} /> : null}
+                    {ev.created_at ? <span className="lede">{ev.created_at}</span> : null}
+                  </div>
+                </div>
+                <div>{ev.reasoning || ev.content || ev.text}</div>
+                {ev.tool_result ? <pre className="json-block">{String(ev.tool_result).slice(0, 800)}</pre> : null}
+              </div>
             </div>
           ))}
         </div>

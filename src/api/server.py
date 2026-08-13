@@ -165,11 +165,17 @@ def _generate_deterministic_thread_title(message: str) -> str:
 
 @app.get("/api/health")
 def api_health():
+    from src.harness.models import is_valid_key
+
     hb = heartbeat.invoke({})
     return {
         "status": "online",
         "heartbeat": hb,
-        "backend": "LangGraph + SQLite FTS5"
+        "backend": "LangGraph + SQLite FTS5",
+        "llm_available": is_valid_key(os.getenv("OPENAI_API_KEY"))
+            or is_valid_key(os.getenv("ANTHROPIC_API_KEY"))
+            or is_valid_key(os.getenv("GOOGLE_API_KEY"))
+            or is_valid_key(os.getenv("XAI_API_KEY")),
     }
 
 class RenameSessionRequest(BaseModel):

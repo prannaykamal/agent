@@ -1,95 +1,80 @@
-import React, { useEffect, useState } from 'react';
-import { api } from '../api/client.js';
+import React, { useEffect, useState } from "react";
+import { api } from "../api/client.js";
+import PageHeader from "./ui/PageHeader.jsx";
+import Notice from "./ui/Notice.jsx";
+import Spinner from "./ui/Spinner.jsx";
+import Badge from "./ui/Badge.jsx";
+import DataTable from "./ui/DataTable.jsx";
 
 const endpoints = {
-  overview: '/api/memory/observability/overview',
-  health: '/api/memory/observability/health',
-  jobs: '/api/memory/observability/jobs',
-  workers: '/api/memory/observability/workers',
-  deadLetters: '/api/memory/observability/dead-letter',
-  semantic: '/api/memory/observability/semantic',
-  procedural: '/api/memory/observability/procedural',
-  skills: '/api/memory/observability/skills'
+  overview: "/api/memory/observability/overview",
+  health: "/api/memory/observability/health",
+  jobs: "/api/memory/observability/jobs",
+  workers: "/api/memory/observability/workers",
+  deadLetters: "/api/memory/observability/dead-letter",
+  semantic: "/api/memory/observability/semantic",
+  procedural: "/api/memory/observability/procedural",
+  skills: "/api/memory/observability/skills",
 };
 
 function StatusPill({ value }) {
-  const tone = value === 'OK' ? '#4ecdc4' : value === 'ERROR' ? '#ff6b6b' : '#ffd166';
-  return (
-    <span style={{ color: tone, border: `1px solid ${tone}`, borderRadius: '999px', padding: '2px 8px', fontSize: '12px' }}>
-      {value || 'UNKNOWN'}
-    </span>
-  );
+  return <Badge value={value || "UNKNOWN"} />;
 }
 
 function Metric({ label, value }) {
   return (
-    <div style={{ padding: '12px', background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border-glass)', borderRadius: '8px' }}>
-      <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{label}</div>
-      <div style={{ fontSize: '22px', fontWeight: 700 }}>{value ?? 0}</div>
+    <div className="metric-card">
+      <h4>{label}</h4>
+      <div className="metric-value">{value ?? 0}</div>
     </div>
   );
 }
 
 function Panel({ title, children }) {
   return (
-    <section className="glass-card" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-      <h3 style={{ margin: 0, fontFamily: 'var(--font-heading)' }}>{title}</h3>
+    <section className="glass-card">
+      <h3 style={{ marginBottom: 12 }}>{title}</h3>
       {children}
     </section>
   );
 }
 
 function SimpleTable({ rows, emptyText }) {
-  if (!rows || rows.length === 0) {
-    return <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic', padding: '12px 0' }}>{emptyText}</div>;
-  }
-  const columns = Object.keys(rows[0] || {}).slice(0, 8);
-  return (
-    <div style={{ overflowX: 'auto' }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
-        <thead>
-          <tr style={{ borderBottom: '1px solid var(--border-glass)', textAlign: 'left' }}>
-            {columns.map(col => <th key={col} style={{ padding: '8px', color: '#4ecdc4' }}>{col}</th>)}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, idx) => (
-            <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-              {columns.map(col => (
-                <td key={col} style={{ padding: '8px', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {typeof row[col] === 'object' ? JSON.stringify(row[col]) : String(row[col] ?? '')}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
+  return <DataTable rows={rows} emptyText={emptyText} />;
 }
 
 export default function MemoryObservabilityCockpit() {
   const [data, setData] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [traceQuery, setTraceQuery] = useState('');
-  const [traceSession, setTraceSession] = useState('default_session');
+  const [traceQuery, setTraceQuery] = useState("");
+  const [traceSession, setTraceSession] = useState("default_session");
   const [showPromptBlock, setShowPromptBlock] = useState(false);
   const [trace, setTrace] = useState(null);
   const [traceError, setTraceError] = useState(null);
+  const [jobStatus, setJobStatus] = useState("");
+  const [includePayload, setIncludePayload] = useState(false);
 
   const loadPanelData = async () => {
     setLoading(true);
     setError(null);
     try {
       const entries = await Promise.all(Object.entries(endpoints).map(async ([key, url]) => {
-        const payload = await api.get(url);
+        let target = url;
+        if (key === "jobs") {
+          const params = new URLSearchParams();
+          if (jobStatus) params.set("status", jobStatus);
+          if (includePayload) params.set("include_payload", "true");
+          const qs = params.toString();
+          target = qs ? `${url}?${qs}` : url;
+        }
+        const payload = await api.get(target);
         return [key, payload];
       }));
       setData(Object.fromEntries(entries));
     } catch (err) {
       console.error(err);
-      setError(err.message || 'Failed loading memory telemetry');
+      setError(err.message || "Failed to load memory observability");
     } finally {
       setLoading(false);
     }
@@ -100,20 +85,20 @@ export default function MemoryObservabilityCockpit() {
     setTraceError(null);
     setTrace(null);
     if (!traceQuery.trim()) {
-      setTraceError('Query must be non-empty.');
+      setTraceError("Query must be non-empty.");
       return;
     }
     try {
-      const payload = await api.post('/api/memory/observability/retrieval/trace', {
+      const payload = await api.post("/api/memory/observability/retrieval/trace", {
         query: traceQuery.trim(),
-        session_id: traceSession || 'default_session',
+        session_id: traceSession || "default_session",
         include_prompt_block: showPromptBlock,
-        include_candidates: true
-      });
+        include_candidates: true,
+      }, { method: 'POST' });
       setTrace(payload);
     } catch (err) {
       console.error(err);
-      setTraceError(err.message || 'Trace simulation failed');
+      setTraceError(err.message || "Trace failed");
     }
   };
 
@@ -130,24 +115,22 @@ export default function MemoryObservabilityCockpit() {
   const skills = data.skills || {};
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div>
-          <h2 style={{ margin: 0, fontFamily: 'var(--font-heading)' }}>Memory Ops</h2>
-          <div style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>Read-only observability for memory queues, retrieval, candidates, and skills.</div>
-        </div>
-        <button onClick={loadPanelData} style={{ padding: '8px 16px', background: 'var(--primary-glow)', border: 'none', borderRadius: '6px', color: 'white', cursor: 'pointer' }}>Refresh</button>
-      </div>
+    <div className="page">
+      <PageHeader
+        title="Memory Ops"
+        subtitle="Queues, retrieval, candidates, and skills."
+        actions={<button className="btn btn-primary" onClick={loadPanelData}>Refresh</button>}
+      />
 
-      {error && <div style={{ padding: '12px', background: 'rgba(255,50,50,0.15)', borderRadius: '8px', color: '#ff6b6b' }}>{error}</div>}
-      {loading ? <div style={{ color: 'var(--text-secondary)' }}>Loading memory observability...</div> : (
+      {error ? <Notice kind="error">{error}</Notice> : null}
+      {loading ? <Spinner label="Loading memory observability..." /> : (
         <>
-          <Panel title="Health Overview">
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}><span>Status</span><StatusPill value={health.status} /></div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px' }}>
+          <Panel title="Health">
+            <div className="actions" style={{ marginBottom: 12 }}><span>Status</span><StatusPill value={health.status} /></div>
+            <div className="metric-grid">
               <Metric label="Jobs" value={health.queue?.total_jobs} />
               <Metric label="Dead Letters" value={health.queue?.dead_letter_count} />
-              <Metric label="Active Workers" value={health.workers?.active_workers} />
+              <Metric label="Active Workers" value={health.workers?.active_workers ?? health.workers?.active} />
               <Metric label="Semantic Pending" value={health.semantic?.pending_candidates} />
               <Metric label="Ready Skills" value={health.procedural?.ready_for_promotion} />
               <Metric label="Active Versions" value={health.skills?.active_versions} />
@@ -155,6 +138,20 @@ export default function MemoryObservabilityCockpit() {
           </Panel>
 
           <Panel title="Queue and Workers">
+            <div className="actions" style={{ marginBottom: 12 }}>
+              <select value={jobStatus} onChange={(e) => setJobStatus(e.target.value)}>
+                <option value="">All job statuses</option>
+                <option value="PENDING">PENDING</option>
+                <option value="RUNNING">RUNNING</option>
+                <option value="SUCCEEDED">SUCCEEDED</option>
+                <option value="FAILED">FAILED</option>
+              </select>
+              <label className="chip-row">
+                <input type="checkbox" checked={includePayload} onChange={(e) => setIncludePayload(e.target.checked)} />
+                Include payload
+              </label>
+              <button className="btn btn-ghost btn-sm" onClick={loadPanelData}>Apply filters</button>
+            </div>
             <SimpleTable rows={jobs.jobs || []} emptyText="No memory jobs found." />
             <SimpleTable rows={workers.workers || []} emptyText="No worker heartbeats recorded. The memory worker is not auto-started." />
           </Panel>
@@ -164,21 +161,21 @@ export default function MemoryObservabilityCockpit() {
           </Panel>
 
           <Panel title="Retrieval Trace">
-            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-              <input value={traceQuery} onChange={e => setTraceQuery(e.target.value)} placeholder="Query to trace" style={{ flex: 2, minWidth: '260px', padding: '10px', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-glass)', borderRadius: '6px', color: 'white' }} />
-              <input value={traceSession} onChange={e => setTraceSession(e.target.value)} placeholder="Session ID" style={{ flex: 1, minWidth: '160px', padding: '10px', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-glass)', borderRadius: '6px', color: 'white' }} />
-              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--text-secondary)' }}>
-                <input type="checkbox" checked={showPromptBlock} onChange={e => setShowPromptBlock(e.target.checked)} /> Show redacted prompt block
+            <div className="form-grid">
+              <input value={traceQuery} onChange={(e) => setTraceQuery(e.target.value)} placeholder="Query to trace" />
+              <input value={traceSession} onChange={(e) => setTraceSession(e.target.value)} placeholder="Session ID" />
+              <label className="chip-row">
+                <input type="checkbox" checked={showPromptBlock} onChange={(e) => setShowPromptBlock(e.target.checked)} /> Show redacted prompt block
               </label>
-              <button onClick={handleTrace} style={{ padding: '10px 16px', background: 'var(--primary-glow)', border: 'none', borderRadius: '6px', color: 'white', cursor: 'pointer' }}>Trace</button>
+              <button className="btn btn-primary" onClick={handleTrace}>Trace</button>
             </div>
-            {traceError && <div style={{ color: '#ff6b6b' }}>{traceError}</div>}
+            {traceError ? <Notice kind="error">{traceError}</Notice> : null}
             {trace ? (
-              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 0.8fr) 1fr', gap: '12px' }}>
-                <pre style={{ whiteSpace: 'pre-wrap', fontSize: '12px', background: 'rgba(0,0,0,0.25)', padding: '12px', borderRadius: '8px' }}>{JSON.stringify({ gate: trace.gate, plan: trace.plan, assembly: trace.assembly }, null, 2)}</pre>
+              <div className="split" style={{ marginTop: 12, gridTemplateColumns: "minmax(220px, 0.8fr) 1fr" }}>
+                <pre className="json-block">{JSON.stringify({ gate: trace.gate, plan: trace.plan, assembly: trace.assembly }, null, 2)}</pre>
                 <SimpleTable rows={trace.candidates || []} emptyText="No candidates selected." />
               </div>
-            ) : <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>Run a trace to inspect planner and retrieval decisions.</div>}
+            ) : <div className="lede">Run a trace to inspect planner and retrieval decisions.</div>}
           </Panel>
 
           <Panel title="Semantic Pipeline">
@@ -191,7 +188,7 @@ export default function MemoryObservabilityCockpit() {
             <SimpleTable rows={procedural.approvals || []} emptyText="No procedural approvals." />
           </Panel>
 
-          <Panel title="Skill Versions / Usage">
+          <Panel title="Skills">
             <SimpleTable rows={skills.active_versions || []} emptyText="No active skill versions." />
           </Panel>
         </>
@@ -200,6 +197,6 @@ export default function MemoryObservabilityCockpit() {
   );
 }
 
-if (typeof window !== 'undefined') {
+if (typeof window !== "undefined") {
   window.MemoryObservabilityCockpit = MemoryObservabilityCockpit;
 }

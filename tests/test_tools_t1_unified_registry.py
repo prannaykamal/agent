@@ -77,6 +77,7 @@ def test_t1_every_unified_metadata_entry_has_stable_required_fields():
         assert item.implementation_type in {
             ImplementationType.LOCAL,
             ImplementationType.MCP,
+            ImplementationType.EXTERNAL_API,
             ImplementationType.REMOVED,
         }
 

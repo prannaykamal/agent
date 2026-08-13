@@ -1,52 +1,13 @@
-import React, { useState, useEffect } from 'react';
-import { api } from '../api/client.js';
+import React, { useEffect, useState } from "react";
+import { api } from "../api/client.js";
+import PageHeader from "./ui/PageHeader.jsx";
+import Notice from "./ui/Notice.jsx";
+import Spinner from "./ui/Spinner.jsx";
+import Badge from "./ui/Badge.jsx";
+import { formatBytes, statusTone } from "../lib/format.js";
 
 function StatusBadge({ status }) {
-  const s = String(status || 'unknown').toLowerCase();
-  let label = s.toUpperCase();
-  let bg = 'rgba(255, 255, 255, 0.08)';
-  let color = 'var(--text-secondary)';
-  let border = '1px solid rgba(255, 255, 255, 0.15)';
-  let icon = '⚪';
-
-  if (s === 'available' || s === 'mcp_available' || s === 'running' || s === 'healthy') {
-    label = s === 'mcp_available' ? 'AVAILABLE MCP' : s.toUpperCase();
-    bg = 'rgba(46, 204, 113, 0.18)';
-    color = '#2ecc71';
-    border = '1px solid rgba(46, 204, 113, 0.4)';
-    icon = '🟢';
-  } else if (s === 'unavailable' || s === 'mcp_unavailable' || s === 'not_configured') {
-    label = s === 'mcp_unavailable' ? 'UNAVAILABLE MCP' : s === 'not_configured' ? 'NOT CONFIGURED' : s.toUpperCase();
-    bg = 'rgba(243, 156, 18, 0.18)';
-    color = '#f39c12';
-    border = '1px solid rgba(243, 156, 18, 0.4)';
-    icon = '⚠️';
-  } else if (s === 'discovery_failed' || s === 'failed' || s === 'error') {
-    bg = 'rgba(255, 71, 87, 0.18)';
-    color = '#ff4757';
-    border = '1px solid rgba(255, 71, 87, 0.4)';
-    icon = '❌';
-  }
-
-  return (
-    <span
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: '6px',
-        padding: '4px 10px',
-        borderRadius: '6px',
-        fontSize: '11px',
-        fontWeight: '600',
-        background: bg,
-        color: color,
-        border: border
-      }}
-    >
-      <span>{icon}</span>
-      <span>{label}</span>
-    </span>
-  );
+  return <Badge value={status} />;
 }
 
 export default function OverviewCockpit({ activeSessionId, onRefresh }) {
@@ -58,15 +19,13 @@ export default function OverviewCockpit({ activeSessionId, onRefresh }) {
   const [workerObs, setWorkerObs] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-
-  // Backup & Restore State
   const [backups, setBackups] = useState([]);
   const [totalBackups, setTotalBackups] = useState(0);
   const [loadingBackups, setLoadingBackups] = useState(false);
   const [creatingBackup, setCreatingBackup] = useState(false);
   const [restoringBackup, setRestoringBackup] = useState(false);
   const [selectedBackupForRestore, setSelectedBackupForRestore] = useState(null);
-  const [customBackupPath, setCustomBackupPath] = useState('');
+  const [customBackupPath, setCustomBackupPath] = useState("");
   const [backupNotice, setBackupNotice] = useState(null);
   const [backupError, setBackupError] = useState(null);
 
@@ -74,40 +33,37 @@ export default function OverviewCockpit({ activeSessionId, onRefresh }) {
     setLoading(true);
     setError(null);
     try {
-      const sess = activeSessionId || 'default_session';
-
+      const sess = activeSessionId || "default_session";
       const [histRes, healthRes, intRes, mcpRes, externalRes, workerRes] = await Promise.allSettled([
         api.get(`/api/history/${sess}`),
-        api.get('/api/system/health'),
-        api.get('/api/integrations/status'),
-        api.get('/api/tools/mcp/providers'),
-        api.get('/api/tools/external/providers'),
-        api.get('/api/memory/observability/workers')
+        api.get("/api/system/health"),
+        api.get("/api/integrations/status"),
+        api.get("/api/tools/mcp/providers"),
+        api.get("/api/tools/external/providers"),
+        api.get("/api/memory/observability/workers"),
       ]);
 
-      const dataHist = histRes.status === 'fulfilled' ? histRes.value : {};
-      const dataHealth = healthRes.status === 'fulfilled' ? healthRes.value : null;
-      const dataInt = intRes.status === 'fulfilled' ? intRes.value : null;
-      const dataMcp = mcpRes.status === 'fulfilled' ? mcpRes.value : null;
-      const dataExternal = externalRes.status === 'fulfilled' ? externalRes.value : null;
-      const dataWorkers = workerRes.status === 'fulfilled' ? workerRes.value : null;
+      const dataHist = histRes.status === "fulfilled" ? histRes.value : {};
+      const dataHealth = healthRes.status === "fulfilled" ? healthRes.value : null;
+      const dataInt = intRes.status === "fulfilled" ? intRes.value : null;
+      const dataMcp = mcpRes.status === "fulfilled" ? mcpRes.value : null;
+      const dataExternal = externalRes.status === "fulfilled" ? externalRes.value : null;
+      const dataWorkers = workerRes.status === "fulfilled" ? workerRes.value : null;
 
       setHealth(dataHealth);
       setIntegrations(dataInt?.integrations || null);
-      setMcpProviders((dataMcp?.providers || []).map(p => ({ ...p, provider_layer: 'mcp' })));
-      setExternalProviders((dataExternal?.providers || []).map(p => ({ ...p, provider_layer: 'external_api' })));
+      setMcpProviders((dataMcp?.providers || []).map((p) => ({ ...p, provider_layer: "mcp" })));
+      setExternalProviders((dataExternal?.providers || []).map((p) => ({ ...p, provider_layer: "external_api" })));
       setWorkerObs(dataWorkers?.summary || null);
-
       setTelemetry({
         session_id: sess,
         total_turns: dataHist.total_turns || 0,
-        gate_status: 'Active (Hybrid SQL/FTS5)',
-        tool_status: 'Personal OS + cron + provider-managed MCP + direct APIs',
-        memory_sync: 'Synced (.agent/MEMORY.md)'
+        gate_status: "Active (Hybrid SQL/FTS5)",
+        tool_status: "Personal OS + cron + provider-managed MCP + direct APIs",
+        memory_sync: "Synced (.agent/MEMORY.md)",
       });
     } catch (e) {
-      console.error(e);
-      setError(e.message || 'Failed to load telemetry');
+      setError(e.message || "Failed to load telemetry");
     } finally {
       setLoading(false);
     }
@@ -116,7 +72,7 @@ export default function OverviewCockpit({ activeSessionId, onRefresh }) {
   const fetchBackups = async () => {
     setLoadingBackups(true);
     try {
-      const data = await api.get('/api/system/backups');
+      const data = await api.get("/api/system/backups");
       setBackups(data.backups || []);
       setTotalBackups(data.total_backups || 0);
     } catch (e) {
@@ -136,8 +92,10 @@ export default function OverviewCockpit({ activeSessionId, onRefresh }) {
     setBackupNotice(null);
     setBackupError(null);
     try {
-      const res = await api.post('/api/system/backup');
-      setBackupNotice(`Backup archive created successfully! Location: ${res.backup_path} (${res.packed_files?.length || 0} files packed, ${(res.size_bytes / 1024).toFixed(1)} KB)`);
+      const res = await api.post("/api/system/backup");
+      setBackupNotice(
+        `Backup archive created successfully! Location: ${res.backup_path} (${res.packed_files?.length || 0} files packed, ${formatBytes(res.size_bytes)})`
+      );
       fetchBackups();
     } catch (e) {
       setBackupError(`Backup creation failed: ${e.message}`);
@@ -151,15 +109,16 @@ export default function OverviewCockpit({ activeSessionId, onRefresh }) {
       setBackupError("Please specify a valid backup archive path for restore.");
       return;
     }
-
     setRestoringBackup(true);
     setBackupNotice(null);
     setBackupError(null);
     try {
-      const res = await api.post('/api/system/restore', { backup_path: backupPath.trim() });
-      setBackupNotice(`System restored successfully from '${res.backup_path}'! Restored files: ${res.restored_files?.join(', ')}.`);
+      const res = await api.post("/api/system/restore", { backup_path: backupPath.trim() });
+      setBackupNotice(
+        `System restored successfully from '${res.backup_path}'! Restored files: ${(res.restored_files || []).join(", ")}.`
+      );
       setSelectedBackupForRestore(null);
-      setCustomBackupPath('');
+      setCustomBackupPath("");
       fetchOverview();
       fetchBackups();
     } catch (e) {
@@ -170,285 +129,183 @@ export default function OverviewCockpit({ activeSessionId, onRefresh }) {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h2 style={{ fontFamily: 'var(--font-heading)', margin: 0 }}>📊 ASTRA Telemetry & System Admin</h2>
-        <button
-          onClick={() => { fetchOverview(); fetchBackups(); if (onRefresh) onRefresh(); }}
-          style={{ padding: '8px 16px', background: 'var(--primary-glow)', border: 'none', borderRadius: '6px', color: 'white', cursor: 'pointer' }}
-        >
-          🔄 Refresh
-        </button>
-      </div>
+    <div className="page">
+      <PageHeader
+        title="Overview"
+        subtitle={telemetry?.tool_status}
+        actions={
+          <button className="btn btn-primary" onClick={() => { fetchOverview(); fetchBackups(); if (onRefresh) onRefresh(); }}>
+            Refresh
+          </button>
+        }
+      />
 
-      {error && (
-        <div style={{ padding: '12px', background: 'rgba(255, 50, 50, 0.15)', borderRadius: '8px', color: '#ff6b6b' }}>
-          ⚠️ Error loading telemetry: {error}
-        </div>
-      )}
+      {error ? <Notice kind="error">Error loading telemetry: {error}</Notice> : null}
 
       {loading ? (
-        <div style={{ padding: '32px', textAlign: 'center', color: 'var(--text-secondary)' }}>🌀 Loading system telemetry & provider readiness...</div>
+        <Spinner label="Loading…" />
       ) : (
         <>
-          {/* Top Telemetry Grid */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
-            <div className="glass-card">
-              <h4 style={{ color: 'var(--text-secondary)', marginBottom: '8px' }}>Active Session</h4>
-              <div style={{ fontSize: '16px', fontWeight: '600' }}>{telemetry?.session_id || 'default_session'}</div>
-              <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>Logged Turns: {telemetry?.total_turns || 0}</div>
+          <div className="metric-grid">
+            <div className="metric-card">
+              <h4>Session</h4>
+              <div className="metric-value">{telemetry?.session_id || "default_session"}</div>
+              <div className="metric-meta">{telemetry?.total_turns || 0} turns</div>
             </div>
-
-            <div className="glass-card">
-              <h4 style={{ color: 'var(--text-secondary)', marginBottom: '8px' }}>Database & Schema</h4>
-              <div style={{ fontSize: '16px', fontWeight: '600', color: '#4ecdc4' }}>
-                SQLite v{health?.schema_version || 7}
-              </div>
-              <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                Path: {health?.database_path ? health.database_path.split('\\').pop() : 'state.db'}
-              </div>
+            <div className="metric-card">
+              <h4>Database</h4>
+              <div className="metric-value">SQLite v{health?.schema_version || 7}</div>
+              <div className="metric-meta">{health?.database_path ? String(health.database_path).split(/[\\/]/).pop() : "state.db"}</div>
             </div>
-
-            <div className="glass-card">
-              <h4 style={{ color: 'var(--text-secondary)', marginBottom: '8px' }}>Coarse System Health</h4>
-              <div style={{ fontSize: '16px', fontWeight: '600', color: '#a8ff78' }}>
-                🟢 {health?.status || 'HEALTHY'}
-              </div>
-              <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                System Worker Telemetry: {health?.worker_status || 'RUNNING'}
-              </div>
+            <div className="metric-card">
+              <h4>Health</h4>
+              <div className="metric-value">{health?.status || "HEALTHY"}</div>
+              <div className="metric-meta">Worker: {health?.worker_status || "RUNNING"}</div>
             </div>
-
-            <div className="glass-card">
-              <h4 style={{ color: 'var(--text-secondary)', marginBottom: '8px' }}>Memory Workers Real State</h4>
-              <div style={{ fontSize: '16px', fontWeight: '600', color: (workerObs?.stale ?? 0) > 0 ? '#ff6b6b' : '#2ecc71' }}>
-                {workerObs ? `${workerObs.active ?? 0} Active / ${workerObs.total ?? 0} Total` : '1 Worker Active'}
-              </div>
-              <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                Stale Workers: {workerObs ? (workerObs.stale ?? 0) : 0} (Heartbeat threshold 120s)
-              </div>
+            <div className="metric-card">
+              <h4>Memory workers</h4>
+              <div className="metric-value">{workerObs ? `${workerObs.active ?? 0} active / ${workerObs.total ?? 0}` : "1 Worker Active"}</div>
+              <div className="metric-meta">Stale: {workerObs ? (workerObs.stale ?? 0) : 0}</div>
             </div>
           </div>
 
-          {/* Integration Capabilities */}
-          <div className="glass-card" style={{ marginTop: '10px' }}>
-            <h3 style={{ fontFamily: 'var(--font-heading)', fontSize: '16px', marginBottom: '14px' }}>
-              🔌 Integration Capability Readiness
-            </h3>
+          <section className="glass-card">
+            <div className="card-head"><h3>Integrations</h3></div>
             {integrations ? (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px' }}>
+              <div className="provider-grid">
                 {Object.entries(integrations).map(([key, item]) => (
-                  <div
-                    key={key}
-                    style={{
-                      padding: '12px 14px',
-                      background: 'rgba(255, 255, 255, 0.03)',
-                      borderRadius: '8px',
-                      border: '1px solid var(--border-glass)',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '6px'
-                    }}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <strong style={{ fontSize: '14px' }}>{item.name || key.toUpperCase()}</strong>
+                  <div key={key} className={`provider-card is-${statusTone(item.status)}`}>
+                    <div className="actions" style={{ justifyContent: "space-between" }}>
+                      <strong>{item.name || key.toUpperCase()}</strong>
                       <StatusBadge status={item.status} />
                     </div>
-                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{item.description}</div>
-                    <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.4)', marginTop: '2px' }}>
-                      Mode: <code>{item.mode}</code>
-                    </div>
+                    <div className="lede">{item.description}</div>
+                    <div className="lede">Mode: <code>{item.mode}</code></div>
                   </div>
                 ))}
               </div>
             ) : (
-              <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>No integration status response.</div>
+              <div className="lede">No integration status response.</div>
             )}
-          </div>
+          </section>
 
-          {/* Live MCP Providers Status */}
-          <div className="glass-card" style={{ marginTop: '10px' }}>
-            <h3 style={{ fontFamily: 'var(--font-heading)', fontSize: '16px', marginBottom: '14px' }}>
-              🛠️ Live MCP Provider Statuses
-            </h3>
+          <section className="glass-card">
+            <div className="card-head"><h3>MCP providers</h3></div>
             {mcpProviders.length > 0 ? (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '12px' }}>
-                {mcpProviders.map(p => (
-                  <div
-                    key={p.provider_id}
-                    style={{
-                      padding: '12px 14px',
-                      background: 'rgba(255, 255, 255, 0.03)',
-                      borderRadius: '8px',
-                      border: '1px solid var(--border-glass)',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '6px'
-                    }}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <strong style={{ fontSize: '14px' }}><code>{p.provider_id}</code></strong>
+              <div className="provider-grid">
+                {mcpProviders.map((p) => (
+                  <div key={p.provider_id} className={`provider-card is-${statusTone(p.availability_status)}`}>
+                    <div className="actions" style={{ justifyContent: "space-between" }}>
+                      <strong><code>{p.provider_id}</code></strong>
                       <StatusBadge status={p.availability_status} />
                     </div>
-                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'flex', gap: '12px' }}>
-                      <span>Layer: <code>{p.provider_layer === 'external_api' ? 'Direct API' : 'MCP'}</code></span>
-                      <span>Transport: <code>{p.transport_type || p.transport || 'external_api'}</code></span>
-                      <span>Tools: <strong>{p.tool_count ?? (p.capabilities?.length || 0)}</strong></span>
+                    <div className="lede">
+                      Layer: <code>{p.provider_layer === "external_api" ? "Direct API" : "MCP"}</code>
+                      {" · "}Transport: <code>{p.transport_type || p.transport || "external_api"}</code>
+                      {" · "}Tools: <strong>{p.tool_count ?? (p.capabilities?.length || 0)}</strong>
                     </div>
-                    {p.last_error && (
-                      <div style={{ fontSize: '11px', color: '#ff6b6b', marginTop: '4px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        Error: {p.last_error}
-                      </div>
-                    )}
+                    {p.last_error ? <div className="notice notice-error">{p.last_error}</div> : null}
                   </div>
                 ))}
               </div>
             ) : (
-              <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>No providers registered.</div>
+              <div className="lede">No providers registered.</div>
             )}
-          </div>
+          </section>
 
-          {/* System Backup & Restore Administration Section */}
-          <div className="glass-card" style={{ marginTop: '10px', background: 'rgba(0,0,0,0.25)', border: '1px solid var(--border-glass)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '10px' }}>
-              <div>
-                <h3 style={{ fontFamily: 'var(--font-heading)', fontSize: '16px', margin: 0 }}>
-                  💾 System Backup & Restore Administration
-                </h3>
-                <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                  Manage system snapshot archives (state.db, SOUL.md, MEMORY.md, SKILL.md). Total Backups: <strong>{totalBackups}</strong>
-                </span>
+          {externalProviders.length > 0 ? (
+            <section className="glass-card">
+              <div className="card-head"><h3>Direct API Providers</h3></div>
+              <div className="provider-grid">
+                {externalProviders.map((p) => (
+                  <div key={p.provider_id} className={`provider-card is-${statusTone(p.availability_status)}`}>
+                    <div className="actions" style={{ justifyContent: "space-between" }}>
+                      <strong><code>{p.provider_id}</code></strong>
+                      <StatusBadge status={p.availability_status} />
+                    </div>
+                    <div className="lede">Layer: Direct API · Tools: {p.tool_count ?? (p.capabilities?.length || 0)}</div>
+                  </div>
+                ))}
               </div>
-              <button
-                disabled={creatingBackup}
-                onClick={handleCreateBackup}
-                style={{
-                  padding: '8px 18px',
-                  background: 'var(--primary-glow)',
-                  border: 'none',
-                  borderRadius: '6px',
-                  color: 'white',
-                  cursor: 'pointer',
-                  fontSize: '13px',
-                  fontWeight: '600'
-                }}
-              >
-                {creatingBackup ? '📦 Creating Archive...' : '📦 Create System Backup'}
+            </section>
+          ) : null}
+
+          <section className="glass-card">
+            <div className="card-head">
+              <div>
+                <h3>Backups</h3>
+                <p className="lede">Includes state.db, SOUL.md, MEMORY.md, SKILL.md. {totalBackups} on disk.</p>
+              </div>
+              <button className="btn btn-primary" disabled={creatingBackup} onClick={handleCreateBackup}>
+                {creatingBackup ? "Creating…" : "Create backup"}
               </button>
             </div>
 
-            {/* Backup Action Feedback Notices */}
-            {backupNotice && (
-              <div style={{ padding: '10px 14px', background: 'rgba(46, 204, 113, 0.15)', border: '1px solid rgba(46, 204, 113, 0.3)', borderRadius: '8px', color: '#2ecc71', fontSize: '13px', marginBottom: '12px' }}>
-                ✅ {backupNotice}
-              </div>
-            )}
-            {backupError && (
-              <div style={{ padding: '10px 14px', background: 'rgba(255, 50, 50, 0.15)', border: '1px solid rgba(255, 50, 50, 0.3)', borderRadius: '8px', color: '#ff6b6b', fontSize: '13px', marginBottom: '12px' }}>
-                ⚠️ {backupError}
-              </div>
-            )}
+            {backupNotice ? <Notice kind="ok">{backupNotice}</Notice> : null}
+            {backupError ? <Notice kind="error">{backupError}</Notice> : null}
 
-            {/* Restructive Restore Confirmation Modal */}
-            {selectedBackupForRestore && (
-              <div style={{ padding: '16px', background: 'rgba(255, 71, 87, 0.12)', border: '1px solid rgba(255, 71, 87, 0.4)', borderRadius: '8px', marginBottom: '16px' }}>
-                <h4 style={{ color: '#ff6b6b', margin: '0 0 8px 0', fontSize: '15px' }}>⚠️ Confirm Destructive System Restore</h4>
-                <p style={{ margin: '0 0 12px 0', fontSize: '13px', color: 'var(--text-secondary)' }}>
+            {selectedBackupForRestore ? (
+              <div className="danger-panel" style={{ margin: "12px 0" }}>
+                <h4 style={{ color: "var(--danger)", marginBottom: 8 }}>Restore this backup?</h4>
+                <p className="lede">
                   You are about to restore system state from: <code>{selectedBackupForRestore.path || selectedBackupForRestore.filename}</code>.
                   This will overwrite active database records, memory files, and skills. A safety rollback copy (<code>state.db.bak</code>) will be saved automatically.
                 </p>
-                <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                <div className="actions" style={{ justifyContent: "flex-end", marginTop: 12 }}>
+                  <button className="btn btn-ghost" onClick={() => setSelectedBackupForRestore(null)}>Cancel</button>
                   <button
-                    onClick={() => setSelectedBackupForRestore(null)}
-                    style={{ padding: '6px 14px', background: 'transparent', border: '1px solid var(--border-glass)', borderRadius: '6px', color: 'white', cursor: 'pointer', fontSize: '12px' }}
-                  >
-                    Cancel
-                  </button>
-                  <button
+                    className="btn btn-danger"
                     disabled={restoringBackup}
                     onClick={() => handleConfirmRestore(selectedBackupForRestore.path || selectedBackupForRestore.filename)}
-                    style={{ padding: '6px 16px', background: '#ff4757', border: 'none', borderRadius: '6px', color: 'white', cursor: 'pointer', fontSize: '12px', fontWeight: '600' }}
                   >
-                    {restoringBackup ? 'Restoring System...' : 'Confirm System Restore'}
+                    {restoringBackup ? "Restoring System..." : "Confirm System Restore"}
                   </button>
                 </div>
               </div>
-            )}
+            ) : null}
 
-            {/* Backups List */}
             {loadingBackups ? (
-              <div style={{ color: 'var(--text-secondary)', padding: '12px 0', fontStyle: 'italic' }}>🌀 Loading available backups...</div>
+              <Spinner label="Loading available backups..." />
             ) : backups.length === 0 ? (
-              <div style={{ color: 'var(--text-secondary)', padding: '12px 0', fontStyle: 'italic' }}>📭 No backup archives created yet. Click "Create System Backup" above to generate a snapshot.</div>
+              <div className="lede">No backups yet.</div>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {backups.map(b => (
-                  <div
-                    key={b.filename}
-                    style={{
-                      padding: '10px 14px',
-                      background: 'rgba(255, 255, 255, 0.03)',
-                      border: '1px solid var(--border-glass)',
-                      borderRadius: '6px',
-                      display: 'flex',
-                      justify: 'space-between',
-                      alignItems: 'center',
-                      flexWrap: 'wrap',
-                      gap: '10px'
-                    }}
-                  >
-                    <div>
-                      <strong style={{ fontSize: '13px' }}>{b.filename}</strong>
-                      <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                        Created: {b.created_at} | Size: {(b.size_bytes / 1024).toFixed(1)} KB
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => setSelectedBackupForRestore(b)}
-                      style={{
-                        padding: '5px 12px',
-                        background: 'rgba(255, 71, 87, 0.15)',
-                        border: '1px solid rgba(255, 71, 87, 0.3)',
-                        borderRadius: '4px',
-                        color: '#ff6b6b',
-                        cursor: 'pointer',
-                        fontSize: '12px'
-                      }}
-                    >
-                      ↺ Restore
-                    </button>
+              backups.map((b) => (
+                <div key={b.filename} className="row-card">
+                  <div>
+                    <strong>{b.filename}</strong>
+                    <div className="lede">Created: {b.created_at} · Size: {formatBytes(b.size_bytes)}</div>
                   </div>
-                ))}
-              </div>
+                  <button className="btn btn-danger btn-sm" onClick={() => setSelectedBackupForRestore(b)}>Restore</button>
+                </div>
+              ))
             )}
 
-            {/* Custom Path Restore Input */}
-            <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid var(--border-glass)', display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Restore from custom file path:</span>
-              <input
-                type="text"
-                value={customBackupPath}
-                onChange={e => setCustomBackupPath(e.target.value)}
-                placeholder="d:/agent/.agent/backups/agent_backup_...zip"
-                style={{ flex: 1, minWidth: '220px', padding: '6px 12px', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-glass)', borderRadius: '6px', color: 'white', fontSize: '12px' }}
-              />
-              <button
-                disabled={!customBackupPath.trim()}
-                onClick={() => setSelectedBackupForRestore({ path: customBackupPath, filename: customBackupPath })}
-                style={{ padding: '6px 14px', background: 'rgba(255,71,87,0.2)', border: '1px solid rgba(255,71,87,0.4)', borderRadius: '6px', color: '#ff6b6b', cursor: 'pointer', fontSize: '12px', fontWeight: '600' }}
-              >
-                Inspect & Restore
-              </button>
+            <div className="form-grid" style={{ marginTop: 16, paddingTop: 12, borderTop: "1px solid var(--border-glass)" }}>
+              <label className="field" style={{ gridColumn: "1 / -1" }}>
+                Restore from custom file path
+                <div className="actions">
+                  <input
+                    value={customBackupPath}
+                    onChange={(e) => setCustomBackupPath(e.target.value)}
+                    placeholder="/path/to/agent_backup_....zip"
+                  />
+                  <button
+                    className="btn btn-danger"
+                    disabled={!customBackupPath.trim()}
+                    onClick={() => setSelectedBackupForRestore({ path: customBackupPath, filename: customBackupPath })}
+                  >
+                    Inspect & Restore
+                  </button>
+                </div>
+              </label>
             </div>
-          </div>
+          </section>
         </>
       )}
     </div>
   );
 }
 
-if (typeof window !== 'undefined') {
+if (typeof window !== "undefined") {
   window.OverviewCockpit = OverviewCockpit;
 }
-
-

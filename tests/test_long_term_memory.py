@@ -78,6 +78,9 @@ def test_end_to_end_memory_workflow(temp_env, monkeypatch):
     mem_path = temp_env["mem"]
 
     # Monkeypatch helpers to use temp_env
+    monkeypatch.setattr("src.db.DB_PATH", db_path)
+    monkeypatch.setattr("src.config.DB_PATH", db_path)
+    monkeypatch.setattr("src.config.MEMORY_PATH", mem_path)
     monkeypatch.setattr("src.harness.graph.search_facts_top_k", lambda query, k: search_facts_top_k(query, k, db_path=db_path))
     monkeypatch.setattr("src.harness.graph.search_episodes_fts", lambda query, limit: search_episodes_fts(query, limit, db_path=db_path))
     monkeypatch.setattr("src.harness.graph.match_procedural_skills", lambda query: match_procedural_skills(query, db_path=db_path))
