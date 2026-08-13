@@ -58,6 +58,32 @@ def test_t8_mcp_call_reached_after_approved_resume(tmp_path):
     assert client.calls == [("gmail_send", {"to": "a@example.com"})]
 
 
+def test_t8_gmail_draft_is_confirmation_recommended_not_blocked(tmp_path):
+    clear_mcp_provider_discovery_cache()
+    client = FakeMCPClient(
+        [
+            {
+                "name": "create_draft",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {"to": {"type": "array"}, "subject": {"type": "string"}, "body": {"type": "string"}},
+                    "required": ["to"],
+                },
+            }
+        ]
+    )
+    result = invoke_provider_tool(
+        provider_ids=("gmail",),
+        tool_hints=("draft", "create_draft"),
+        arguments={"to": "a@example.com", "subject": "hi", "body": "hello"},
+        config_path=_config(tmp_path),
+        client_factory=lambda _provider: client,
+        source=ToolCallerSource.CHAT,
+    )
+    assert result.status == MCPInvocationStatus.SUCCEEDED
+    assert client.calls == [("create_draft", {"to": ["a@example.com"], "subject": "hi", "body": "hello"})]
+
+
 def test_t8_mcp_read_call_reaches_provider_without_approval(tmp_path):
     clear_mcp_provider_discovery_cache()
     client = FakeMCPClient([{"name": "gmail_search", "inputSchema": {"type": "object", "required": ["query"]}}])

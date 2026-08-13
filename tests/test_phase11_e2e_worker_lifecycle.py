@@ -65,11 +65,14 @@ class SuccessRouter:
         return JobHandlerResult(True, {"handler": "phase11", "processed": False})
 
 
-def test_worker_does_not_auto_start_from_startup_api_or_chat_static_scan():
-    watched = ["src/startup.py", "src/api/server.py", "src/harness/graph.py"]
+def test_worker_does_not_auto_start_from_startup_or_chat_graph():
+    watched = ["src/startup.py", "src/harness/graph.py"]
     text = "\n".join(open(path, encoding="utf-8").read() for path in watched)
     assert "run_memory_worker_loop(" not in text
     assert "process_one_memory_job(" not in text
+    assert "start_memory_worker_runtime(" not in text
+    assert "enqueue_semantic_consolidation_job(" not in text
+    assert "maybe_enqueue_idle_semantic_consolidation(" not in text
 
 
 def test_process_one_memory_job_success_and_explicit_heartbeat(temp_db):

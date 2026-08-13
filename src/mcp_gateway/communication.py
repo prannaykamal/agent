@@ -2,6 +2,12 @@ from langchain_core.tools import tool
 
 from src.external_providers import telegram_bot_api, whatsapp_api
 from src.tools import mcp_invocation
+from src.tools.mcp_invocation import MCPInvocationStatus
+
+
+def _gmail_message_args(to: str, subject: str, body: str):
+    recipients = [to] if isinstance(to, str) else to
+    return {"to": recipients, "subject": subject, "body": body}
 
 
 def _invoke(provider_id, hints, args, label):
@@ -15,7 +21,7 @@ def _invoke(provider_id, hints, args, label):
 
 @tool
 def email_read(limit: int = 5) -> str:
-    """Reads recent Gmail messages through Gmail MCP only."""
+    """Reads recent Gmail Inbox messages through Gmail MCP. Use email_search for Sent or other queries."""
     return _invoke("gmail", ("read", "list", "messages"), {"limit": limit}, "Gmail MCP")
 
 
@@ -27,20 +33,44 @@ def email_search(query: str) -> str:
 
 @tool
 def email_draft(to: str, subject: str, body: str) -> str:
-    """Creates a Gmail draft through Gmail MCP only, if provider exposes drafting."""
-    return _invoke("gmail", ("draft", "create_draft"), {"to": to, "subject": subject, "body": body}, "Gmail MCP")
+    """Create a Gmail draft through the connected Gmail MCP provider.
+
+    Always call this tool when the user asks to draft, compose, or write an email.
+    Do not give Gmail website instructions instead of calling this tool.
+    Arguments: to (recipient email), subject, body.
+    """
+    return _invoke("gmail", ("draft", "create_draft"), _gmail_message_args(to, subject, body), "Gmail MCP")
 
 
 @tool
 def email_send(to: str, subject: str, body: str) -> str:
-    """Sends Gmail through Gmail MCP only. Requires HITL approval by policy."""
-    return _invoke("gmail", ("send", "send_message"), {"to": to, "subject": subject, "body": body}, "Gmail MCP")
+    """Send Gmail through Gmail MCP after HITL approval.
+
+    Use this only when the user explicitly asks to send. For drafts, call email_draft instead.
+    Falls back to creating a draft if send is not exposed by the provider.
+    """
+    args = _gmail_message_args(to, subject, body)
+    result = mcp_invocation.invoke_provider_tool(
+        provider_ids=("gmail",),
+        tool_hints=("send", "send_message"),
+        arguments=args,
+    )
+    if result.status != MCPInvocationStatus.TOOL_UNAVAILABLE:
+        return result.to_text("Gmail MCP")
+    draft = mcp_invocation.invoke_provider_tool(
+        provider_ids=("gmail",),
+        tool_hints=("draft", "create_draft"),
+        arguments=args,
+    )
+    if draft.ok:
+        return f"{draft.to_text('Gmail MCP')} Gmail MCP created a draft because send is not exposed by the configured provider."
+    return draft.to_text("Gmail MCP")
 
 
 @tool
 def whatsapp_read(limit: int = 5) -> str:
-    """Reports WhatsApp API direct-provider status; message send uses direct API after HITL approval."""
-    return whatsapp_api.read_status(limit=limit).to_text("WhatsApp API")
+    """Reads recent WhatsApp messages from the local inbox (webhook-backed Cloud API)."""
+    return whatsapp_api.read_messages(limit=limit).to_text("WhatsApp API")
 
 
 @tool
@@ -51,8 +81,8 @@ def whatsapp_send(recipient: str, message: str) -> str:
 
 @tool
 def telegram_read(limit: int = 5) -> str:
-    """Reports Telegram Bot API direct-provider status; sends use direct API after HITL approval."""
-    return telegram_bot_api.read_status(limit=limit).to_text("Telegram Bot API")
+    """Reads recent Telegram bot updates via getUpdates and the local message store."""
+    return telegram_bot_api.read_messages(limit=limit).to_text("Telegram Bot API")
 
 
 @tool

@@ -5,15 +5,13 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from src.mcp_gateway.protocol.client import MCPClient
-from src.mcp_gateway.protocol.transports.sse import SSEMCPTransport
-from src.mcp_gateway.protocol.transports.stdio import StdioMCPTransport
+from src.mcp_gateway.protocol.factory import build_mcp_client
 from src.tools.mcp_provider_config import (
     MCPDiscoveryStatus,
     MCPProviderConfig,
     MCPTransportType,
     TARGET_MCP_PROVIDER_DEFAULTS,
     load_target_mcp_provider_configs,
-    redact_observability_text,
 )
 from src.tools.mcp_schema import normalize_mcp_tool_metadata
 from src.tools.registry_types import ToolMetadata
@@ -45,6 +43,10 @@ def _provider_cache_key(provider: MCPProviderConfig) -> str:
     """Bind cache entries to config identity so a later config cannot reuse stale discovery."""
     env_blob = repr(sorted((provider.env or {}).items()))
     env_fingerprint = hashlib.sha256(env_blob.encode("utf-8")).hexdigest()[:16]
+    headers_blob = repr(sorted((provider.headers or {}).items()))
+    headers_fingerprint = hashlib.sha256(headers_blob.encode("utf-8")).hexdigest()[:16]
+    oauth_blob = repr(sorted((provider.oauth or {}).items()))
+    oauth_fingerprint = hashlib.sha256(oauth_blob.encode("utf-8")).hexdigest()[:16]
     return "|".join(
         (
             provider.provider_id,
@@ -54,6 +56,8 @@ def _provider_cache_key(provider: MCPProviderConfig) -> str:
             ",".join(provider.args or []),
             str(provider.url or ""),
             env_fingerprint,
+            headers_fingerprint,
+            oauth_fingerprint,
         )
     )
 
@@ -67,22 +71,50 @@ def _cached_discovery(provider: MCPProviderConfig) -> Optional[MCPProviderDiscov
     return _DISCOVERY_CACHE.get(_provider_cache_key(provider))
 
 
+_DISCOVERABLE_TRANSPORTS = {
+    MCPTransportType.STDIO,
+    MCPTransportType.SSE,
+    MCPTransportType.HTTP,
+}
+
+
+def _provider_headers(provider: MCPProviderConfig) -> Dict[str, str]:
+    headers = dict(provider.headers or {})
+    token = (provider.oauth or {}).get("accessToken") or (provider.oauth or {}).get("access_token")
+    if token and "Authorization" not in headers:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def _provider_stdio_env(provider: MCPProviderConfig) -> Dict[str, str]:
+    from src.config import BASE_DIR
+    from src.mcp_gateway.protocol.oauth import OAUTH_GOOGLE_PROVIDERS, stdio_env_with_oauth
+
+    if provider.provider_id in OAUTH_GOOGLE_PROVIDERS:
+        return stdio_env_with_oauth(provider.env, provider.oauth, project_root=BASE_DIR)
+    return dict(provider.env or {})
+
+
 def _build_mcp_client(provider: MCPProviderConfig) -> MCPClient:
+    from src.config import BASE_DIR
+    from src.mcp_gateway.protocol.oauth import OAUTH_GOOGLE_PROVIDERS, ensure_fresh_access_token
+
+    provider = ensure_fresh_access_token(provider)
+    cwd = None
+    env = provider.env or None
     if provider.transport_type == MCPTransportType.STDIO:
-        if not provider.command:
-            raise RuntimeError("Configured stdio MCP provider is missing command.")
-        return MCPClient(
-            StdioMCPTransport(
-                command=provider.command,
-                args=provider.args,
-                env=provider.env or None,
-            )
-        )
-    if provider.transport_type == MCPTransportType.SSE:
-        if not provider.url:
-            raise RuntimeError("Configured SSE MCP provider is missing url.")
-        return MCPClient(SSEMCPTransport(url=provider.url))
-    raise RuntimeError(f"Unsupported MCP transport for automatic discovery: {provider.transport_type.value}")
+        env = _provider_stdio_env(provider)
+        if provider.provider_id in OAUTH_GOOGLE_PROVIDERS:
+            cwd = str(BASE_DIR)
+    return build_mcp_client(
+        transport=provider.transport_type.value,
+        command=provider.command,
+        args=provider.args,
+        env=env,
+        cwd=cwd,
+        url=provider.url,
+        headers=_provider_headers(provider) or None,
+    )
 
 
 def discover_mcp_provider(
@@ -94,7 +126,7 @@ def discover_mcp_provider(
     if not provider.enabled or provider.discovery_status == MCPDiscoveryStatus.NOT_CONFIGURED:
         return MCPProviderDiscoveryResult(provider=provider, tools=[])
 
-    if provider.transport_type not in {MCPTransportType.STDIO, MCPTransportType.SSE} and client_factory is None:
+    if provider.transport_type not in _DISCOVERABLE_TRANSPORTS and client_factory is None:
         discovered = provider.with_discovery(
             discovery_status=MCPDiscoveryStatus.UNSUPPORTED_TRANSPORT,
             last_error=f"Transport {provider.transport_type.value} requires provider-managed validation.",

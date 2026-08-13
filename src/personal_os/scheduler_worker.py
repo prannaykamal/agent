@@ -58,7 +58,10 @@ def _invoke_direct_tool(schedule: ToolScheduleRecord) -> str:
     tool = tool_map.get(schedule.target_tool_id)
     if tool is None:
         raise KeyError(f"Scheduled target tool '{schedule.target_tool_id}' is not available")
-    return str(tool.invoke(schedule.target_payload or {}))
+    payload = dict(schedule.target_payload or {})
+    payload.pop("legacy_task_payload", None)
+    payload.pop("_tool_call_id", None)
+    return str(tool.invoke(payload))
 
 
 def _process_run(schedule: ToolScheduleRecord, run: ToolScheduleRunRecord, *, db_path: Optional[Path] = None, now: Any = None) -> SchedulerRunResult:

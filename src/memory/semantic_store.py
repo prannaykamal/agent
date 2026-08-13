@@ -91,12 +91,9 @@ class SemanticFactStore:
         validated = validate_semantic_fact_write(fact)
         from src.memory.embeddings import (
             SEMANTIC_FACT_OWNER_TYPE,
-            EmbeddingInput,
-            canonical_semantic_fact_text,
         )
         from src.memory.semantic_dedup import (
             SemanticDedupInput,
-            SemanticDedupDecision,
             SemanticDedupService,
         )
 
@@ -252,6 +249,9 @@ class SemanticFactStore:
                 (category, fact_text, source, str(confidence)),
             )
             rowid = int(cursor.lastrowid)
+            from src.memory.entity_index import EntityIndexStore
+
+            EntityIndexStore(db_path=self.db_path).index_fact(rowid, fact_text, conn=conn)
             conn.commit()
         except Exception:
             conn.rollback()
@@ -282,6 +282,9 @@ class SemanticFactStore:
                 """,
                 (category, fact_text, source, str(confidence), int(fact_id)),
             )
+            from src.memory.entity_index import EntityIndexStore
+
+            EntityIndexStore(db_path=self.db_path).index_fact(int(fact_id), fact_text, conn=conn)
             conn.commit()
         except Exception:
             conn.rollback()
@@ -296,6 +299,9 @@ class SemanticFactStore:
     def _delete_fact(self, fact_id: int) -> None:
         conn = get_connection(self.db_path)
         try:
+            from src.memory.entity_index import EntityIndexStore
+
+            EntityIndexStore(db_path=self.db_path).delete_fact(int(fact_id), conn=conn)
             conn.execute("DELETE FROM facts WHERE rowid = ?", (int(fact_id),))
             conn.commit()
         except Exception:

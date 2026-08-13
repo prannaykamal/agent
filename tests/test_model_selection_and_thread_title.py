@@ -25,7 +25,7 @@ def test_generate_thread_title_helper():
     assert len(title) > 0
     assert title != "New Chat"
 
-def test_chat_first_turn_auto_renames_thread(monkeypatch):
+def test_chat_first_turn_auto_renames_thread():
     """Verifies first message in a thread automatically updates session_id to a concise topic title."""
     sess_id = "new_thread_first_turn_test_123"
 

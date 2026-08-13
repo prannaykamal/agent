@@ -38,18 +38,7 @@ export default function ToolsOpsCockpit() {
     setLoading(true);
     setError(null);
     try {
-      const [
-        statusData,
-        overviewData,
-        providersData,
-        externalProvidersData,
-        providerConfigsData,
-        personalStatusData,
-        personalActionsData,
-        personalAuditData,
-        schedulesData,
-        runsData,
-      ] = await Promise.all([
+      const results = await Promise.allSettled([
         api.get("/api/tools/status"),
         api.get("/api/tools/observability/overview"),
         api.get("/api/tools/mcp/providers"),
@@ -61,16 +50,33 @@ export default function ToolsOpsCockpit() {
         api.get("/api/tools/cron/schedules"),
         api.get("/api/tools/cron/runs?limit=20"),
       ]);
+      const value = (index) => (results[index].status === "fulfilled" ? results[index].value : null);
+      const statusData = value(0);
+      const overviewData = value(1);
+      const providersData = value(2);
+      const externalProvidersData = value(3);
+      const providerConfigsData = value(4);
+      const personalStatusData = value(5);
+      const personalActionsData = value(6);
+      const personalAuditData = value(7);
+      const schedulesData = value(8);
+      const runsData = value(9);
       setToolsStatus(statusData);
       setOverview(overviewData);
-      setProviders((providersData.providers || []).map((p) => ({ ...p, provider_layer: "mcp" })));
-      setExternalProviders((externalProvidersData.providers || []).map((p) => ({ ...p, provider_layer: "external_api" })));
-      setProviderConfigs(providerConfigsData.providers || []);
+      setProviders((providersData?.providers || []).map((p) => ({ ...p, provider_layer: "mcp" })));
+      setExternalProviders((externalProvidersData?.providers || []).map((p) => ({ ...p, provider_layer: "external_api" })));
+      setProviderConfigs(providerConfigsData?.providers || []);
       setPersonalStatus(personalStatusData);
-      setPersonalActions(personalActionsData.actions || []);
-      setPersonalAudit(personalAuditData.audit_events || []);
-      setCronSchedules(schedulesData.schedules || []);
-      setCronRuns(runsData.runs || []);
+      setPersonalActions(personalActionsData?.actions || []);
+      setPersonalAudit(personalAuditData?.audit_events || []);
+      setCronSchedules(schedulesData?.schedules || []);
+      setCronRuns(runsData?.runs || []);
+      const failed = results.filter((item) => item.status === "rejected").length;
+      if (failed === results.length) {
+        setError("Failed to load Tools Ops");
+      } else if (failed) {
+        setError(`${failed} Tools Ops panels could not load.`);
+      }
     } catch (e) {
       setError(e.message || "Failed to load Tools Ops");
     } finally {
@@ -112,6 +118,28 @@ export default function ToolsOpsCockpit() {
       setSelectedProviderDetail({ ...data, provider_layer: providerLayer });
     } catch (e) {
       setError(`Failed to inspect provider '${providerId}': ${e.message}`);
+    }
+  };
+
+  const handleGoogleSignIn = async (providerId) => {
+    setRefreshingProviderId(providerId);
+    setError(null);
+    setNotice(null);
+    try {
+      const data = await api.get(`/api/tools/mcp/providers/${providerId}/oauth/start`);
+      const redirectUri = data.redirect_uri || "http://127.0.0.1:8000/api/tools/mcp/oauth/callback";
+      const confirmed = window.confirm(
+        `Sign in to Google for ${providerId}.\n\nIf Google shows redirect_uri_mismatch, add this URI to the OAuth client:\n${redirectUri}\n\nContinue?`
+      );
+      if (confirmed && data.authorization_url) {
+        window.location.assign(data.authorization_url);
+        return;
+      }
+      setNotice(`Sign-in cancelled. Redirect URI: ${redirectUri}`);
+    } catch (e) {
+      setError(`Google sign-in failed for '${providerId}': ${e.message}`);
+    } finally {
+      setRefreshingProviderId(null);
     }
   };
 
@@ -243,7 +271,7 @@ export default function ToolsOpsCockpit() {
       {notice ? <Notice kind="ok">{notice}</Notice> : null}
       {error ? <Notice kind="error">{error}</Notice> : null}
 
-      {loading ? <Spinner label="Loading tools observability & provider registry..." /> : (
+      {loading && !toolsStatus && !overview ? <Spinner label="Loading tools observability & provider registry..." /> : (
         <>
           <div className="metric-grid">
             <div className="metric-card">
@@ -283,6 +311,7 @@ export default function ToolsOpsCockpit() {
                 <div>Credential Status: <Badge value={selectedProviderDetail.credential_status} /></div>
                 <div>Discovery Status: <Badge value={selectedProviderDetail.discovery_status} /></div>
                 <div>Enabled: <strong>{selectedProviderDetail.enabled ? "Yes" : "No"}</strong></div>
+                <div>Google signed in: <strong>{selectedProviderDetail.oauth_signed_in ? "Yes" : "No"}</strong></div>
                 <div>Tool Count: <strong>{selectedProviderDetail.tool_count || 0}</strong></div>
               </div>
               {selectedProviderDetail.last_error ? <Notice kind="error"><strong>Last Error:</strong> {selectedProviderDetail.last_error}</Notice> : null}
@@ -298,14 +327,21 @@ export default function ToolsOpsCockpit() {
               ) : null}
               <div className="actions" style={{ marginTop: 14 }}>
                 <span className="lede">Secrets and raw credentials are redacted in status inspection.</span>
-                {selectedProviderDetail.provider_layer === "external_api" ? (
+                  {selectedProviderDetail.provider_layer === "external_api" ? (
                   <button className="btn btn-primary btn-sm" disabled={refreshingProviderId === selectedProviderDetail.provider_id} onClick={() => handleValidateProviderStatus(selectedProviderDetail.provider_id)}>
                     {refreshingProviderId === selectedProviderDetail.provider_id ? "Validating..." : "Validate Status"}
                   </button>
                 ) : (
-                  <button className="btn btn-primary btn-sm" disabled={refreshingProviderId === selectedProviderDetail.provider_id} onClick={() => handleSafeDiscoverRefresh(selectedProviderDetail.provider_id)}>
-                    {refreshingProviderId === selectedProviderDetail.provider_id ? "Refreshing..." : "Refresh Metadata"}
-                  </button>
+                  <>
+                    {["gmail", "google_calendar"].includes(selectedProviderDetail.provider_id) ? (
+                      <button className="btn btn-ok btn-sm" disabled={refreshingProviderId === selectedProviderDetail.provider_id} onClick={() => handleGoogleSignIn(selectedProviderDetail.provider_id)}>
+                        {selectedProviderDetail.oauth_signed_in ? "Re-sign in with Google" : "Sign in with Google"}
+                      </button>
+                    ) : null}
+                    <button className="btn btn-primary btn-sm" disabled={refreshingProviderId === selectedProviderDetail.provider_id} onClick={() => handleSafeDiscoverRefresh(selectedProviderDetail.provider_id)}>
+                      {refreshingProviderId === selectedProviderDetail.provider_id ? "Refreshing..." : "Refresh Metadata"}
+                    </button>
+                  </>
                 )}
               </div>
             </section>
@@ -325,6 +361,7 @@ export default function ToolsOpsCockpit() {
                 <div className="actions">
                   <Badge value={provider.availability_status} />
                   {provider.discovery_status ? <Badge value={provider.discovery_status} /> : null}
+                  {provider.oauth_signed_in ? <Badge value="signed in" /> : null}
                   <span className="lede">{provider.tool_count ?? (provider.capabilities?.length || 0)} tools</span>
                   <button className="btn btn-ghost btn-sm" onClick={() => handleInspectProvider(provider.provider_id, provider.provider_layer)}>Inspect</button>
                   {provider.provider_layer === "external_api" ? (
@@ -332,9 +369,16 @@ export default function ToolsOpsCockpit() {
                       {refreshingProviderId === provider.provider_id ? "Validating..." : "Validate Status"}
                     </button>
                   ) : (
-                    <button className="btn btn-primary btn-sm" disabled={refreshingProviderId === provider.provider_id} onClick={() => handleSafeDiscoverRefresh(provider.provider_id)}>
-                      {refreshingProviderId === provider.provider_id ? "Refreshing..." : "Refresh Metadata"}
-                    </button>
+                    <>
+                      {["gmail", "google_calendar"].includes(provider.provider_id) ? (
+                        <button className="btn btn-ok btn-sm" disabled={refreshingProviderId === provider.provider_id} onClick={() => handleGoogleSignIn(provider.provider_id)}>
+                          {provider.oauth_signed_in ? "Re-sign in" : "Sign in with Google"}
+                        </button>
+                      ) : null}
+                      <button className="btn btn-primary btn-sm" disabled={refreshingProviderId === provider.provider_id} onClick={() => handleSafeDiscoverRefresh(provider.provider_id)}>
+                        {refreshingProviderId === provider.provider_id ? "Refreshing..." : "Refresh Metadata"}
+                      </button>
+                    </>
                   )}
                 </div>
               </div>

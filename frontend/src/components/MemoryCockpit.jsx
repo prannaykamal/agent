@@ -29,8 +29,29 @@ export default function MemoryCockpit({ onRefresh }) {
     setError(null);
     try {
       const url = q ? `/api/memory/full?query=${encodeURIComponent(q)}` : "/api/memory/full";
-      const data = await api.get(url);
-      setMemoryData(data);
+      const [fullRes, structuredRes] = await Promise.allSettled([
+        api.get(url),
+        api.get("/api/data/table/structured_episodes?limit=50"),
+      ]);
+      if (fullRes.status !== "fulfilled") {
+        throw fullRes.reason || new Error("Failed to load memory data");
+      }
+      const data = fullRes.value;
+      let structuredRows = structuredRes.status === "fulfilled" ? (structuredRes.value.rows || []) : [];
+      if (q.trim()) {
+        const needle = q.trim().toLowerCase();
+        structuredRows = structuredRows.filter((row) => JSON.stringify(row).toLowerCase().includes(needle));
+      }
+      const structuredEpisodes = structuredRows.map((row) => ({
+        id: row.id,
+        session_id: row.session_id,
+        timestamp: row.created_at || row.timestamp,
+        content: row.summary || row.title || row.content,
+        tool_calls: JSON.stringify({ title: row.title || "", summary: row.summary || "" }),
+      }));
+      const seen = new Set(structuredEpisodes.map((item) => `${item.session_id}:${item.content}`));
+      const legacy = (data.episodes || []).filter((item) => !seen.has(`${item.session_id}:${item.content}`));
+      setMemoryData({ ...data, episodes: [...structuredEpisodes, ...legacy] });
     } catch (e) {
       setError(e.message || "Failed to load memory data");
     } finally {
@@ -156,7 +177,7 @@ export default function MemoryCockpit({ onRefresh }) {
         ))}
       </div>
 
-      {loading ? (
+      {loading && !memoryData ? (
         <Spinner label="Loading memory data..." />
       ) : (
         <>
@@ -184,8 +205,8 @@ export default function MemoryCockpit({ onRefresh }) {
                   <div className="lede">No semantic facts registered yet.</div>
                 ) : (
                   memoryData.facts.map((f, i) => (
-                    <div key={i} className="row-card">
-                      <span><Badge value={f.category} /> {f.fact_text}</span>
+                    <div key={f.id || i} className="row-card">
+                      <span><Badge value={f.category || "fact"} /> {f.fact_text || f.fact || f.content || ""}</span>
                     </div>
                   ))
                 )}
@@ -260,14 +281,25 @@ export default function MemoryCockpit({ onRefresh }) {
               {(!memoryData?.episodes || memoryData.episodes.length === 0) ? (
                 <div className="lede">No past episodes recorded.</div>
               ) : (
-                memoryData.episodes.map((ep, i) => (
-                  <div key={i} className="row-card">
-                    <div>
-                      <strong>{ep.timestamp}</strong> — <code>{ep.session_id}</code>
-                      <div className="lede">{ep.content}</div>
+                memoryData.episodes.map((ep, i) => {
+                  let extra = {};
+                  try {
+                    extra = typeof ep.tool_calls === "string" ? JSON.parse(ep.tool_calls) : (ep.tool_calls || {});
+                  } catch {
+                    extra = {};
+                  }
+                  const title = extra.title || "";
+                  const summary = extra.summary || ep.content || "";
+                  return (
+                    <div key={ep.id || i} className="row-card">
+                      <div>
+                        <strong>{title || ep.timestamp}</strong> — <code>{ep.session_id}</code>
+                        {title ? <div className="lede">{ep.timestamp}</div> : null}
+                        <div className="lede">{summary}</div>
+                      </div>
                     </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </section>
           )}

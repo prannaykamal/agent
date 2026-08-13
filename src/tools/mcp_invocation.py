@@ -4,15 +4,13 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
-from src.mcp_gateway.protocol.client import MCPClient
-from src.mcp_gateway.protocol.transports.sse import SSEMCPTransport
-from src.mcp_gateway.protocol.transports.stdio import StdioMCPTransport
-from src.tools.mcp_provider_config import MCPDiscoveryStatus, MCPProviderConfig, MCPTransportType, redact_observability_text
+from src.tools.mcp_provider_config import MCPDiscoveryStatus, redact_observability_text
 from src.tools.mcp_provider_registry import (
     MCPClientFactory,
+    _build_mcp_client,
     get_mcp_provider_results,
 )
-from src.tools.policy import ToolCallerSource, ToolPolicyDecisionType, evaluate_tool_policy
+from src.tools.policy import ToolCallerSource, ToolPolicyDecisionType, current_tool_policy_context, evaluate_tool_policy
 from src.tools.registry_types import ToolMetadata
 
 
@@ -27,14 +25,6 @@ class MCPInvocationStatus(str, Enum):
     INVOCATION_FAILED_RETRYABLE = "INVOCATION_FAILED_RETRYABLE"
     INVOCATION_FAILED_TERMINAL = "INVOCATION_FAILED_TERMINAL"
     INVOCATION_FAILED = "INVOCATION_FAILED"
-
-
-@dataclass(frozen=True)
-class MCPInvocationRequest:
-    provider_ids: Sequence[str]
-    tool_hints: Sequence[str]
-    arguments: Dict[str, Any] = field(default_factory=dict)
-    config_path: Optional[Path] = None
 
 
 @dataclass(frozen=True)
@@ -68,18 +58,6 @@ class MCPInvocationResult:
         return f"[{label} Invocation Failed]: {self.error or 'MCP provider invocation failed.'}"
 
 
-def _build_invocation_client(provider: MCPProviderConfig) -> MCPClient:
-    if provider.transport_type == MCPTransportType.STDIO:
-        if not provider.command:
-            raise RuntimeError("Configured stdio MCP provider is missing command.")
-        return MCPClient(StdioMCPTransport(command=provider.command, args=provider.args, env=provider.env or None))
-    if provider.transport_type == MCPTransportType.SSE:
-        if not provider.url:
-            raise RuntimeError("Configured SSE MCP provider is missing url.")
-        return MCPClient(SSEMCPTransport(url=provider.url))
-    raise RuntimeError(f"Unsupported MCP transport for invocation: {provider.transport_type.value}")
-
-
 def _matches_tool_hint(raw_tool_name: str, hints: Sequence[str]) -> bool:
     name = str(raw_tool_name or "").lower()
     normalized = name.replace("-", "_")
@@ -103,6 +81,19 @@ def _validate_arguments(input_schema: Any, arguments: Dict[str, Any]) -> Optiona
     return None
 
 
+def _coerce_arguments(input_schema: Any, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    coerced = dict(arguments)
+    properties = input_schema.get("properties") if isinstance(input_schema, dict) else None
+    if not isinstance(properties, dict):
+        return coerced
+    for key, spec in properties.items():
+        if key not in coerced:
+            continue
+        if isinstance(spec, dict) and spec.get("type") == "array" and not isinstance(coerced[key], list):
+            coerced[key] = [coerced[key]]
+    return coerced
+
+
 def _redacted_audit_metadata(provider_id: str, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "provider_id": provider_id,
@@ -115,6 +106,19 @@ def _redacted_audit_metadata(provider_id: str, tool_name: str, arguments: Dict[s
 
 def _raw_tool_name(metadata: ToolMetadata) -> str:
     return str(metadata.observability_metadata.get("raw_tool_name") or metadata.legacy_name)
+
+
+def _effective_policy_args(
+    source: ToolCallerSource | str,
+    approval_context: Optional[Dict[str, Any]],
+) -> tuple[ToolCallerSource | str, Optional[Dict[str, Any]]]:
+    inherited = current_tool_policy_context()
+    if approval_context is None:
+        approval_context = inherited.get("approval_context")
+    inherited_source = inherited.get("source")
+    if inherited_source is not None and source == ToolCallerSource.API:
+        source = inherited_source
+    return source, approval_context
 
 
 def _policy_failure_result(provider_id: str, tool_name: str, decision: Any) -> MCPInvocationResult:
@@ -144,6 +148,7 @@ def invoke_mcp_tool(
     approval_context: Optional[Dict[str, Any]] = None,
     metadata: Optional[ToolMetadata] = None,
 ) -> MCPInvocationResult:
+    source, approval_context = _effective_policy_args(source, approval_context)
     client = None
     try:
         provider_results = get_mcp_provider_results(config_path=config_path, refresh=True, client_factory=client_factory)
@@ -160,6 +165,7 @@ def invoke_mcp_tool(
             None,
         )
         if metadata is not None:
+            arguments = _coerce_arguments(metadata.input_schema, arguments)
             validation_error = _validate_arguments(metadata.input_schema, arguments)
             if validation_error:
                 return MCPInvocationResult(
@@ -180,7 +186,7 @@ def invoke_mcp_tool(
         else:
             return MCPInvocationResult(status=MCPInvocationStatus.TOOL_UNAVAILABLE, provider_id=provider_id, tool_name=tool_name)
 
-        client = client_factory(provider_result.provider) if client_factory else _build_invocation_client(provider_result.provider)
+        client = client_factory(provider_result.provider) if client_factory else _build_mcp_client(provider_result.provider)
         content = client.call_tool(name=tool_name, arguments=arguments)
         return MCPInvocationResult(
             status=MCPInvocationStatus.SUCCEEDED,
@@ -218,6 +224,7 @@ def invoke_provider_tool(
     source: ToolCallerSource | str = ToolCallerSource.API,
     approval_context: Optional[Dict[str, Any]] = None,
 ) -> MCPInvocationResult:
+    source, approval_context = _effective_policy_args(source, approval_context)
     results = get_mcp_provider_results(config_path=config_path, refresh=True, client_factory=client_factory)
     for provider_id in provider_ids:
         provider_result = next((result for result in results if result.provider.provider_id == provider_id), None)
@@ -227,7 +234,8 @@ def invoke_provider_tool(
             raw_tool_name = _raw_tool_name(metadata)
             if not _matches_tool_hint(raw_tool_name, tool_hints):
                 continue
-            validation_error = _validate_arguments(metadata.input_schema, arguments)
+            call_args = _coerce_arguments(metadata.input_schema, arguments)
+            validation_error = _validate_arguments(metadata.input_schema, call_args)
             if validation_error:
                 return MCPInvocationResult(
                     status=MCPInvocationStatus.VALIDATION_ERROR,
@@ -237,7 +245,7 @@ def invoke_provider_tool(
                 )
             policy = evaluate_tool_policy(
                 metadata.legacy_name,
-                arguments,
+                call_args,
                 source=source,
                 approval_context=approval_context,
                 metadata=metadata,
@@ -247,7 +255,7 @@ def invoke_provider_tool(
             return invoke_mcp_tool(
                 provider_id,
                 raw_tool_name,
-                arguments,
+                call_args,
                 config_path=config_path,
                 client_factory=client_factory,
                 source=source,

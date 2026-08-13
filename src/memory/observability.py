@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import json
-import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from langchain_core.messages import HumanMessage
 
@@ -92,6 +91,7 @@ REQUIRED_MEMORY_TABLES = (
     "structured_episodes",
     "pending_fact_candidates",
     "semantic_embeddings",
+    "memory_entities",
     "semantic_dedup_events",
     "consolidation_runs",
     "skill_candidates",

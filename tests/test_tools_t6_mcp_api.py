@@ -171,8 +171,8 @@ def test_t6_live_mcp_bridge_skips_stale_whatsapp_telegram_config(tmp_path, monke
         def list_tools(self):
             return []
 
-    monkeypatch.setattr("src.mcp_gateway.mcp_bridge.StdioMCPTransport", FakeTransport)
-    monkeypatch.setattr("src.mcp_gateway.mcp_bridge.MCPClient", FakeClient)
+    monkeypatch.setattr("src.mcp_gateway.protocol.factory.StdioMCPTransport", FakeTransport)
+    monkeypatch.setattr("src.mcp_gateway.protocol.factory.MCPClient", FakeClient)
 
     assert load_live_mcp_tools(config_path) == []
     assert attempts == ["gmail-cmd"]
@@ -185,7 +185,6 @@ def test_t6_direct_api_tools_are_not_in_mcp_tools_bucket(monkeypatch):
     monkeypatch.setenv("WHATSAPP_API_TOKEN", "fake-whatsapp-token")
     monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "phone-id")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-telegram-token")
-    monkeypatch.setattr("src.mcp_gateway.registry.load_live_mcp_tools", lambda: [])
 
     response = client.get("/api/tools")
 
@@ -437,8 +436,8 @@ def test_t6_live_mcp_bridge_redacts_marker_free_configured_secret_in_warning(tmp
         def list_tools(self):
             raise RuntimeError(f"bridge echoed {raw_secret}")
 
-    monkeypatch.setattr("src.mcp_gateway.mcp_bridge.StdioMCPTransport", FakeTransport)
-    monkeypatch.setattr("src.mcp_gateway.mcp_bridge.MCPClient", FakeClient)
+    monkeypatch.setattr("src.mcp_gateway.protocol.factory.StdioMCPTransport", FakeTransport)
+    monkeypatch.setattr("src.mcp_gateway.protocol.factory.MCPClient", FakeClient)
 
     assert load_live_mcp_tools(config_path) == []
     captured = capsys.readouterr()

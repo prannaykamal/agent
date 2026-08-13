@@ -56,9 +56,3 @@ class MemoryJobRouter:
             )
 
         return handler.handle(job=job, payload=payload)
-
-
-def resolve_memory_job_secondary_route(payload: Mapping[str, Any]):
-    from src.harness.llm_router import resolve_secondary_from_job_payload
-
-    return resolve_secondary_from_job_payload(payload)

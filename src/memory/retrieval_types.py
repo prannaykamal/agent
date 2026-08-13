@@ -45,6 +45,7 @@ class RetrievalRequest:
     provider: str = "openai"
     model_name: str = "gpt-4o-mini"
     include_debug: bool = False
+    task_type: str = "broad_memory"
 
     def __post_init__(self) -> None:
         kinds = tuple(str(kind) for kind in self.memory_kinds)
@@ -59,6 +60,7 @@ class RetrievalRequest:
         object.__setattr__(self, "token_budget", budget)
         object.__setattr__(self, "provider", _clean_text(self.provider) or "openai")
         object.__setattr__(self, "model_name", _clean_text(self.model_name) or "gpt-4o-mini")
+        object.__setattr__(self, "task_type", _clean_text(self.task_type) or "broad_memory")
 
 
 @dataclass(frozen=True)

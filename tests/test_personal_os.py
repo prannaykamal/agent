@@ -40,6 +40,29 @@ def test_scheduling_and_health_tools(temp_db):
     hb_res = heartbeat.invoke({})
     assert "[Personal OS Heartbeat OK]" in hb_res
 
+
+def test_schedule_job_runs_create_task_for_reminder_payload(temp_db):
+    from src.personal_os.scheduler_service import resolve_schedule_target
+    from src.background_worker import process_due_scheduled_jobs
+
+    tool, payload = resolve_schedule_target("Daily briefing")
+    assert tool == "create_task"
+    assert payload["title"] == "Daily briefing"
+
+    json_tool, json_payload = resolve_schedule_target(
+        '{"tool": "email_send", "args": {"to": "a@example.com", "subject": "Hi", "body": "Hello"}}'
+    )
+    assert json_tool == "email_send"
+    assert json_payload["to"] == "a@example.com"
+
+    sched_res = schedule_job.invoke({"cron_or_timestamp": "2026-01-01 10:00", "task_payload": "Daily briefing"})
+    assert "targeting create_task" in sched_res
+    processed = process_due_scheduled_jobs(temp_db)
+    assert processed
+    assert processed[0]["status"] == "COMPLETED"
+    listed = list_tasks.invoke({"status_filter": "ALL"})
+    assert "Daily briefing" in listed
+
 def test_concurrency_tools(temp_db):
     lock_res1 = lock_resource.invoke({"resource_uri": "file:///d:/agent/state.db"})
     assert "locked successfully" in lock_res1

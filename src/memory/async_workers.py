@@ -1,4 +1,3 @@
-from typing import Optional, Dict, Any
 from src.harness.models import get_secondary_llm
 from src.memory.semantic import (
     add_semantic_fact,

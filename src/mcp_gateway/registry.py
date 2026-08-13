@@ -63,11 +63,20 @@ _PROVIDER_FOR_TOOL: Dict[str, str] = {
 }
 
 
+def _mcp_provider_is_bindable(item: Dict[str, Any]) -> bool:
+    if item.get("availability_status") == "available":
+        return True
+    # Enabled configured providers must be bindable before Tools Ops Discover.
+    # Invocation refreshes tools/list. Hiding wrappers makes chat invent
+    # manual Gmail/Calendar steps instead of calling email_draft.
+    return bool(item.get("enabled") and item.get("configured"))
+
+
 def _available_provider_ids() -> set[str]:
     from src.tools.mcp_provider_registry import get_mcp_provider_statuses
 
     statuses = get_mcp_provider_statuses(include_config=False)
-    available = {item["provider_id"] for item in statuses if item.get("availability_status") == "available"}
+    available = {item["provider_id"] for item in statuses if _mcp_provider_is_bindable(item)}
     try:
         from src.external_providers.registry import get_external_provider_statuses
 
@@ -86,12 +95,6 @@ def _is_tool_provider_available(tool_name: str) -> bool:
     provider_id = _PROVIDER_FOR_TOOL.get(tool_name)
     return bool(provider_id and provider_id in _available_provider_ids())
 
-_DIRECT_API_PROVIDER_IDS = {"whatsapp_api", "telegram_bot_api"}
-
-
-def _is_direct_api_tool(tool_name: str) -> bool:
-    return _PROVIDER_FOR_TOOL.get(tool_name) in _DIRECT_API_PROVIDER_IDS
-
 
 ALL_MCP_TOOLS: List[BaseTool] = [
     # Gmail MCP compatibility wrappers
@@ -109,18 +112,19 @@ ALL_EXTERNAL_API_TOOLS: List[BaseTool] = [
 ]
 
 
-from src.mcp_gateway.mcp_bridge import load_live_mcp_tools
 
 def get_all_mcp_tools() -> List[BaseTool]:
     """
     Returns currently active MCP gateway tools for LangChain/LangGraph binding.
 
-    T3 keeps removed local execution tools out of runtime exposure.
+    Chat binds compatibility wrappers only. Raw provider MCP tools are invoked
+    through those wrappers so unified policy still recognizes the tool name.
     """
-    live_tools = load_live_mcp_tools()
-    active_static_tools = [tool for tool in ALL_MCP_TOOLS if not is_removed_tool_name(tool.name) and _is_tool_provider_available(tool.name)]
-    active_live_tools = [tool for tool in live_tools if not is_removed_tool_name(tool.name)]
-    return active_static_tools + active_live_tools
+    return [
+        tool
+        for tool in ALL_MCP_TOOLS
+        if not is_removed_tool_name(tool.name) and _is_tool_provider_available(tool.name)
+    ]
 
 def get_all_external_api_tools() -> List[BaseTool]:
     """Returns active direct external API provider tools for graph binding."""

@@ -1,16 +1,8 @@
-import pytest
-
 from src.tools.registry_types import (
     ApprovalPolicy,
     ImplementationType,
     RiskClass,
 )
-
-
-@pytest.fixture(autouse=True)
-def disable_live_mcp_discovery(monkeypatch):
-    monkeypatch.setattr("src.mcp_gateway.registry.load_live_mcp_tools", lambda: [])
-
 
 def test_t1_personal_os_tools_have_local_metadata():
     from src.tools.registry import get_personal_os_tool_metadata
@@ -22,7 +14,6 @@ def test_t1_personal_os_tools_have_local_metadata():
     assert by_name["create_task"].provider == "personal_os"
     assert by_name["heartbeat"].category == "health"
     assert by_name["schedule_job"].risk_class == RiskClass.HIGH
-
 
 def test_t1_mcp_gateway_tools_have_provider_managed_mcp_metadata_after_t7():
     from src.tools.registry import get_mcp_gateway_tool_metadata
@@ -36,7 +27,6 @@ def test_t1_mcp_gateway_tools_have_provider_managed_mcp_metadata_after_t7():
     assert by_name["search_web"].enabled is False
     assert by_name["search_web"].observability_metadata["legacy_local_adapter_backed"] is False
     assert by_name["email_send"].approval_policy == ApprovalPolicy.APPROVAL_REQUIRED
-
 
 def test_t1_removed_target_metadata_exists_for_browser_and_code_sandbox_tools():
     from src.tools.registry import get_removed_tool_metadata
@@ -57,7 +47,6 @@ def test_t1_removed_target_metadata_exists_for_browser_and_code_sandbox_tools():
         assert by_name[name].implementation_type == ImplementationType.REMOVED
         assert by_name[name].enabled is False
         assert by_name[name].removal_reason
-
 
 def test_t1_every_unified_metadata_entry_has_stable_required_fields():
     from src.tools.registry import get_unified_tool_metadata
@@ -81,7 +70,6 @@ def test_t1_every_unified_metadata_entry_has_stable_required_fields():
             ImplementationType.REMOVED,
         }
 
-
 def test_t1_bindable_metadata_excludes_removed_targets_after_t2():
     from src.tools.registry import get_bindable_tool_metadata
 
@@ -93,7 +81,6 @@ def test_t1_bindable_metadata_excludes_removed_targets_after_t2():
     assert "capture_screenshot" not in by_name
     assert "run_code" not in by_name
     assert "github_merge" not in by_name
-
 
 def test_t1_metadata_lookup_helpers_return_removed_metadata_for_removed_targets_after_t2():
     from src.tools.registry import (

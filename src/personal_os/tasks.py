@@ -1,7 +1,4 @@
 import uuid
-import sqlite3
-from typing import Optional
-from pathlib import Path
 from langchain_core.tools import tool
 from src.db import get_connection
 from src.personal_os.audit import log_personal_os_action

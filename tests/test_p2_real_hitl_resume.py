@@ -7,6 +7,9 @@ from fastapi.testclient import TestClient
 from src.db import init_db, get_connection
 from src.harness.graph import build_agent_graph, resume_graph_after_approval, node_tools
 from src.api.server import app
+from src.tools.errors import ToolErrorCode
+from src.tools.invocation import ToolInvocationResult
+from src.tools.policy import RiskClass, ToolPolicyDecision, ToolPolicyDecisionType
 
 class DeterministicFakeLLM(BaseChatModel):
     responses: List[AIMessage]
@@ -140,4 +143,104 @@ def test_p2_node_tools_blocks_unapproved_high_risk(temp_db):
     tool_msgs = out.get("messages", [])
     assert len(tool_msgs) == 1
     assert "approval" in tool_msgs[0].content.lower() or "blocked" in tool_msgs[0].content.lower()
+    assert out.get("approval_status") == "PENDING"
+    assert out.get("pending_approval_id")
+
+
+def test_p2_mixed_search_and_spawn_node_tools_creates_approval(temp_db):
+    msg = AIMessage(
+        content="Search then spawn",
+        tool_calls=[
+            {"name": "search_web", "args": {"query": "India Independence Day 2026"}, "id": "call_search_spawn"},
+            {"name": "spawn_agent", "args": {"role": "Reviewer", "instructions": "Review the holiday note"}, "id": "call_spawn_mix"},
+        ],
+    )
+    out = node_tools({
+        "messages": [msg],
+        "session_id": "sess_p2_mixed_node",
+        "loop_count": 1,
+        "approval_status": "NONE",
+        "tools_used": [],
+        "loop_events": [],
+    })
+    assert out.get("approval_status") == "PENDING"
+    assert out.get("pending_approval_id")
+    names = [m.name for m in out.get("messages", [])]
+    assert names == ["search_web", "spawn_agent"]
+    assert "approval" in out["messages"][1].content.lower() or "blocked" in out["messages"][1].content.lower()
+
+
+def test_p2_mixed_search_and_calendar_creates_approval(temp_db, monkeypatch):
+    """search_web + calendar_create_event in one turn must run search and pause calendar for HITL."""
+
+    def fake_invoke(tool_name, arguments, tool_map, *, source="chat", approval_context=None):
+        if tool_name == "search_web":
+            return ToolInvocationResult(
+                tool_name=tool_name,
+                status="SUCCEEDED",
+                output="India will celebrate its 80th Independence Day on 15 August 2026.",
+                policy_decision=ToolPolicyDecision(
+                    tool_name=tool_name,
+                    decision=ToolPolicyDecisionType.NO_APPROVAL_NEEDED,
+                    risk_class=RiskClass.LOW,
+                ),
+            )
+        if tool_name == "calendar_create_event":
+            decision = ToolPolicyDecision(
+                tool_name=tool_name,
+                decision=ToolPolicyDecisionType.APPROVAL_REQUIRED,
+                risk_class=RiskClass.HIGH,
+                reason="High-risk action requires HITL approval.",
+            )
+            return ToolInvocationResult(
+                tool_name=tool_name,
+                status=ToolErrorCode.APPROVAL_REQUIRED,
+                output="Direct execution of high-risk tool 'calendar_create_event' blocked. Human-In-The-Loop approval is required.",
+                policy_decision=decision,
+            )
+        raise AssertionError(f"unexpected tool {tool_name}")
+
+    monkeypatch.setattr("src.harness.graph.invoke_registered_tool", fake_invoke)
+
+    mixed = AIMessage(
+        content="I will search and add it to the calendar.",
+        tool_calls=[
+            {"name": "search_web", "args": {"query": "India holiday August 15 2026"}, "id": "call_search_mix"},
+            {
+                "name": "calendar_create_event",
+                "args": {
+                    "title": "Independence Day",
+                    "start_time": "2026-08-15T09:00:00+05:30",
+                    "end_time": "2026-08-15T10:00:00+05:30",
+                    "location": "Delhi",
+                },
+                "id": "call_cal_mix",
+            },
+        ],
+    )
+    summary = AIMessage(
+        content="India is celebrating its 80th Independence Day on August 15, 2026."
+    )
+    fake_llm = DeterministicFakeLLM(responses=[mixed, summary])
+    monkeypatch.setattr("src.harness.graph.get_primary_llm", lambda **kw: (fake_llm, 128000))
+
+    graph = build_agent_graph()
+    res = graph.invoke({
+        "messages": [HumanMessage(content="What is India celebrating tomorrow? Add it to my calendar in Delhi.")],
+        "session_id": "sess_p2_mixed",
+        "loop_count": 0,
+        "tools_used": [],
+        "loop_events": [],
+    })
+
+    assert res.get("approval_status") == "PENDING"
+    assert res.get("pending_approval_id")
+    tool_msgs = [m for m in res.get("messages", []) if isinstance(m, ToolMessage)]
+    names = [m.name for m in tool_msgs]
+    assert "search_web" in names
+    assert "calendar_create_event" in names
+    cal = next(m for m in tool_msgs if m.name == "calendar_create_event")
+    assert "approval" in cal.content.lower() or "blocked" in cal.content.lower()
+    last_ai = next(m for m in reversed(res.get("messages", [])) if isinstance(m, AIMessage) and m.content)
+    assert "Independence Day" in str(last_ai.content)
 

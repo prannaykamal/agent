@@ -1,9 +1,10 @@
-from typing import Dict, Any, List, Union, Optional
+from typing import Dict, Any, List, Union
 from src.mcp_gateway.protocol.json_rpc import build_request, build_notification
+from src.mcp_gateway.protocol.transports.http import HTTPMCPTransport
 from src.mcp_gateway.protocol.transports.stdio import StdioMCPTransport
 from src.mcp_gateway.protocol.transports.sse import SSEMCPTransport
 
-TransportType = Union[StdioMCPTransport, SSEMCPTransport]
+TransportType = Union[StdioMCPTransport, SSEMCPTransport, HTTPMCPTransport]
 
 class MCPClient:
     """
@@ -76,15 +77,18 @@ class MCPClient:
         if "error" in resp:
             return f"[MCP Tool Error]: {resp['error'].get('message', 'Execution error')}"
 
-        content_list = resp.get("result", {}).get("content", [])
+        result = resp.get("result") if isinstance(resp.get("result"), dict) else {}
+        content_list = result.get("content", [])
         output_parts = []
         for item in content_list:
             if isinstance(item, dict) and item.get("type") == "text":
                 output_parts.append(item.get("text", ""))
             else:
                 output_parts.append(str(item))
-
-        return "\n".join(output_parts) if output_parts else "[MCP Tool Completed - No output text]"
+        text = "\n".join(output_parts) if output_parts else "[MCP Tool Completed - No output text]"
+        if result.get("isError"):
+            raise RuntimeError(text)
+        return text
 
     def close(self) -> None:
         """Closes the client connection."""

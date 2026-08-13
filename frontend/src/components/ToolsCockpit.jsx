@@ -49,12 +49,19 @@ export default function ToolsCockpit({ onRefresh }) {
     setLoading(true);
     setError(null);
     try {
-      const [catalogData, overviewData] = await Promise.all([
+      const [catalogRes, overviewRes] = await Promise.allSettled([
         api.get("/api/tools"),
         api.get("/api/tools/observability/overview"),
       ]);
+      const catalogData = catalogRes.status === "fulfilled" ? catalogRes.value : null;
+      const overviewData = overviewRes.status === "fulfilled" ? overviewRes.value : null;
       setToolsData(catalogData);
       setOverview(overviewData);
+      if (!catalogData && !overviewData) {
+        setError("Failed to load tools catalog");
+      } else if (!overviewData) {
+        setError("Catalog loaded; observability overview is unavailable.");
+      }
     } catch (e) {
       setError(e.message || "Failed to load tools catalog");
     } finally {
@@ -64,7 +71,13 @@ export default function ToolsCockpit({ onRefresh }) {
 
   useEffect(() => { fetchTools(); }, []);
 
-  const groups = overview?.registry?.groups || {};
+  const groups = overview?.registry?.groups || {
+    personal_os: toolsData?.personal_os_tools || [],
+    cron: [],
+    mcp: toolsData?.mcp_tools || [],
+    external_api: toolsData?.external_api_tools || [],
+    removed: [],
+  };
   const unavailableMcp = (groups.mcp || []).filter((tool) => tool.availability_status !== "available");
   const activeMcp = (groups.mcp || []).filter((tool) => tool.availability_status === "available");
   const externalApi = groups.external_api || [];
@@ -77,7 +90,7 @@ export default function ToolsCockpit({ onRefresh }) {
         actions={<button className="btn btn-primary" onClick={() => { fetchTools(); if (onRefresh) onRefresh(); }}>Refresh</button>}
       />
       {error ? <Notice kind="error">Error: {error}</Notice> : null}
-      {loading ? <Spinner label="Loading tools catalog..." /> : (
+      {loading && !toolsData && !overview ? <Spinner label="Loading tools catalog..." /> : (
         <>
           <div className="metric-grid">
             <div className="metric-card"><h4>Legacy API Shape</h4><div className="metric-value">{toolsData?.total_tools || 0}</div><div className="metric-meta">Active catalog entries</div></div>

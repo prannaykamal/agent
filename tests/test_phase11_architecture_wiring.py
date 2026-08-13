@@ -7,11 +7,21 @@ def _text(path):
     return Path(path).read_text(encoding="utf-8-sig")
 
 
-def test_no_worker_auto_start_calls_from_startup_api_or_graph():
-    combined = "\n".join(_text(path) for path in ["src/startup.py", "src/api/server.py", "src/harness/graph.py"])
+def test_no_worker_auto_start_from_startup_or_chat_graph():
+    combined = "\n".join(_text(path) for path in ["src/startup.py", "src/harness/graph.py"])
 
     assert "run_memory_worker_loop(" not in combined
     assert "process_one_memory_job(" not in combined
+    assert "start_memory_worker_runtime(" not in combined
+    assert "enqueue_semantic_consolidation_job(" not in combined
+    assert "maybe_enqueue_idle_semantic_consolidation(" not in combined
+
+
+def test_api_starts_memory_worker_outside_the_chat_path():
+    text = _text("src/api/server.py")
+    assert "run_memory_worker_loop(" not in text
+    assert "process_one_memory_job(" not in text
+    assert "start_memory_worker_runtime(" in text
 
 
 def test_retrieval_planner_and_assembler_have_no_llm_calls_or_writes():
@@ -77,7 +87,7 @@ def test_observability_helper_has_no_sql_writes_or_mutating_repository_calls():
 def test_api_chat_return_shape_has_no_public_debug_keys():
     source = _text("src/api/server.py")
     tree = ast.parse(source)
-    chat_func = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "api_chat")
+    chat_func = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "_chat_payload")
     returned_keys = set()
     for node in ast.walk(chat_func):
         if isinstance(node, ast.Return) and isinstance(node.value, ast.Dict):

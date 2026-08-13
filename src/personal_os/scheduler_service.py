@@ -1,13 +1,65 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
-from datetime import timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
-from src.personal_os.cron_parser import ensure_aware_utc, next_cron_run_at, utc_iso
+from src.personal_os.cron_parser import ensure_aware_utc, next_cron_run_at
 from src.personal_os.scheduler_policy import approval_policy_for_target
-from src.personal_os.scheduler_store import ToolScheduleRecord, ToolScheduleRepository, ToolScheduleRunRecord, ToolScheduleWrite
+from src.personal_os.scheduler_store import ToolScheduleRecord, ToolScheduleRepository, ToolScheduleWrite
+
+_KNOWN_SCHEDULE_TOOLS = {
+    "heartbeat",
+    "create_task",
+    "update_task",
+    "list_tasks",
+    "publish_event",
+    "checkpoint",
+    "email_send",
+    "email_draft",
+    "email_read",
+    "email_search",
+    "calendar_create_event",
+    "calendar_inspect_availability",
+    "calendar_update_event",
+    "calendar_delete_event",
+    "whatsapp_send",
+    "telegram_send",
+    "search_web",
+    "spawn_agent",
+}
+
+
+def resolve_schedule_target(task_payload: str) -> Tuple[str, Dict[str, Any]]:
+    """Map a schedule_job payload to a real target tool and arguments."""
+    text = str(task_payload or "").strip()
+    if not text or text.lower() in {"heartbeat", "ping", "health"}:
+        return "heartbeat", {}
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        data = None
+    if isinstance(data, dict):
+        tool = str(data.get("tool") or data.get("target_tool_id") or data.get("tool_name") or "").strip()
+        args = data.get("args") or data.get("arguments") or data.get("target_payload")
+        if tool:
+            if isinstance(args, dict):
+                return tool, dict(args)
+            leftover = {
+                key: value
+                for key, value in data.items()
+                if key not in {"tool", "target_tool_id", "tool_name", "args", "arguments", "target_payload"}
+            }
+            return tool, leftover
+    first = text.split()[0]
+    if first in _KNOWN_SCHEDULE_TOOLS:
+        return first, {}
+    return "create_task", {
+        "title": text[:120],
+        "description": f"Scheduled reminder: {text}",
+        "priority": "Medium",
+    }
 
 
 @dataclass(frozen=True)
@@ -63,13 +115,14 @@ def create_tool_schedule(
 
 def create_legacy_compatible_schedule(cron_or_timestamp: str, task_payload: str, *, db_path: Optional[Path] = None, now: Any = None) -> ScheduleCreationResult:
     text = str(cron_or_timestamp or "").strip()
+    target_tool_id, target_payload = resolve_schedule_target(task_payload)
     if len(text.split()) == 5:
         return create_tool_schedule(
             schedule_type="recurring",
             cron_expression=text,
             timezone="UTC",
-            target_tool_id="heartbeat",
-            target_payload={"legacy_task_payload": task_payload},
+            target_tool_id=target_tool_id,
+            target_payload=target_payload,
             created_by="legacy_api",
             db_path=db_path,
             now=now,
@@ -79,8 +132,8 @@ def create_legacy_compatible_schedule(cron_or_timestamp: str, task_payload: str,
         schedule_type="one_time",
         run_at=text,
         timezone="UTC",
-        target_tool_id="heartbeat",
-        target_payload={"legacy_task_payload": task_payload},
+        target_tool_id=target_tool_id,
+        target_payload=target_payload,
         created_by="legacy_api",
         db_path=db_path,
         now=now,

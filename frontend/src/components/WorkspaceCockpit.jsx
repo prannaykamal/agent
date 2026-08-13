@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { api } from "../api/client.js";
 import PageHeader from "./ui/PageHeader.jsx";
 import Notice from "./ui/Notice.jsx";
@@ -100,7 +100,7 @@ export default function WorkspaceCockpit({ onOpenApprovals }) {
 
   const handleMailDraft = () => run(async () => {
     const data = await api.post("/api/email/draft", { to: mailTo, subject: mailSubject, body: mailBody });
-    setNotice(data.message || "Draft created.");
+    setNotice(data.result || data.message || "Draft created.");
     setMailRead(data);
   });
 
@@ -108,6 +108,11 @@ export default function WorkspaceCockpit({ onOpenApprovals }) {
     const data = await api.post("/api/email/send", { to: mailTo, subject: mailSubject, body: mailBody });
     handleApprovalResponse(data, "Send submitted.");
   });
+
+  useEffect(() => {
+    if (tab === "calendar") handleCalendarRead();
+    if (tab === "mail") handleMailRead();
+  }, [tab]);
 
   return (
     <div className="page">
@@ -182,7 +187,24 @@ export default function WorkspaceCockpit({ onOpenApprovals }) {
               <button className="btn btn-primary" onClick={handleCalendarRead} disabled={busy}>Load events</button>
             </div>
           </section>
-          <ResultBlock title="Calendar provider result" payload={calRead?.result || calRead} />
+          <ResultBlock title="Calendar provider result" payload={calRead?.result || (calRead && !calRead.events ? calRead : null)} />
+          {(calRead?.events || []).length > 0 ? (
+            <section className="glass-card">
+              <div className="card-head">
+                <h3>Events</h3>
+                <Badge value={`${calRead.total_events || calRead.events.length} items`} />
+              </div>
+              {calRead.events.map((item) => (
+                <div key={item.id || `${item.start_time}-${item.title}`} className="row-card">
+                  <div>
+                    <strong>{item.title || "(no title)"}</strong>
+                    <div className="lede">{item.start_time} – {item.end_time}{item.location ? ` · ${item.location}` : ""}</div>
+                    {item.id ? <div className="lede">ID: <code>{item.id}</code></div> : null}
+                  </div>
+                </div>
+              ))}
+            </section>
+          ) : null}
           <section className="glass-card">
             <h3>Create event</h3>
             <p className="lede">Create and delete require human approval. The backend will pause and emit an approval request.</p>
@@ -214,7 +236,24 @@ export default function WorkspaceCockpit({ onOpenApprovals }) {
               <button className="btn btn-primary" onClick={handleMailRead} disabled={busy}>Load messages</button>
             </div>
           </section>
-          <ResultBlock title="Mail provider result" payload={mailRead?.result || mailRead} />
+          <ResultBlock title="Mail provider result" payload={mailRead?.result || (mailRead && !mailRead.messages ? mailRead : null)} />
+          {(mailRead?.messages || []).length > 0 ? (
+            <section className="glass-card">
+              <div className="card-head">
+                <h3>Inbox</h3>
+                <Badge value={`${mailRead.total_messages || mailRead.messages.length} items`} />
+              </div>
+              {mailRead.messages.map((item, idx) => (
+                <div key={item.id || idx} className="row-card">
+                  <div>
+                    <strong>{item.subject || "(no subject)"}</strong>
+                    <div className="lede">{item.from}{item.date ? ` · ${item.date}` : ""}</div>
+                    {item.snippet ? <div className="lede">{item.snippet}</div> : null}
+                  </div>
+                </div>
+              ))}
+            </section>
+          ) : null}
           <section className="glass-card">
             <h3>Compose</h3>
             <p className="lede">Drafts execute immediately. Send is high-risk and requires approval.</p>

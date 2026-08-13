@@ -78,3 +78,16 @@ def test_episodic_retrieval_does_not_change_legacy_episode_search(temp_db):
 
     assert result.candidates
     assert _count(temp_db, "episodes") == 0
+
+
+def test_episodic_retrieval_falls_back_across_sessions_when_local_empty(temp_db):
+    repo = StructuredEpisodeRepository(db_path=temp_db)
+    repo.append_episode(_episode())
+
+    result = retrieve_structured_episodes(
+        RetrievalRequest(query="rollback staging", session_id="brand_new_session", per_source_limit=3),
+        db_path=temp_db,
+    )
+
+    assert len(result.candidates) == 1
+    assert result.candidates[0].title == "Staging deploy review"

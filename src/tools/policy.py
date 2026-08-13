@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, Mapping, Optional
@@ -205,14 +206,20 @@ def _decision_from_metadata(
             reason="Search query appears sensitive; confirmation is recommended before external lookup.",
         )
 
+    write_needs_hitl = (
+        metadata.external_side_effect
+        and metadata.read_write_capability in (ReadWriteCapability.WRITE_CAPABLE, ReadWriteCapability.READ_WRITE)
+        and metadata.approval_policy
+        not in (
+            ApprovalPolicy.CONFIRMATION_RECOMMENDED,
+            ApprovalPolicy.NO_APPROVAL_NEEDED,
+        )
+    )
     needs_approval = (
         metadata.approval_policy == ApprovalPolicy.APPROVAL_REQUIRED
         or metadata.risk_class == RiskClass.HIGH
         or metadata.destructive
-        or (
-            metadata.external_side_effect
-            and metadata.read_write_capability in (ReadWriteCapability.WRITE_CAPABLE, ReadWriteCapability.READ_WRITE)
-        )
+        or write_needs_hitl
     )
     if needs_approval and not _approved_context(approval_context):
         return ToolPolicyDecision(
@@ -272,13 +279,13 @@ def evaluate_tool_policy(
         if lower in _LEGACY_MEDIUM_RISK_REASONS:
             return ToolPolicyDecision(
                 tool_name=clean,
-                decision=ToolPolicyDecisionType.CONFIRMATION_RECOMMENDED,
-                risk_class=RiskClass.MEDIUM,
-                approval_policy=ApprovalPolicy.CONFIRMATION_RECOMMENDED,
+                decision=ToolPolicyDecisionType.APPROVAL_REQUIRED,
+                risk_class=RiskClass.HIGH,
+                approval_policy=ApprovalPolicy.APPROVAL_REQUIRED,
                 read_write_capability=ReadWriteCapability.WRITE_CAPABLE,
-                reason_code="confirmation_recommended",
+                reason_code="approval_required",
                 reason=_LEGACY_MEDIUM_RISK_REASONS[lower],
-                metadata={"caller_source": source_value.value, "legacy_hitl_demo_tool": True},
+                metadata={"caller_source": source_value.value},
             )
         return ToolPolicyDecision(
             tool_name=clean,
@@ -297,22 +304,32 @@ def evaluate_tool_policy(
     )
 
 
-def classify_tool_policy(
-    tool_name: str,
-    arguments: Mapping[str, Any] | None = None,
-    *,
-    source: ToolCallerSource | str = ToolCallerSource.CHAT,
-    approval_context: Mapping[str, Any] | None = None,
-) -> ToolPolicyDecision:
-    return evaluate_tool_policy(
-        tool_name,
-        arguments,
-        source=source,
-        approval_context=approval_context,
-    )
-
-
 def legacy_risk_tuple(tool_name: str, arguments: Mapping[str, Any] | None = None) -> tuple[str, str]:
     decision = evaluate_tool_policy(tool_name, arguments, source=ToolCallerSource.CHAT)
     return decision.risk_class.value, decision.reason
+
+
+_TOOL_POLICY_CONTEXT: ContextVar[Optional[Dict[str, Any]]] = ContextVar("tool_policy_context", default=None)
+
+
+def bind_tool_policy_context(
+    *,
+    source: ToolCallerSource | str | None = None,
+    approval_context: Mapping[str, Any] | None = None,
+) -> Token:
+    """Bind caller source/approval so nested MCP calls reuse the outer HITL decision."""
+    payload: Dict[str, Any] = {}
+    if source is not None:
+        payload["source"] = ToolCallerSource(source)
+    if approval_context:
+        payload["approval_context"] = dict(approval_context)
+    return _TOOL_POLICY_CONTEXT.set(payload or None)
+
+
+def reset_tool_policy_context(token: Token) -> None:
+    _TOOL_POLICY_CONTEXT.reset(token)
+
+
+def current_tool_policy_context() -> Dict[str, Any]:
+    return dict(_TOOL_POLICY_CONTEXT.get() or {})
 

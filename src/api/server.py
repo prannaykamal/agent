@@ -1,10 +1,13 @@
 import os
 import json
 import uuid
-import datetime
+import threading
+from contextlib import asynccontextmanager
 from pathlib import Path
+from queue import Empty
 from typing import Optional, Dict, Any, List
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse, StreamingResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -14,16 +17,21 @@ from src.db import get_connection
 from src.personal_os.scheduling import heartbeat, schedule_job, cancel_job
 from src.personal_os.registry import get_os_tool_catalog
 from src.mcp_gateway.registry import get_external_api_tool_catalog, get_mcp_tool_catalog
-from src.memory.semantic import get_all_semantic_facts, add_semantic_fact, search_facts_top_k, sync_memory_md
-from src.memory.episodic import search_episodes_fts
+from src.memory.semantic import get_all_semantic_facts, add_semantic_fact, search_facts_top_k
+from src.memory.episodic import search_episodes_fts, list_recent_episodes
 from src.memory.procedural import (
     add_procedural_skill,
     get_all_procedural_skills,
-    delete_procedural_skill,
-    sync_skill_md
+    delete_procedural_skill
 )
-from src.memory.short_term import get_raw_turns
-from src.hitl.approval_engine import create_approval_request, get_all_approval_requests, process_approval_decision
+from src.memory.short_term import get_raw_turns, log_raw_turn
+from src.hitl.approval_engine import (
+    create_approval_request,
+    get_all_approval_requests,
+    get_pending_approvals,
+    match_chat_approval_decision,
+    process_approval_decision,
+)
 
 from src.harness.graph import agent_app, resume_graph_after_approval
 from src.harness.models import get_model_catalog
@@ -31,11 +39,11 @@ from src.harness.llm_router import normalize_provider
 from src.mcp_gateway.search import perform_web_search
 
 from src.mcp_gateway.communication import (
-    email_read, email_search, email_draft, email_send
+    email_read, email_search, email_draft
 )
 
 from src.mcp_gateway.calendar import (
-    calendar_inspect_availability, calendar_create_event, calendar_update_event, calendar_delete_event
+    calendar_inspect_availability
 )
 
 from src.config import SOUL_PATH, SKILL_PATH, MEMORY_PATH
@@ -59,10 +67,22 @@ from src.personal_os.backup import export_agent_backup, restore_agent_backup
 ensure_system_initialized()
 
 
+@asynccontextmanager
+async def _app_lifespan(app: FastAPI):
+    from src.memory.worker_runtime import start_memory_worker_runtime, stop_memory_worker_runtime
+
+    start_memory_worker_runtime()
+    try:
+        yield
+    finally:
+        stop_memory_worker_runtime()
+
+
 app = FastAPI(
     title="24x7 Personal Assistant API",
     description="REST API Gateway for LangGraph Agent Harness, Memory, Tools, HITL, and Multi-Provider LLMs",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=_app_lifespan,
 )
 
 app.add_middleware(
@@ -144,7 +164,7 @@ ALLOWED_DATA_TABLES = [
     "audit_logs", "tool_calls", "tool_results",
     "memory_jobs", "dead_letter_jobs", "worker_heartbeats", "summary_blocks",
     "structured_episodes", "pending_fact_candidates", "semantic_embeddings",
-    "semantic_dedup_events", "consolidation_runs", "skill_candidates",
+    "memory_entities", "semantic_dedup_events", "consolidation_runs", "skill_candidates",
     "skill_versions", "skill_usage_stats", "procedural_skill_approvals",
     "tool_schedules", "tool_schedule_runs"
 ]
@@ -255,8 +275,50 @@ def api_get_models():
     }
 
 
-@app.post("/api/chat")
-def api_chat(req: ChatRequest):
+def _loop_trace_for_session(session_id: str) -> List[Dict[str, Any]]:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT id, step_index, step_type, reasoning, tool_name, tool_args_json, tool_result, created_at
+        FROM loop_events
+        WHERE session_id = ?
+        ORDER BY rowid ASC
+        """,
+        (session_id,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def _chat_payload_from_resume(session_id: str, session_title: str, resume_res: Dict[str, Any]) -> Dict[str, Any]:
+    status = str(resume_res.get("status") or "")
+    tool_name = resume_res.get("tool_name")
+    loop_trace = _loop_trace_for_session(session_id)
+    return {
+        "session_id": session_id,
+        "session_title": session_title,
+        "response": resume_res.get("response") or resume_res.get("message") or "",
+        "retrieval_triggered": False,
+        "retrieved_memories": [],
+        "pending_approval_id": None if status in ("APPROVED", "REJECTED", "EXECUTED", "BLOCKED") else resume_res.get("request_id"),
+        "approval_status": status,
+        "iterations": 1,
+        "tools_used": [tool_name] if tool_name else [],
+        "loop_events": loop_trace,
+        "loop_trace": loop_trace,
+    }
+
+
+def _pending_for_chat_session(session_id: str, original_session_id: str) -> List[Dict[str, Any]]:
+    pending = get_pending_approvals(session_id)
+    if not pending and original_session_id != session_id:
+        pending = get_pending_approvals(original_session_id)
+    return pending
+
+
+def _chat_payload(req: ChatRequest) -> Dict[str, Any]:
     if not req.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty.")
 
@@ -290,6 +352,21 @@ def api_chat(req: ChatRequest):
                 conn_u.commit()
                 conn_u.close()
 
+    decision = match_chat_approval_decision(req.message)
+    if decision:
+        pending = _pending_for_chat_session(target_session_id, req.session_id)
+        if len(pending) == 1:
+            request_id = pending[0].get("request_id") or pending[0].get("id")
+            try:
+                log_raw_turn(session_id=target_session_id, sender="user", content=req.message)
+            except Exception:
+                pass
+            try:
+                resume_res = resume_graph_after_approval(request_id=request_id, decision=decision)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            return _chat_payload_from_resume(target_session_id, session_title, resume_res)
+
     input_state = {
         "messages": [HumanMessage(content=req.message)],
         "session_id": target_session_id,
@@ -305,7 +382,6 @@ def api_chat(req: ChatRequest):
         "secondary_model_name": req.secondary_model_name or "gpt-4o-mini"
     }
 
-
     try:
         result = agent_app.invoke(input_state)
         messages = result.get("messages", [])
@@ -317,22 +393,7 @@ def api_chat(req: ChatRequest):
                 last_ai_content = str(m.content)
                 break
 
-        # Fetch all ordered loop step events for target_session_id
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            SELECT id, step_index, step_type, reasoning, tool_name, tool_args_json, tool_result, created_at
-            FROM loop_events
-            WHERE session_id = ?
-            ORDER BY rowid ASC
-            """,
-            (target_session_id,)
-        )
-        db_events = cursor.fetchall()
-        conn.close()
-
-        loop_trace = [dict(r) for r in db_events] if db_events else result.get("loop_events", [])
+        loop_trace = _loop_trace_for_session(target_session_id) or result.get("loop_events", [])
 
         return {
             "session_id": target_session_id,
@@ -348,8 +409,69 @@ def api_chat(req: ChatRequest):
             "loop_trace": loop_trace
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Agent harness error: {str(e)}")
+
+
+@app.post("/api/chat")
+def api_chat(req: ChatRequest):
+    return _chat_payload(req)
+
+
+@app.post("/api/chat/stream")
+def api_chat_stream(req: ChatRequest):
+    from src.harness.loop_stream import current_run_id, publish, subscribe, unsubscribe
+
+    if not req.message.strip():
+        raise HTTPException(status_code=400, detail="Message cannot be empty.")
+
+    run_id = f"run_{uuid.uuid4().hex[:12]}"
+    watcher = subscribe(run_id)
+
+    def worker():
+        token = current_run_id.set(run_id)
+        try:
+            publish({"type": "run_started", "run_id": run_id, "session_id": req.session_id}, run_id=run_id)
+            payload = _chat_payload(req)
+            publish({"type": "run_finished", "run_id": run_id, **payload}, run_id=run_id)
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, str) else "Chat request failed."
+            publish({"type": "run_error", "run_id": run_id, "error": detail}, run_id=run_id)
+        except Exception as exc:
+            publish({"type": "run_error", "run_id": run_id, "error": f"Agent harness error: {exc}"}, run_id=run_id)
+        finally:
+            current_run_id.reset(token)
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+
+    def generate():
+        try:
+            while True:
+                try:
+                    event = watcher.get(timeout=0.4)
+                except Empty:
+                    if not thread.is_alive():
+                        break
+                    yield ": keepalive\n\n"
+                    continue
+                yield f"data: {json.dumps(event, default=str)}\n\n"
+                if event.get("type") in {"run_finished", "run_error"}:
+                    break
+        finally:
+            unsubscribe(run_id, watcher)
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 
@@ -371,7 +493,7 @@ def api_add_fact(req: FactRequest):
 def api_get_full_memory(query: Optional[str] = None):
     q = query or ""
     facts = search_facts_top_k(query=q, k=10) if q else get_all_semantic_facts()
-    episodes = search_episodes_fts(query=q, limit=10) if q else []
+    episodes = search_episodes_fts(query=q, limit=10) if q else list_recent_episodes(limit=20)
 
     soul_content = SOUL_PATH.read_text(encoding="utf-8") if SOUL_PATH.exists() else ""
     skill_content = SKILL_PATH.read_text(encoding="utf-8") if SKILL_PATH.exists() else ""
@@ -494,10 +616,24 @@ class CalendarEventRequest(BaseModel):
 
 @app.get("/api/calendar/events")
 def api_get_calendar_events(start_date: Optional[str] = None, end_date: Optional[str] = None):
-    result = calendar_inspect_availability.invoke({
-        "start_date": start_date or "",
-        "end_date": end_date or "",
-    })
+    from src.mcp_gateway.calendar_api import CalendarApiError, CalendarClient
+    from src.mcp_gateway.protocol.oauth import resolve_google_access_token
+
+    start = start_date or ""
+    end = end_date or ""
+    token = resolve_google_access_token("google_calendar")
+    if token:
+        try:
+            client = CalendarClient(token)
+            events = client.list_events_structured(start, end)
+            return {
+                "events": events,
+                "total_events": len(events),
+                "result": client.list_events(start, end),
+            }
+        except CalendarApiError as exc:
+            return {"events": [], "total_events": 0, "result": str(exc)}
+    result = calendar_inspect_availability.invoke({"start_date": start, "end_date": end})
     return {"events": [], "total_events": 0, "result": result}
 
 @app.post("/api/calendar/events")
@@ -523,16 +659,26 @@ def api_create_calendar_event(req: CalendarEventRequest):
 
 @app.put("/api/calendar/events/{event_id}")
 def api_update_calendar_event(event_id: str, req: CalendarEventRequest):
-    res = calendar_update_event.invoke({
+    args = {
         "event_id": event_id,
         "title": req.title,
         "start_time": req.start_time,
         "end_time": req.end_time,
         "attendees": req.attendees or "",
         "location": req.location or "",
-        "status": req.status or "CONFIRMED"
-    })
-    return {"status": "success", "result": res}
+        "status": req.status or "CONFIRMED",
+    }
+    app_req = create_approval_request(
+        session_id="rest_api_calendar",
+        tool_name="calendar_update_event",
+        tool_args=args,
+        reason=f"Direct REST API call to update calendar event '{event_id}'",
+    )
+    return {
+        "status": "APPROVAL_REQUIRED",
+        "approval_request": app_req,
+        "message": f"Calendar event update for '{event_id}' is classified as High Risk and requires human authorization.",
+    }
 
 @app.delete("/api/calendar/events/{event_id}")
 def api_delete_calendar_event(event_id: str):
@@ -557,8 +703,24 @@ class EmailMessageRequest(BaseModel):
 
 @app.get("/api/email/messages")
 def api_get_email_messages(limit: int = 10, query: Optional[str] = None):
-    if query:
-        result = email_read.invoke({"limit": limit}) if not query.strip() else email_search.invoke({"query": query})
+    from src.mcp_gateway.gmail_api import GmailApiError, GmailClient
+    from src.mcp_gateway.protocol.oauth import resolve_google_access_token
+
+    token = resolve_google_access_token("gmail")
+    if token:
+        try:
+            client = GmailClient(token)
+            if query and query.strip():
+                messages = client.list_message_items(max_results=limit, query=query.strip())
+                result = client.search_messages(query.strip())
+            else:
+                messages = client.list_message_items(max_results=limit, label_ids=["INBOX"])
+                result = client.list_messages(limit)
+            return {"messages": messages, "total_messages": len(messages), "result": result}
+        except GmailApiError as exc:
+            return {"messages": [], "total_messages": 0, "result": str(exc)}
+    if query and query.strip():
+        result = email_search.invoke({"query": query.strip()})
     else:
         result = email_read.invoke({"limit": limit})
     return {"messages": [], "total_messages": 0, "result": result}
@@ -566,7 +728,7 @@ def api_get_email_messages(limit: int = 10, query: Optional[str] = None):
 @app.post("/api/email/draft")
 def api_create_email_draft(req: EmailMessageRequest):
     res = email_draft.invoke({"to": req.to, "subject": req.subject, "body": req.body})
-    return {"status": "success", "result": res}
+    return {"status": "success", "result": res, "message": res}
 
 @app.post("/api/email/send")
 def api_send_email(req: EmailMessageRequest):
@@ -582,6 +744,32 @@ def api_send_email(req: EmailMessageRequest):
         "approval_request": app_req,
         "message": f"Outbound email transmission to '{req.to}' is classified as High Risk and requires human authorization."
     }
+
+# --- WhatsApp Cloud API webhook (inbound messages) ---
+
+@app.get("/api/webhooks/whatsapp")
+def api_whatsapp_webhook_verify(
+    hub_mode: str = Query(default="", alias="hub.mode"),
+    hub_challenge: str = Query(default="", alias="hub.challenge"),
+    hub_verify_token: str = Query(default="", alias="hub.verify_token"),
+):
+    from src.external_providers.whatsapp_api import verify_webhook_token
+
+    if hub_mode == "subscribe" and verify_webhook_token(hub_verify_token):
+        return PlainTextResponse(hub_challenge)
+    raise HTTPException(status_code=403, detail="WhatsApp webhook verification failed.")
+
+
+@app.post("/api/webhooks/whatsapp")
+async def api_whatsapp_webhook_receive(request: Request):
+    from src.external_providers.whatsapp_api import ingest_webhook
+
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    stored = ingest_webhook(payload if isinstance(payload, dict) else {})
+    return {"status": "ok", "stored": stored}
 
 # --- Search Endpoint ---
 
@@ -719,6 +907,48 @@ def api_discover_mcp_provider(provider_id: str):
     return status
 
 
+@app.get("/api/tools/mcp/providers/{provider_id}/oauth/start")
+def api_mcp_oauth_start(provider_id: str):
+    from src.mcp_gateway.protocol.oauth import start_google_oauth
+
+    try:
+        return start_google_oauth(provider_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/tools/mcp/oauth/callback")
+def api_mcp_oauth_callback(
+    code: str = Query(default=""),
+    state: str = Query(default=""),
+    error: str = Query(default=""),
+):
+    from html import escape
+
+    from src.mcp_gateway.protocol.oauth import finish_google_oauth
+
+    if error:
+        detail = escape(error)
+        return HTMLResponse(
+            f"<html><body><h1>Google sign-in failed</h1><p>{detail}</p></body></html>",
+            status_code=400,
+        )
+    try:
+        result = finish_google_oauth(code, state)
+    except ValueError as exc:
+        return HTMLResponse(
+            f"<html><body><h1>Google sign-in failed</h1><p>{escape(str(exc))}</p></body></html>",
+            status_code=400,
+        )
+    provider = escape(result.get("provider_id") or "Google")
+    return HTMLResponse(
+        "<html><body>"
+        f"<h1>Signed in to {provider}</h1>"
+        "<p>You can close this tab and ask ASTRA to create the Gmail draft again.</p>"
+        "<p><a href='http://localhost:5173'>Back to ASTRA</a></p>"
+        "</body></html>"
+    )
+
 
 @app.get("/api/tools/external/providers")
 def api_get_external_provider_statuses():
@@ -762,7 +992,7 @@ def api_personal_os_audit(limit: int = 50):
 def api_get_tasks():
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT id, title, description, status, priority, created_at FROM tasks ORDER BY created_at DESC")
+    cursor.execute("SELECT id, title, description, status, priority, progress, created_at FROM tasks ORDER BY created_at DESC")
     task_rows = cursor.fetchall()
 
     cursor.execute("SELECT agent_id, role, instructions, status, created_at FROM sub_agents ORDER BY created_at DESC")
@@ -773,7 +1003,7 @@ def api_get_tasks():
     sub_agents_list = [dict(r) for r in agent_rows]
 
     if tasks_list:
-        summary_lines = [f"â€¢ [{t['status']}] {t['title']} (Priority: {t.get('priority', 'Medium')})" for t in tasks_list]
+        summary_lines = [f"• [{t['status']}] {t['title']} (Priority: {t.get('priority', 'Medium')})" for t in tasks_list]
         summary_str = "\n".join(summary_lines)
     else:
         summary_str = "No active tasks registered."
@@ -784,6 +1014,45 @@ def api_get_tasks():
         "tasks_summary": summary_str,
         "sub_agents": sub_agents_list
     }
+
+
+class TaskCreateRequest(BaseModel):
+    title: str
+    description: Optional[str] = ""
+    priority: Optional[str] = "Medium"
+
+
+class TaskUpdateRequest(BaseModel):
+    status: Optional[str] = "IN_PROGRESS"
+    progress: Optional[int] = 50
+
+
+@app.post("/api/tasks")
+def api_create_task(req: TaskCreateRequest):
+    from src.personal_os.tasks import create_task
+
+    if not str(req.title or "").strip():
+        raise HTTPException(status_code=400, detail="Task title cannot be empty.")
+    result = create_task.invoke({
+        "title": req.title.strip(),
+        "description": req.description or "",
+        "priority": req.priority or "Medium",
+    })
+    return {"status": "success", "result": result}
+
+
+@app.patch("/api/tasks/{task_id}")
+def api_update_task(task_id: str, req: TaskUpdateRequest):
+    from src.personal_os.tasks import update_task
+
+    result = update_task.invoke({
+        "task_id": task_id,
+        "status": req.status or "IN_PROGRESS",
+        "progress": int(req.progress if req.progress is not None else 50),
+    })
+    if "not found" in str(result).lower():
+        raise HTTPException(status_code=404, detail=result)
+    return {"status": "success", "result": result}
 
 
 # --- Scheduled Jobs Endpoints ---
@@ -909,14 +1178,25 @@ def api_get_system_health():
     """Returns runtime system telemetry: DB path, schema version, worker status, and provider readiness flags."""
     from src.config import DB_PATH, validate_integration_environment
     from src.db_migrations import check_db_version
+    from src.memory.observability import get_worker_observability
+
     schema_ver = check_db_version(DB_PATH)
     providers = validate_integration_environment()
+    worker_status = "STOPPED"
+    try:
+        summary = get_worker_observability(stale_after_seconds=120).get("summary") or {}
+        if int(summary.get("active") or 0) > 0:
+            worker_status = "RUNNING"
+        elif int(summary.get("total") or 0) > 0:
+            worker_status = "IDLE"
+    except Exception:
+        worker_status = "STOPPED"
     return {
         "status": "HEALTHY",
         "app_name": "ASTRA (Autonomous System for Tasks, Reasoning & Assistance)",
         "database_path": str(DB_PATH),
         "schema_version": schema_ver,
-        "worker_status": "RUNNING",
+        "worker_status": worker_status,
         "providers": providers
     }
 
@@ -941,6 +1221,8 @@ def api_get_table_rows(table_name: str, limit: int = 50):
 
     conn = get_connection()
     cursor = conn.cursor()
+    cursor.execute(f"SELECT COUNT(*) AS total FROM {table_name}")
+    total_rows = int(cursor.fetchone()["total"] or 0)
     cursor.execute(f"SELECT * FROM {table_name} ORDER BY rowid DESC LIMIT ?", (limit,))
     rows = cursor.fetchall()
     conn.close()
@@ -949,7 +1231,7 @@ def api_get_table_rows(table_name: str, limit: int = 50):
     columns = list(result_rows[0].keys()) if result_rows else []
     return {
         "table": table_name,
-        "total_rows": len(result_rows),
+        "total_rows": total_rows,
         "columns": columns,
         "rows": result_rows
     }
@@ -992,7 +1274,16 @@ def api_approval_decision(request_id: str, req: DecisionRequest):
             "procedural_skill_approval": procedural_result.to_dict(),
         }
 
-    res = resume_graph_after_approval(request_id=request_id, decision=req.decision)
+    try:
+        res = resume_graph_after_approval(request_id=request_id, decision=req.decision)
+    except ValueError as exc:
+        detail = str(exc)
+        lowered = detail.lower()
+        if "not found" in lowered:
+            raise HTTPException(status_code=404, detail=detail) from exc
+        if "already been processed" in lowered:
+            raise HTTPException(status_code=409, detail=detail) from exc
+        raise HTTPException(status_code=400, detail=detail) from exc
     return res
 # --- System Backup & Restore Endpoints ---
 

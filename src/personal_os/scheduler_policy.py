@@ -5,8 +5,9 @@ from typing import Any, Dict
 
 from src.tools.policy import ToolCallerSource, ToolPolicyDecisionType, evaluate_tool_policy
 from src.tools.registry_types import ApprovalPolicy
+from src.personal_os.policy import LOW_RISK_WRITE_ACTIONS, READ_ONLY_ACTIONS
 
-DIRECT_LOCAL_READ_TOOLS = {"heartbeat", "list_tasks", "get_agent_status", "restore_checkpoint"}
+DIRECT_LOCAL_SCHEDULED_TOOLS = set(READ_ONLY_ACTIONS) | set(LOW_RISK_WRITE_ACTIONS)
 
 
 @dataclass(frozen=True)
@@ -45,7 +46,7 @@ def decide_scheduler_execution(target_tool_id: str, target_payload: Dict[str, An
             decision.reason,
         )
 
-    if clean in DIRECT_LOCAL_READ_TOOLS and decision.can_execute_directly:
+    if clean in DIRECT_LOCAL_SCHEDULED_TOOLS and not decision.blocked and not decision.unavailable:
         return SchedulerPolicyDecision(
             clean,
             decision.risk_class.value,
@@ -53,7 +54,7 @@ def decide_scheduler_execution(target_tool_id: str, target_payload: Dict[str, An
             True,
             False,
             False,
-            "Read-only local Personal OS action may execute directly.",
+            "Local Personal OS action may execute when the scheduled time is due.",
         )
 
     provider_deferred = decision.provider_managed or decision.provider not in ("", "personal_os")

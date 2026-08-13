@@ -126,6 +126,7 @@ def test_legacy_fallback_failure_does_not_fail_chat(monkeypatch):
     monkeypatch.setattr(graph, "search_facts_top_k", fail)
     monkeypatch.setattr(graph, "search_episodes_fts", fail)
     monkeypatch.setattr(graph, "match_procedural_skills", fail)
+    monkeypatch.setattr(graph, "assemble_pinned_profile", lambda: "")
 
     result = graph.node_retrieval_gate({"messages": [HumanMessage(content="what do you remember about me?")], "session_id": "sess"})
 

@@ -329,6 +329,20 @@ class StructuredEpisodeRepository:
         finally:
             conn.close()
 
+    def list_recent(self, *, limit: int = 20) -> List[StructuredEpisodeRecord]:
+        capped = max(1, min(int(limit or 20), 100))
+        conn = get_connection(self.db_path)
+        try:
+            rows = conn.execute(
+                "SELECT * FROM structured_episodes ORDER BY created_at DESC, id DESC LIMIT ?",
+                (capped,),
+            ).fetchall()
+            return [_row_to_record(row) for row in rows]
+        except Exception:
+            return []
+        finally:
+            conn.close()
+
     def to_legacy_episode_dict(self, episode: StructuredEpisodeRecord) -> dict[str, Any]:
         structured_fields = {
             "title": episode.title,

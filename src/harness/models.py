@@ -1,6 +1,6 @@
 ﻿import os
 from dataclasses import asdict, dataclass
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple
 
 # Model context window capacities in tokens
 CONTEXT_WINDOW_CAPACITIES: Dict[str, int] = {

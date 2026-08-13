@@ -13,7 +13,7 @@
       "enabled": false,
       "transport": "stdio",
       "command": "uvx",
-      "args": ["--with", "duckduckgo-mcp-server[browser]", "duckduckgo-mcp-server"],
+      "args": ["duckduckgo-mcp-server"],
       "env": {
         "DDG_SAFE_SEARCH": "MODERATE",
         "DDG_REGION": "wt-wt",
@@ -22,24 +22,31 @@
     },
     "google_calendar": {
       "enabled": false,
-      "transport": "http",
-      "url": "https://calendarmcp.googleapis.com/mcp/v1",
+      "transport": "stdio",
+      "command": "python",
+      "args": ["-m", "src.mcp_gateway.calendar_local_mcp"],
       "oauth": {
         "clientId": "PASTE_GOOGLE_OAUTH_CLIENT_ID_HERE",
         "clientSecret": "PASTE_GOOGLE_OAUTH_CLIENT_SECRET_HERE"
-      }
+      },
+      "scopes": [
+        "https://www.googleapis.com/auth/calendar.events",
+        "https://www.googleapis.com/auth/calendar.calendarlist.readonly"
+      ]
     },
     "gmail": {
       "enabled": false,
-      "transport": "http",
-      "url": "https://gmailmcp.googleapis.com/mcp/v1",
+      "transport": "stdio",
+      "command": "python",
+      "args": ["-m", "src.mcp_gateway.gmail_local_mcp"],
       "oauth": {
         "clientId": "PASTE_GOOGLE_OAUTH_CLIENT_ID_HERE",
         "clientSecret": "PASTE_GOOGLE_OAUTH_CLIENT_SECRET_HERE"
       },
       "scopes": [
         "https://www.googleapis.com/auth/gmail.readonly",
-        "https://www.googleapis.com/auth/gmail.compose"
+        "https://www.googleapis.com/auth/gmail.compose",
+        "https://www.googleapis.com/auth/gmail.send"
       ]
     }
   }

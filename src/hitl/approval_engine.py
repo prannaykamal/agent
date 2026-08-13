@@ -1,31 +1,64 @@
 import uuid
 import json
+import re
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from src.db import get_connection
 from src.tools.removed_tools import is_removed_tool_name, get_removed_tool_blocked_message
 
+_AFFIRM_PHRASES = {
+    "yes", "y", "yeah", "yep", "ok", "okay", "sure", "go ahead",
+    "send", "send it", "send now", "please send", "please send it",
+    "approve", "approved", "proceed", "do it", "confirm",
+    "yes please", "yes send", "yes send it", "yes go ahead",
+    "ok send", "ok send it", "okay send it",
+}
+_REJECT_PHRASES = {
+    "no", "n", "nope", "cancel", "reject", "rejected",
+    "dont", "do not", "stop", "never", "no thanks",
+}
+
+
+def match_chat_approval_decision(text: str) -> Optional[str]:
+    """Map a short chat reply to APPROVED/REJECTED when the user is confirming HITL."""
+    raw = str(text or "").strip().lower()
+    if not raw or len(raw) > 48:
+        return None
+    cleaned = re.sub(r"[^\w\s']+", " ", raw)
+    cleaned = re.sub(r"\s+", " ", cleaned).replace("'", "").strip()
+    if cleaned in _AFFIRM_PHRASES:
+        return "APPROVED"
+    if cleaned in _REJECT_PHRASES:
+        return "REJECTED"
+    return None
+
 def generate_payload_preview(tool_name: str, tool_args: Dict[str, Any]) -> str:
     """Generates a rich, human-readable preview summary for approval requests."""
+    raw = dict(tool_args or {})
+    batch = raw.get("_batch_calls")
+    public = {key: value for key, value in raw.items() if not str(key).startswith("_")}
+    prefix = ""
+    if isinstance(batch, list) and len(batch) > 1:
+        prefix = f"[Batch of {len(batch)} '{tool_name}' actions]\n"
     tname = tool_name.strip().lower()
     if tname in ("email_send", "send_email"):
-        to = tool_args.get("recipient") or tool_args.get("to") or "Unknown"
-        subj = tool_args.get("subject") or "No Subject"
-        body = tool_args.get("body") or ""
-        return f"[Email Preview] To: {to} | Subject: {subj}\nBody: {body[:200]}"
+        to = public.get("recipient") or public.get("to") or "Unknown"
+        subj = public.get("subject") or "No Subject"
+        body = public.get("body") or ""
+        return prefix + f"[Email Preview] To: {to} | Subject: {subj}\nBody: {body[:200]}"
 
     if tname in ("whatsapp_send", "telegram_send"):
-        to = tool_args.get("recipient") or tool_args.get("chat_id") or "Unknown"
-        msg = tool_args.get("message") or ""
-        return f"[{tname.upper()} Preview] To/Chat: {to}\nMessage: {msg[:200]}"
+        to = public.get("recipient") or public.get("chat_id") or "Unknown"
+        msg = public.get("message") or ""
+        return prefix + f"[{tname.upper()} Preview] To/Chat: {to}\nMessage: {msg[:200]}"
 
     if tname in ("calendar_create_event", "calendar_delete_event"):
-        title = tool_args.get("title") or tool_args.get("event_id") or "Event"
-        start = tool_args.get("start_time") or ""
-        end = tool_args.get("end_time") or ""
-        return f"[Calendar Preview] Action: {tname} | Event: '{title}' ({start} - {end})"
+        title = public.get("title") or public.get("event_id") or "Event"
+        start = public.get("start_time") or ""
+        end = public.get("end_time") or ""
+        return prefix + f"[Calendar Preview] Action: {tname} | Event: '{title}' ({start} - {end})"
 
-    return f"[{tool_name} Preview] Payload: {json.dumps(tool_args)}"
+    return prefix + f"[{tool_name} Preview] Payload: {json.dumps(public)}"
 
 def create_approval_request(
     session_id: str,
@@ -119,7 +152,21 @@ def get_pending_approvals(
         cursor.execute("SELECT * FROM approval_requests WHERE status = 'PENDING' ORDER BY created_at DESC")
     rows = cursor.fetchall()
     conn.close()
-    return [dict(r) for r in rows]
+    return [_serialize_approval_row(row) for row in rows]
+
+
+def _serialize_approval_row(row: Any) -> Dict[str, Any]:
+    payload = dict(row)
+    payload["request_id"] = payload.get("id") or payload.get("request_id")
+    raw_args = payload.get("tool_args_json") or payload.get("tool_args") or "{}"
+    if isinstance(raw_args, str):
+        try:
+            payload["tool_args"] = json.loads(raw_args)
+        except Exception:
+            payload["tool_args"] = {}
+    elif not isinstance(payload.get("tool_args"), dict):
+        payload["tool_args"] = {}
+    return payload
 
 def get_all_approval_requests(db_path: Optional[Path] = None) -> List[Dict[str, Any]]:
     """Alias for get_pending_approvals returning all pending approval requests."""
@@ -135,7 +182,7 @@ def get_approval_request(
     cursor.execute("SELECT * FROM approval_requests WHERE id = ?", (request_id,))
     row = cursor.fetchone()
     conn.close()
-    return dict(row) if row else None
+    return _serialize_approval_row(row) if row else None
 
 def process_approval_decision(
     request_id: str,

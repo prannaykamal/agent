@@ -175,7 +175,7 @@ def extract_and_save_facts(
     memory_path: Optional[Path] = None,
 ) -> None:
     """Legacy post-turn helper: deterministic explicit facts become pending candidates."""
-    from src.memory.semantic_candidates import extract_explicit_facts_from_user_text
+    from src.memory.explicit_facts import extract_explicit_facts_from_user_text
 
     extracted = extract_explicit_facts_from_user_text(user_input)
     candidates = [
@@ -192,6 +192,30 @@ def extract_and_save_facts(
         process_fact_candidates("default_session", candidates, db_path=db_path, memory_path=memory_path)
 
 
+def persist_explicit_facts_from_user_text(
+    user_text: str,
+    db_path: Optional[Path] = None,
+    memory_path: Optional[Path] = None,
+) -> int:
+    """Write deterministic explicit facts immediately via the dedup-aware store.
+
+    Does not call an LLM. LLM-inferred facts still wait for background consolidation.
+    """
+    from src.memory.explicit_facts import extract_explicit_facts_from_user_text
+
+    extracted = extract_explicit_facts_from_user_text(user_text)
+    if not extracted:
+        return 0
+    store = SemanticFactStore(db_path=db_path, memory_path=memory_path)
+    written = 0
+    for fact in extracted:
+        store.add_explicit_fact(fact)
+        written += 1
+    if written:
+        store.sync_memory_md()
+    return written
+
+
 __all__ = [
     "SemanticFactValidationError",
     "add_semantic_fact",
@@ -203,4 +227,5 @@ __all__ = [
     "search_facts_top_k",
     "sync_memory_md",
     "extract_and_save_facts",
+    "persist_explicit_facts_from_user_text",
 ]

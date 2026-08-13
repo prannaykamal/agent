@@ -1,16 +1,12 @@
-﻿import os
-import json
+﻿import json
 import uuid
+import logging
+from datetime import datetime
 from typing import List, Dict, Any, Optional
 from langgraph.graph import StateGraph, START, END
-from langchain_core.messages import BaseMessage, SystemMessage, AIMessage, HumanMessage, ToolMessage
+from langgraph.graph.message import REMOVE_ALL_MESSAGES
+from langchain_core.messages import BaseMessage, SystemMessage, AIMessage, HumanMessage, ToolMessage, RemoveMessage
 
-try:
-    from langchain_openai import ChatOpenAI
-except ImportError:
-    ChatOpenAI = None
-
-from src.config import PRIMARY_MODEL
 from src.db import get_connection
 from src.harness.state import AgentState
 from src.memory.soul_loader import load_soul_prompt
@@ -18,24 +14,133 @@ from src.memory.short_term import estimate_tokens, log_raw_turn, get_raw_turns
 from src.memory.summary_blocks import prepare_short_term_context_for_chat
 
 from src.memory.retrieval_gate import should_retrieve_memory
+from src.memory.profile_pin import assemble_pinned_profile
 from src.memory.context_assembler import ContextAssemblyOptions, assemble_retrieved_memory_context
 from src.memory.retrieval_planner import build_retrieval_plan
 from src.memory.retrieval_sources import retrieve_all_sources
-from src.memory.semantic import search_facts_top_k, extract_and_save_facts
-from src.memory.episodic import search_episodes_fts, log_episode
+from src.memory.semantic import search_facts_top_k
+from src.memory.episodic import search_episodes_fts
 from src.memory.procedural import match_procedural_skills
 
 from src.hitl.classifier import classify_tool_risk
-from src.hitl.approval_engine import create_approval_request, process_approval_decision, get_approval_request
+from src.hitl.approval_engine import create_approval_request, process_approval_decision, get_approval_request, generate_payload_preview
 from src.tools.removed_tools import get_removed_tool_blocked_message, is_removed_tool_name
 from src.tools.invocation import invoke_registered_tool
 from src.tools.policy import ToolCallerSource, evaluate_tool_policy
-from src.personal_os.checkpointing import checkpoint, restore_checkpoint
+from src.personal_os.checkpointing import checkpoint
 from src.harness.models import get_primary_llm
 from src.harness.llm_router import resolve_primary_llm
 from src.memory.jobs import enqueue_post_turn_memory_jobs
 
+logger = logging.getLogger(__name__)
+
 _ORIGINAL_GET_PRIMARY_LLM = get_primary_llm
+
+def _safe_llm_error(exc: Exception) -> str:
+    text = str(exc or "").strip() or type(exc).__name__
+    return text.replace("\n", " ")[:400]
+
+
+def _replace_messages(messages) -> List[BaseMessage]:
+    """Replace the full `messages` list. `add_messages` would otherwise append a copy."""
+    return [RemoveMessage(id=REMOVE_ALL_MESSAGES), *list(messages or [])]
+
+
+def _normalize_llm_messages(messages):
+    """OpenAI rejects system messages after the first user/assistant turn."""
+    systems: List[str] = []
+    rest: List[BaseMessage] = []
+    for message in messages or []:
+        if isinstance(message, RemoveMessage):
+            continue
+        if isinstance(message, SystemMessage):
+            content = str(message.content or "").strip()
+            if content and content not in systems:
+                systems.append(content)
+            continue
+        rest.append(message)
+    if not rest:
+        return [SystemMessage(content="\n\n".join(systems))] if systems else []
+    if systems:
+        return [SystemMessage(content="\n\n".join(systems)), *rest]
+    return rest
+
+
+def _tool_call_id(call: Any) -> str:
+    if isinstance(call, dict):
+        return str(call.get("id") or "")
+    return str(getattr(call, "id", "") or "")
+
+
+def _message_tool_calls(message) -> List[Any]:
+    return list(getattr(message, "tool_calls", None) or [])
+
+
+def _last_ai_with_tool_calls(messages) -> Optional[AIMessage]:
+    for message in reversed(messages or []):
+        if isinstance(message, AIMessage) and _message_tool_calls(message):
+            return message
+    return None
+
+
+def _in_flight_tool_tail(messages) -> List[BaseMessage]:
+    """Keep a trailing assistant tool_calls + tool-result pair across memory rebuilds."""
+    msgs = list(messages or [])
+    tool_msgs: List[ToolMessage] = []
+    idx = len(msgs) - 1
+    while idx >= 0 and isinstance(msgs[idx], ToolMessage):
+        tool_msgs.append(msgs[idx])
+        idx -= 1
+    tool_msgs.reverse()
+    if not tool_msgs:
+        return []
+    lead = msgs[idx] if idx >= 0 else None
+    if isinstance(lead, AIMessage) and _message_tool_calls(lead):
+        return [lead, *tool_msgs]
+    return []
+
+
+def _sanitize_llm_messages(messages):
+    """Drop orphan tool results and unpaired tool_calls before calling the model.
+
+    OpenAI rejects any `role: tool` message that does not immediately follow an
+    assistant message with `tool_calls`. Chat history rebuilds and HITL pauses
+    can leave the list in that illegal shape.
+    """
+    normalized = _normalize_llm_messages(messages)
+    sanitized: List[BaseMessage] = []
+    index = 0
+    while index < len(normalized):
+        message = normalized[index]
+        if isinstance(message, ToolMessage):
+            index += 1
+            continue
+        tool_calls = _message_tool_calls(message) if isinstance(message, AIMessage) else []
+        if isinstance(message, AIMessage) and tool_calls:
+            expected_ids = {cid for cid in (_tool_call_id(call) for call in tool_calls) if cid}
+            cursor = index + 1
+            matched: List[ToolMessage] = []
+            found_ids = set()
+            while cursor < len(normalized) and isinstance(normalized[cursor], ToolMessage):
+                tool_message = normalized[cursor]
+                tool_call_id = str(getattr(tool_message, "tool_call_id", "") or "")
+                if tool_call_id in expected_ids and tool_call_id not in found_ids:
+                    matched.append(tool_message)
+                    found_ids.add(tool_call_id)
+                cursor += 1
+            if expected_ids and expected_ids <= found_ids:
+                sanitized.append(message)
+                sanitized.extend(matched)
+                index = cursor
+                continue
+            content = str(message.content or "").strip()
+            sanitized.append(AIMessage(content=content or "Continuing."))
+            index += 1
+            continue
+        sanitized.append(message)
+        index += 1
+    return sanitized
+
 
 def _offline_ai_message(messages, provider, model_name, hint):
     last_user_msg = next((m.content for m in reversed(messages) if isinstance(m, HumanMessage)), "Hello")
@@ -55,6 +160,70 @@ def get_registered_tools():
     tools = get_all_personal_os_tools() + get_all_mcp_tools() + get_all_external_api_tools()
     tool_map = {t.name: t for t in tools}
     return tools, tool_map
+
+
+_TOOL_GUIDANCE_MARKER = "When a user request matches a bound tool"
+
+
+def _tool_use_guidance(tools) -> str:
+    names = {getattr(tool, "name", "") for tool in tools}
+    lines = [
+        f"{_TOOL_GUIDANCE_MARKER}, you MUST call that tool instead of describing manual steps.",
+    ]
+    if "email_draft" in names:
+        lines.append("For Gmail drafts, call email_draft(to, subject, body). Do not give Gmail website instructions.")
+    if "email_send" in names:
+        lines.append(
+            "When the user asks to send email, or replies yes/send it/go ahead after discussing an email, "
+            "you MUST call email_send(to, subject, body) in that same turn. Do not ask the user to confirm in chat. "
+            "Do not mention safety protocols or extra authorization. HITL is handled by the system after the tool call. "
+            "Never say an email was sent unless email_send returned a Sent result."
+        )
+    if "email_read" in names:
+        lines.append("email_read lists recent Gmail Inbox mail. Use email_search for Sent or other folders.")
+    if "search_web" in names:
+        lines.append("For web search, call search_web.")
+    if "telegram_read" in names:
+        lines.append("telegram_read fetches live bot updates. telegram_send sends a message.")
+    if "whatsapp_read" in names:
+        lines.append("whatsapp_read lists stored WhatsApp inbox messages (webhook-backed). whatsapp_send sends a message.")
+    if "schedule_job" in names:
+        lines.append(
+            'For reminders, call schedule_job with a time and a payload. '
+            'Use JSON {"tool":"create_task","args":{"title":"..."}} to run a specific tool, '
+            "or a reminder string which creates a task when due."
+        )
+    calendar_tools = names & {"calendar_create_event", "calendar_inspect_availability", "calendar_update_event", "calendar_delete_event"}
+    if calendar_tools:
+        now = datetime.now().astimezone()
+        lines.append(
+            f"Today is {now.strftime('%A, %Y-%m-%d')} in the user's local timezone. "
+            "For calendar writes, call calendar_create_event(title, start_time, end_time) using ISO datetimes "
+            f"such as {now.strftime('%Y-%m-%d')}T17:00:00. Never use a past year such as 2023. "
+            "If the user omits an end time, use a 1 hour duration."
+        )
+    lines.append(
+        "If retrieved long-term memory is present, use those stored facts instead of inventing missing details."
+    )
+    lines.append(
+        "If a tool result says Human-In-The-Loop approval is required, summarize what you already learned "
+        "for the user and wait. Do not retry that high-risk tool in the same turn."
+    )
+    return " ".join(lines)
+
+
+def _messages_with_tool_guidance(messages, tools):
+    guidance = _tool_use_guidance(tools)
+    updated = list(messages)
+    for index, message in enumerate(updated):
+        if not isinstance(message, SystemMessage):
+            continue
+        content = str(message.content or "")
+        if _TOOL_GUIDANCE_MARKER in content:
+            return updated
+        updated[index] = SystemMessage(content=f"{content}\n\n{guidance}")
+        return updated
+    return [SystemMessage(content=guidance)] + updated
 
 
 def _log_removed_tool_block(session_id: str, tool_name: str, tool_args: Any, details: str) -> None:
@@ -98,15 +267,23 @@ def log_loop_event(session_id: str, step_index: int, step_type: str, reasoning: 
 
     conn.commit()
     conn.close()
-    return {
+    event = {
         "id": event_id,
         "step_index": step_index,
         "step_type": step_type,
         "reasoning": reasoning,
         "tool_name": tool_name,
         "tool_args": tool_args,
-        "tool_result": tool_result
+        "tool_result": tool_result,
+        "session_id": session_id,
     }
+    try:
+        from src.harness.loop_stream import publish
+
+        publish({"type": "step", **event}, session_id=session_id)
+    except Exception:
+        pass
+    return event
 
 
 def node_ingest(state: AgentState) -> dict:
@@ -120,10 +297,17 @@ def node_ingest(state: AgentState) -> dict:
     if not has_system_prompt:
         messages = [soul_prompt] + messages
 
-    # Log latest raw user turn uncompacted to SQLite raw_turns table
+    # Resume-after-approval re-invokes the full graph; do not duplicate the user turn.
+    is_approval_resume = state.get("approval_status") in ("APPROVED", "REJECTED")
     last_user_msg = next((m.content for m in reversed(messages) if isinstance(m, HumanMessage)), None)
-    if last_user_msg:
+    if last_user_msg and not is_approval_resume:
         log_raw_turn(session_id=session_id, sender="user", content=str(last_user_msg))
+        try:
+            from src.memory.semantic import persist_explicit_facts_from_user_text
+
+            persist_explicit_facts_from_user_text(str(last_user_msg))
+        except Exception:
+            logger.exception("Failed to persist explicit long-term facts")
         evt = log_loop_event(
             session_id=session_id,
             step_index=0,
@@ -133,7 +317,7 @@ def node_ingest(state: AgentState) -> dict:
         events.append(evt)
 
     return {
-        "messages": messages,
+        "messages": _replace_messages(messages),
         "token_count": estimate_tokens(messages),
         "loop_count": 0,
         "tools_used": [],
@@ -154,10 +338,15 @@ def node_manage_memory(state: AgentState) -> dict:
         secondary_model_name=state.get("secondary_model_name"),
     )
 
+    reconstructed = list(context.messages)
+    tail = _in_flight_tool_tail(messages)
+    if tail:
+        reconstructed.extend(tail)
+
     return {
-        "messages": context.messages,
+        "messages": _replace_messages(reconstructed),
         "summary": "",
-        "token_count": estimate_tokens(context.messages),
+        "token_count": estimate_tokens(reconstructed),
         "trimming_occurred": bool(context.omitted_unsummarized_turn_ids),
         "summary_status": context.status,
         "pending_summary_job_id": context.pending_summary_job_id,
@@ -192,13 +381,13 @@ def _legacy_retrieval_gate_fallback(messages: List[BaseMessage], query: str) -> 
             messages.append(SystemMessage(content=context_block))
 
         return {
-            "messages": messages,
+            "messages": _replace_messages(messages),
             "retrieval_triggered": bool(memory_blocks),
             "retrieved_memories": retrieved_items,
         }
     except Exception:
         return {
-            "messages": messages,
+            "messages": _replace_messages(messages),
             "retrieval_triggered": False,
             "retrieved_memories": [],
         }
@@ -212,12 +401,28 @@ def node_retrieval_gate(state: AgentState) -> dict:
     needs_retrieval = should_retrieve_memory(str(last_user_msg))
     if not needs_retrieval or not last_user_msg:
         return {
-            "messages": messages,
+            "messages": _replace_messages(messages),
             "retrieval_triggered": False,
             "retrieved_memories": [],
         }
 
+    session_id = state.get("session_id", "default_session")
+    log_loop_event(
+        session_id=session_id,
+        step_index=0,
+        step_type="RETRIEVAL",
+        reasoning="Searching long-term memory",
+    )
+
     query_str = str(last_user_msg)
+    pin_text = ""
+    try:
+        pin_text = assemble_pinned_profile()
+    except Exception:
+        pin_text = ""
+    if pin_text:
+        messages.append(SystemMessage(content=pin_text))
+
     try:
         plan = build_retrieval_plan(
             query=query_str,
@@ -238,21 +443,30 @@ def node_retrieval_gate(state: AgentState) -> dict:
             )
             if assembled.block_text:
                 messages.append(SystemMessage(content=assembled.block_text))
-            if assembled.block_text or assembled.legacy_retrieved_items:
+            if assembled.block_text or assembled.legacy_retrieved_items or pin_text:
                 return {
-                    "messages": messages,
+                    "messages": _replace_messages(messages),
                     "retrieval_triggered": True,
                     "retrieved_memories": assembled.legacy_retrieved_items,
                 }
     except Exception:
         pass
 
-    return _legacy_retrieval_gate_fallback(messages, query_str)
+    fallback = _legacy_retrieval_gate_fallback(messages, query_str)
+    if pin_text and not fallback.get("retrieval_triggered"):
+        fallback = {
+            **fallback,
+            "retrieval_triggered": True,
+        }
+    return fallback
 
 def node_agent(state: AgentState) -> dict:
     """Node: Invokes Primary LLM bound with tools and advances loop step."""
     if state.get("approval_status") == "PENDING":
-        return {}
+        messages = list(state.get("messages") or [])
+        has_tool_observation = any(isinstance(message, ToolMessage) for message in messages)
+        if not has_tool_observation:
+            return {}
 
     messages = list(state.get("messages", []))
     session_id = state.get("session_id", "default_session")
@@ -263,6 +477,14 @@ def node_agent(state: AgentState) -> dict:
     tools_used = list(state.get("tools_used") or [])
 
     tools, _ = get_registered_tools()
+    messages = _sanitize_llm_messages(_messages_with_tool_guidance(messages, tools))
+    evt_llm = log_loop_event(
+        session_id=session_id,
+        step_index=loop_count,
+        step_type="LLM_STARTED",
+        reasoning=f"Thinking with {provider}/{model_name}",
+    )
+    events.append(evt_llm)
     primary_route = resolve_primary_llm(provider=provider, model_name=model_name)
     provider = primary_route.selector.provider
     model_name = primary_route.selector.model_name
@@ -279,7 +501,12 @@ def node_agent(state: AgentState) -> dict:
         try:
             response = llm.bind_tools(tools).invoke(messages)
         except Exception as exc:
-            response = _offline_ai_message(messages, provider, model_name, f"Model call failed: {type(exc).__name__}")
+            response = _offline_ai_message(
+                messages,
+                provider,
+                model_name,
+                f"Model call failed: {_safe_llm_error(exc)}",
+            )
     if response is None:
         env_key = {
             "openai": "OPENAI_API_KEY",
@@ -331,6 +558,148 @@ def node_agent(state: AgentState) -> dict:
         "tools_used": tools_used
     }
 
+def _tool_call_name(call: Any) -> str:
+    if isinstance(call, dict):
+        return str(call.get("name") or "")
+    return str(getattr(call, "name", "") or "")
+
+
+def _tool_call_args(call: Any) -> Dict[str, Any]:
+    if isinstance(call, dict):
+        return dict(call.get("args") or {})
+    return dict(getattr(call, "args", None) or {})
+
+
+_INTERNAL_TOOL_ARG_KEYS = frozenset({"_tool_call_id", "_batch_calls"})
+
+
+def _public_tool_args(tool_args: Any) -> Dict[str, Any]:
+    if not isinstance(tool_args, dict):
+        return {}
+    return {key: value for key, value in tool_args.items() if key not in _INTERNAL_TOOL_ARG_KEYS}
+
+
+def _normalize_tool_call(call: Any) -> Dict[str, Any]:
+    return {
+        "name": _tool_call_name(call),
+        "args": _public_tool_args(_tool_call_args(call)),
+        "id": _tool_call_id(call) or f"call_{uuid.uuid4().hex[:6]}",
+    }
+
+
+def _same_tool_high_risk_batch(tool_calls, primary_name: str) -> List[Dict[str, Any]]:
+    """Same-turn high-risk siblings of one tool; one HITL approval covers the batch."""
+    batch: List[Dict[str, Any]] = []
+    for call in tool_calls or []:
+        name = _tool_call_name(call)
+        if name != primary_name:
+            continue
+        if classify_tool_risk(name)[0] != "High":
+            continue
+        batch.append(_normalize_tool_call(call))
+    return batch
+
+
+def _parse_approved_tool_batch(tool_name: str, tool_args: Any) -> List[Dict[str, Any]]:
+    payload = dict(tool_args) if isinstance(tool_args, dict) else {}
+    raw_batch = payload.pop("_batch_calls", None)
+    fallback_id = str(payload.pop("_tool_call_id", "") or f"call_{uuid.uuid4().hex[:6]}")
+    public_args = _public_tool_args(payload)
+    batch: List[Dict[str, Any]] = []
+    if isinstance(raw_batch, list):
+        for item in raw_batch:
+            if not isinstance(item, dict):
+                continue
+            batch.append({
+                "name": str(item.get("name") or tool_name),
+                "args": _public_tool_args(item.get("args")),
+                "id": str(item.get("id") or f"call_{uuid.uuid4().hex[:6]}"),
+            })
+    if not batch:
+        batch = [{"name": tool_name, "args": public_args, "id": fallback_id}]
+    return batch
+
+
+def _first_high_risk_tool_call(tool_calls):
+    for call in tool_calls or []:
+        name = _tool_call_name(call)
+        risk_level, reason = classify_tool_risk(name)
+        if risk_level == "High":
+            return call, reason
+    return None, ""
+
+
+def _has_non_high_tool_call(tool_calls) -> bool:
+    for call in tool_calls or []:
+        name = _tool_call_name(call)
+        if classify_tool_risk(name)[0] != "High":
+            return True
+    return False
+
+
+def _pause_for_high_risk_tool(
+    session_id: str,
+    call: Any,
+    reason: str,
+    events: List[Dict[str, Any]],
+    last_user_text: str = "",
+    sibling_calls: Optional[List[Any]] = None,
+) -> dict:
+    detected_tool = _tool_call_name(call)
+    tool_args = _tool_call_args(call)
+    tool_call_id = _tool_call_id(call) or f"call_{uuid.uuid4().hex[:6]}"
+    batch = [_normalize_tool_call(item) for item in (sibling_calls or [call])]
+    if not batch:
+        batch = [_normalize_tool_call(call)]
+
+    chk_res = checkpoint.invoke({"task_id": session_id})
+    checkpoint_id = chk_res.split("ID '")[1].split("' for task")[0] if "ID '" in chk_res else ""
+    saved_args = dict(tool_args or {"input": last_user_text})
+    saved_args["_tool_call_id"] = tool_call_id
+    if len(batch) > 1:
+        saved_args["_batch_calls"] = batch
+    app_req = create_approval_request(
+        session_id=session_id,
+        tool_name=detected_tool,
+        tool_args=saved_args,
+        reason=reason,
+        checkpoint_id=checkpoint_id,
+    )
+    events.append(
+        log_loop_event(
+            session_id=session_id,
+            step_index=98,
+            step_type="HITL_REQUIRED",
+            tool_name=detected_tool,
+            tool_args=tool_args,
+            reasoning=(
+                f"High risk action '{detected_tool}' requires human approval. Reason: {reason}"
+                + (f" Batch size: {len(batch)}." if len(batch) > 1 else "")
+            ),
+        )
+    )
+    batch_note = ""
+    if len(batch) > 1:
+        batch_note = f"This approval covers {len(batch)} '{detected_tool}' actions from this turn.\n"
+    pause_msg = AIMessage(
+        content=(
+            f"[HUMAN APPROVAL REQUIRED - HIGH RISK TASK]\n"
+            f"Tool Requested: {detected_tool}\n"
+            f"{batch_note}"
+            f"Risk Justification: {reason}\n"
+            f"{generate_payload_preview(detected_tool, saved_args)}\n"
+            f"Approval Request ID: {app_req['request_id']}\n"
+            f"Reply yes in this chat to approve, or open Approvals to reject."
+        )
+    )
+    return {
+        "messages": [pause_msg],
+        "pending_approval_id": app_req["request_id"],
+        "approval_status": "PENDING",
+        "loop_events": events,
+    }
+
+
 def node_hitl_check(state: AgentState) -> dict:
     """
     Node: Evaluates tool call risk. If High Risk operation is detected,
@@ -344,57 +713,17 @@ def node_hitl_check(state: AgentState) -> dict:
     tool_calls = getattr(last_msg, "tool_calls", []) if last_msg else []
     last_user_text = next((str(m.content) for m in reversed(messages) if isinstance(m, HumanMessage)), "").lower()
 
-    detected_tool = None
-    tool_args = {}
-    tool_call_id = f"call_{uuid.uuid4().hex[:6]}"
-
-    if tool_calls:
-        detected_tool = tool_calls[0]["name"]
-        tool_args = dict(tool_calls[0].get("args", {}))
-        tool_call_id = tool_calls[0].get("id", tool_call_id)
-    if detected_tool:
-        risk_level, reason = classify_tool_risk(detected_tool)
-        if risk_level == "High":
-            chk_res = checkpoint.invoke({"task_id": session_id})
-            checkpoint_id = chk_res.split("ID '")[1].split("' for task")[0] if "ID '" in chk_res else ""
-
-            saved_args = dict(tool_args or {"input": last_user_text})
-            saved_args["_tool_call_id"] = tool_call_id
-
-            app_req = create_approval_request(
-                session_id=session_id,
-                tool_name=detected_tool,
-                tool_args=saved_args,
-                reason=reason,
-                checkpoint_id=checkpoint_id
-            )
-
-            evt_hitl = log_loop_event(
-                session_id=session_id,
-                step_index=98,
-                step_type="HITL_REQUIRED",
-                tool_name=detected_tool,
-                tool_args=tool_args,
-                reasoning=f"High risk action '{detected_tool}' requires human approval. Reason: {reason}"
-            )
-            events.append(evt_hitl)
-
-            pause_msg = AIMessage(
-                content=(
-                    f"[HUMAN APPROVAL REQUIRED - HIGH RISK TASK]\n"
-                    f"Tool Requested: {detected_tool}\n"
-                    f"Risk Justification: {reason}\n"
-                    f"Approval Request ID: {app_req['request_id']}\n"
-                    f"Execution paused. Please approve or reject this request to proceed."
-                )
-            )
-
-            return {
-                "messages": [pause_msg],
-                "pending_approval_id": app_req['request_id'],
-                "approval_status": "PENDING",
-                "loop_events": events
-            }
+    high_call, reason = _first_high_risk_tool_call(tool_calls)
+    if high_call is not None and not _has_non_high_tool_call(tool_calls):
+        batch = _same_tool_high_risk_batch(tool_calls, _tool_call_name(high_call))
+        return _pause_for_high_risk_tool(
+            session_id,
+            high_call,
+            reason,
+            events,
+            last_user_text,
+            sibling_calls=batch,
+        )
 
     return {"pending_approval_id": None, "approval_status": "NONE"}
 
@@ -408,10 +737,14 @@ def node_tools(state: AgentState) -> dict:
     approval_status = state.get("approval_status")
 
     _, tool_map = get_registered_tools()
-    last_ai = messages[-1]
-    tool_calls = getattr(last_ai, "tool_calls", [])
+    if approval_status == "PENDING":
+        return {"tools_used": tools_used, "loop_events": events}
+
+    last_ai = _last_ai_with_tool_calls(messages)
+    tool_calls = _message_tool_calls(last_ai) if last_ai is not None else []
 
     tool_messages = []
+    hitl_pause = None
     for call in tool_calls:
         tname = call["name"]
         targs = call.get("args", {})
@@ -430,6 +763,22 @@ def node_tools(state: AgentState) -> dict:
 
         if policy_decision and policy_decision.reason_code == "removed_tool":
             _log_removed_tool_block(session_id, tname, targs, result_str)
+
+        if (
+            hitl_pause is None
+            and policy_decision
+            and policy_decision.requires_approval
+            and approval_status != "APPROVED"
+        ):
+            last_user_text = next((str(m.content) for m in reversed(messages) if isinstance(m, HumanMessage)), "")
+            hitl_pause = _pause_for_high_risk_tool(
+                session_id,
+                {"name": tname, "args": targs, "id": tcall_id},
+                policy_decision.reason,
+                events,
+                last_user_text,
+                sibling_calls=_same_tool_high_risk_batch(tool_calls, tname),
+            )
 
         attempted_nonblocked_tool = policy_decision and not policy_decision.blocked and not policy_decision.requires_approval
         if (invocation.ok or attempted_nonblocked_tool) and tname not in tools_used:
@@ -489,11 +838,16 @@ def node_tools(state: AgentState) -> dict:
 
         tool_messages.append(ToolMessage(content=result_str, tool_call_id=tcall_id, name=tname))
 
-    return {
+    result = {
         "messages": tool_messages,
         "tools_used": tools_used,
-        "loop_events": events
+        "loop_events": events,
     }
+    if hitl_pause:
+        result["pending_approval_id"] = hitl_pause["pending_approval_id"]
+        result["approval_status"] = "PENDING"
+        result["loop_events"] = hitl_pause.get("loop_events") or events
+    return result
 
 def node_consolidate(state: AgentState) -> dict:
     """Node: Enqueues durable memory jobs after completed turns without executing them."""
@@ -515,22 +869,85 @@ def should_continue(state: AgentState) -> str:
     messages = state.get("messages", [])
     last_msg = messages[-1] if messages else None
     tool_calls = getattr(last_msg, "tool_calls", []) if last_msg else []
-    last_user_text = next((str(m.content) for m in reversed(messages) if isinstance(m, HumanMessage)), "").lower()
 
     if loop_count >= 10:
         return "consolidate"
 
     if tool_calls:
+        if state.get("approval_status") == "APPROVED":
+            return "consolidate"
         return "hitl_check"
 
     return "consolidate"
 
 
+def route_after_hitl(state: AgentState) -> str:
+    """High-risk pauses must not continue into tool execution."""
+    if state.get("approval_status") == "PENDING":
+        return "end"
+    return "tools"
+
+
+_APPROVAL_STALL_MARKERS = (
+    "additional approval",
+    "safety protocols",
+    "cannot proceed",
+    "without that approval",
+    "requires approval",
+    "human approval required",
+    "i cannot proceed",
+    "unable to send",
+)
+
+
+def _resume_user_response(messages, tool_output: str) -> str:
+    """Prefer a real send/result over the model asking for approval again."""
+    llm_text = next(
+        (str(m.content) for m in reversed(messages or []) if isinstance(m, AIMessage) and m.content),
+        "",
+    )
+    lowered = llm_text.lower()
+    if llm_text and not any(marker in lowered for marker in _APPROVAL_STALL_MARKERS):
+        return llm_text
+    return str(tool_output or llm_text or "").strip()
+
+
+def _already_processed_approval_response(request_id: str, existing_request: Dict[str, Any], existing_status: str) -> Dict[str, Any]:
+    status = "APPROVED" if existing_status == "EXECUTED" else existing_status
+    tool_name = str((existing_request or {}).get("tool_name") or "")
+    message = (
+        f"Approval request '{request_id}' was already {status}. "
+        "Duplicate execution skipped."
+    )
+    return {
+        "request_id": request_id,
+        "status": status,
+        "tool_name": tool_name,
+        "tool_result": message,
+        "response": message,
+        "message": message,
+    }
+
+
 def resume_graph_after_approval(request_id: str, decision: str) -> Dict[str, Any]:
     """Resumes or aborts graph execution after human approval decision ('APPROVED' or 'REJECTED'). Preserves full conversation state."""
     existing_request = get_approval_request(request_id)
-    existing_tool_name = str((existing_request or {}).get("tool_name") or "")
-    if str(decision or "").upper().strip() == "APPROVED" and is_removed_tool_name(existing_tool_name):
+    if existing_request is None:
+        raise ValueError(f"Approval request '{request_id}' not found.")
+    existing_tool_name = str(existing_request.get("tool_name") or "")
+    existing_status = str(existing_request.get("status") or "").upper()
+    norm_decision = str(decision or "").upper().strip()
+    if existing_status in ("APPROVED", "REJECTED", "EXECUTED"):
+        same_decision = (
+            (norm_decision == "APPROVED" and existing_status in ("APPROVED", "EXECUTED"))
+            or (norm_decision == "REJECTED" and existing_status == "REJECTED")
+        )
+        if same_decision:
+            return _already_processed_approval_response(request_id, existing_request, existing_status)
+        raise ValueError(
+            f"Approval request '{request_id}' has already been processed with status '{existing_status}'. Duplicate execution blocked."
+        )
+    if norm_decision == "APPROVED" and is_removed_tool_name(existing_tool_name):
         blocked_message = get_removed_tool_blocked_message(existing_tool_name)
         try:
             processed = process_approval_decision(request_id, "REJECTED")
@@ -567,10 +984,7 @@ def resume_graph_after_approval(request_id: str, decision: str) -> Dict[str, Any
             existing_tool_args = json.loads(raw_existing_args) if isinstance(raw_existing_args, str) else raw_existing_args
         except Exception:
             existing_tool_args = {}
-        if isinstance(existing_tool_args, dict):
-            policy_args = {key: value for key, value in existing_tool_args.items() if key != "_tool_call_id"}
-        else:
-            policy_args = {}
+        policy_args = _public_tool_args(existing_tool_args)
         preflight = evaluate_tool_policy(
             existing_tool_name,
             policy_args,
@@ -603,7 +1017,6 @@ def resume_graph_after_approval(request_id: str, decision: str) -> Dict[str, Any
             }
 
     processed = process_approval_decision(request_id, decision)
-    checkpoint_id = processed.get("checkpoint_id", "")
     tool_name = processed.get("tool_name", "")
     session_id = processed.get("session_id", "default_session")
 
@@ -613,7 +1026,8 @@ def resume_graph_after_approval(request_id: str, decision: str) -> Dict[str, Any
     except Exception:
         tool_args = {}
 
-    tool_call_id = tool_args.pop("_tool_call_id", f"call_{uuid.uuid4().hex[:6]}") if isinstance(tool_args, dict) else f"call_{uuid.uuid4().hex[:6]}"
+    batch_calls = _parse_approved_tool_batch(tool_name, tool_args)
+    tool_args = batch_calls[0]["args"] if batch_calls else {}
 
     # Load existing turns to preserve full conversation context
     past_turns = get_raw_turns(session_id=session_id)
@@ -629,32 +1043,44 @@ def resume_graph_after_approval(request_id: str, decision: str) -> Dict[str, Any
     _, tool_map = get_registered_tools()
 
     if decision.upper() == "APPROVED":
-        policy_args = tool_args if isinstance(tool_args, dict) else {}
-        invocation = invoke_registered_tool(
-            tool_name,
-            policy_args,
-            tool_map,
-            source=ToolCallerSource.APPROVAL_RESUME,
-            approval_context={"approved": True, "request_id": request_id},
-        )
-        if invocation.ok:
-            tool_output = invocation.to_text()
-        elif invocation.policy_decision and invocation.policy_decision.metadata.get("legacy_hitl_demo_tool"):
-            tool_output = f"Tool '{tool_name}' executed successfully upon human approval."
-        else:
-            tool_output = invocation.to_text()
-        log_loop_event(
-            session_id=session_id,
-            step_index=99,
-            step_type="HITL_APPROVED",
-            reasoning=f"Human operator APPROVED execution of '{tool_name}'",
-            tool_name=tool_name,
-            tool_args=tool_args,
-            tool_result=tool_output
-        )
+        outputs = []
+        tool_messages = []
+        ai_calls = []
+        for item in batch_calls:
+            item_name = item["name"]
+            item_args = item["args"]
+            item_id = item["id"]
+            invocation = invoke_registered_tool(
+                item_name,
+                item_args,
+                tool_map,
+                source=ToolCallerSource.APPROVAL_RESUME,
+                approval_context={"approved": True, "request_id": request_id},
+            )
+            item_output = invocation.to_text()
+            outputs.append(item_output)
+            log_loop_event(
+                session_id=session_id,
+                step_index=99,
+                step_type="HITL_APPROVED",
+                reasoning=f"Human operator APPROVED execution of '{item_name}'",
+                tool_name=item_name,
+                tool_args=item_args,
+                tool_result=item_output,
+            )
+            tool_messages.append(ToolMessage(content=item_output, tool_call_id=item_id, name=item_name))
+            ai_calls.append({"name": item_name, "args": item_args, "id": item_id})
 
-        tool_msg = ToolMessage(content=tool_output, tool_call_id=tool_call_id, name=tool_name)
-        resume_messages = history_messages + [tool_msg]
+        if len(outputs) == 1:
+            tool_output = outputs[0]
+        else:
+            tool_output = "\n".join(
+                f"[{index}/{len(outputs)}] {text}" for index, text in enumerate(outputs, start=1)
+            )
+        resume_messages = history_messages + [
+            AIMessage(content="", tool_calls=ai_calls),
+            *tool_messages,
+        ]
 
         resume_state = {
             "messages": resume_messages,
@@ -665,7 +1091,7 @@ def resume_graph_after_approval(request_id: str, decision: str) -> Dict[str, Any
         }
         res = agent_app.invoke(resume_state)
         messages = res.get("messages", [])
-        final_response = next((str(m.content) for m in reversed(messages) if isinstance(m, AIMessage) and m.content), tool_output)
+        final_response = _resume_user_response(messages, tool_output)
 
         return {
             "request_id": request_id,
@@ -687,9 +1113,15 @@ def resume_graph_after_approval(request_id: str, decision: str) -> Dict[str, Any
             tool_result="Action REJECTED by human operator."
         )
 
-        rejection_msg = ToolMessage(content="Action REJECTED by human operator.", tool_call_id=tool_call_id, name=tool_name)
+        rejection_msgs = [
+            ToolMessage(content="Action REJECTED by human operator.", tool_call_id=item["id"], name=item["name"])
+            for item in batch_calls
+        ]
         resume_state = {
-            "messages": [rejection_msg],
+            "messages": history_messages + [
+                AIMessage(content="", tool_calls=[{"name": item["name"], "args": item["args"], "id": item["id"]} for item in batch_calls]),
+                *rejection_msgs,
+            ],
             "session_id": session_id,
             "approval_status": "REJECTED",
             "loop_count": 1
@@ -739,7 +1171,14 @@ def build_agent_graph():
         }
     )
 
-    workflow.add_edge("hitl_check", "tools")
+    workflow.add_conditional_edges(
+        "hitl_check",
+        route_after_hitl,
+        {
+            "tools": "tools",
+            "end": END,
+        },
+    )
     workflow.add_edge("tools", "agent")
     workflow.add_edge("consolidate", END)
 

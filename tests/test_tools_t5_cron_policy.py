@@ -8,10 +8,10 @@ def test_t5_read_only_local_action_can_execute_directly():
     assert decision.requires_approval is False
 
 
-def test_t5_local_write_action_is_approval_gated():
+def test_t5_local_write_action_can_execute_when_scheduled():
     decision = decide_scheduler_execution("create_task", {"title": "x"})
-    assert decision.can_execute_directly is False
-    assert decision.requires_approval is True
+    assert decision.can_execute_directly is True
+    assert decision.requires_approval is False
 
 
 def test_t5_provider_action_deferred_and_approval_gated():

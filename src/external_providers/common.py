@@ -186,13 +186,31 @@ def validation_error(provider_id: str, message: str) -> ExternalProviderResult:
 
 
 def post_json(url: str, payload: Mapping[str, Any], *, headers: Mapping[str, str], timeout: int = 20) -> ExternalProviderResult:
+    return request_json("POST", url, headers=headers, payload=payload, timeout=timeout)
+
+
+def get_json(url: str, *, headers: Mapping[str, str] | None = None, timeout: int = 20) -> ExternalProviderResult:
+    return request_json("GET", url, headers=headers or {}, timeout=timeout)
+
+
+def request_json(
+    method: str,
+    url: str,
+    *,
+    headers: Mapping[str, str],
+    payload: Mapping[str, Any] | None = None,
+    timeout: int = 20,
+) -> ExternalProviderResult:
     provider_id = str(headers.get("X-ASTRA-Provider-ID") or "external_api")
     clean_headers = {key: value for key, value in headers.items() if key != "X-ASTRA-Provider-ID"}
+    encoded = json.dumps(dict(payload)).encode("utf-8") if payload is not None else None
+    if encoded is not None:
+        clean_headers = {**clean_headers, "Content-Type": "application/json"}
     request = urllib.request.Request(
         url,
-        data=json.dumps(dict(payload)).encode("utf-8"),
-        headers={**clean_headers, "Content-Type": "application/json"},
-        method="POST",
+        data=encoded,
+        headers=clean_headers,
+        method=str(method or "GET").upper(),
     )
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -200,7 +218,7 @@ def post_json(url: str, payload: Mapping[str, Any], *, headers: Mapping[str, str
             return ExternalProviderResult(
                 status=ExternalProviderInvocationStatus.SUCCEEDED,
                 provider_id=provider_id,
-                content="Provider API call succeeded.",
+                content=_content_from_http_body(provider_id, body),
                 audit_metadata={
                     "status_code": getattr(response, "status", None),
                     "response_preview": redact_text(body[:160]),
@@ -219,3 +237,29 @@ def post_json(url: str, payload: Mapping[str, Any], *, headers: Mapping[str, str
             provider_id=provider_id,
             error=redact_text(str(exc)) or "Provider invocation failed.",
         )
+
+
+def _content_from_http_body(provider_id: str, body: str) -> str:
+    try:
+        data = json.loads(body) if body else {}
+    except json.JSONDecodeError:
+        return "Provider API call succeeded."
+    if not isinstance(data, dict):
+        return "Provider API call succeeded."
+    if provider_id == "whatsapp_api":
+        messages = data.get("messages")
+        if isinstance(messages, list) and messages and isinstance(messages[0], dict):
+            message_id = str(messages[0].get("id") or "").strip()
+            if message_id:
+                return f"WhatsApp message sent ({message_id})."
+    if provider_id == "telegram_bot_api":
+        result = data.get("result")
+        if isinstance(result, dict):
+            message_id = result.get("message_id")
+            chat = result.get("chat") if isinstance(result.get("chat"), dict) else {}
+            chat_id = chat.get("id")
+            if message_id is not None:
+                return f"Telegram message sent (message_id={message_id}, chat_id={chat_id})."
+        if isinstance(result, list):
+            return json.dumps(data)
+    return "Provider API call succeeded."

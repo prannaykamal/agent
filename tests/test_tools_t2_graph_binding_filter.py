@@ -1,5 +1,3 @@
-import pytest
-
 REMOVED_SANDBOX_TOOLS = {
     "safe_browse_url",
     "capture_screenshot",
@@ -9,13 +7,6 @@ REMOVED_SANDBOX_TOOLS = {
     "github_merge",
 }
 
-
-
-@pytest.fixture(autouse=True)
-def disable_live_mcp_discovery(monkeypatch):
-    monkeypatch.setattr("src.mcp_gateway.registry.load_live_mcp_tools", lambda: [])
-
-
 def test_t2_get_registered_tools_excludes_removed_sandbox_tools():
     from src.harness.graph import get_registered_tools
 
@@ -24,7 +15,6 @@ def test_t2_get_registered_tools_excludes_removed_sandbox_tools():
 
     assert names.isdisjoint(REMOVED_SANDBOX_TOOLS)
     assert set(tool_map).isdisjoint(REMOVED_SANDBOX_TOOLS)
-
 
 def test_t2_get_registered_tools_keeps_personal_os_and_non_removed_mcp_tools():
     from src.harness.graph import get_registered_tools

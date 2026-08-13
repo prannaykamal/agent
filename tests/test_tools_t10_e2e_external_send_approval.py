@@ -35,7 +35,6 @@ class FakeGmailClient:
 def temp_db(tmp_path, monkeypatch):
     db_file = tmp_path / "tools_t10_external_send.db"
     monkeypatch.setattr("src.db.DB_PATH", db_file)
-    monkeypatch.setattr("src.mcp_gateway.registry.load_live_mcp_tools", lambda: [])
     clear_mcp_provider_discovery_cache()
     init_db(db_file)
     return db_file
@@ -77,6 +76,30 @@ def test_t10_approved_send_revalidates_policy_and_provider_state(tmp_path):
         source=ToolCallerSource.APPROVAL_RESUME,
         approval_context={"approved": True},
     )
+
+    assert result.status == MCPInvocationStatus.SUCCEEDED
+    assert client.calls == [("gmail_send", {"to": "user@example.com", "subject": "Hi", "body": "Hello"})]
+
+
+def test_t10_nested_gmail_send_inherits_approved_hitl_context(tmp_path):
+    clear_mcp_provider_discovery_cache()
+    client = FakeGmailClient()
+    from src.tools.policy import ToolCallerSource, bind_tool_policy_context, reset_tool_policy_context
+
+    token = bind_tool_policy_context(
+        source=ToolCallerSource.APPROVAL_RESUME,
+        approval_context={"approved": True},
+    )
+    try:
+        result = invoke_provider_tool(
+            provider_ids=("gmail",),
+            tool_hints=("send",),
+            arguments={"to": "user@example.com", "subject": "Hi", "body": "Hello"},
+            config_path=_config(tmp_path),
+            client_factory=lambda _provider: client,
+        )
+    finally:
+        reset_tool_policy_context(token)
 
     assert result.status == MCPInvocationStatus.SUCCEEDED
     assert client.calls == [("gmail_send", {"to": "user@example.com", "subject": "Hi", "body": "Hello"})]

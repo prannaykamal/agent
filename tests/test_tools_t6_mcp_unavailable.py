@@ -59,3 +59,62 @@ def test_t6_unsupported_transport_is_unavailable_without_startup_failure(tmp_pat
 
     assert google_calendar["availability_status"] == "unavailable"
     assert google_calendar["discovery_status"] == MCPDiscoveryStatus.UNSUPPORTED_TRANSPORT.value
+
+
+def test_t6_http_transport_discovers_via_streamable_http(tmp_path):
+    import json
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, format, *args):
+            return
+
+        def do_POST(self):
+            length = int(self.headers.get("Content-Length") or "0")
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            req_id = payload.get("id")
+            method = payload.get("method")
+            if req_id is None:
+                self.send_response(202)
+                self.end_headers()
+                return
+            if method == "initialize":
+                result = {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}}, "serverInfo": {"name": "Gmail HTTP"}}
+            elif method == "tools/list":
+                result = {"tools": [{"name": "gmail_search", "inputSchema": {"type": "object"}}]}
+            else:
+                result = {}
+            body = json.dumps({"jsonrpc": "2.0", "id": req_id, "result": result}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        config_file = tmp_path / "mcp_config.json"
+        config_file.write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "gmail": {
+                            "transport": "http",
+                            "url": f"http://127.0.0.1:{server.server_port}/mcp",
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        statuses = get_mcp_provider_statuses(config_path=config_file, refresh=True)
+        gmail = {status["provider_id"]: status for status in statuses}["gmail"]
+        assert gmail["discovery_status"] == MCPDiscoveryStatus.DISCOVERED.value
+        assert gmail["availability_status"] == "available"
+        assert gmail["tool_count"] == 1
+    finally:
+        server.shutdown()
+        server.server_close()

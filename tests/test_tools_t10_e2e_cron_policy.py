@@ -10,7 +10,6 @@ from src.personal_os.scheduler_worker import process_due_schedules_once
 def temp_db(tmp_path, monkeypatch):
     db_file = tmp_path / "tools_t10_cron.db"
     monkeypatch.setattr("src.db.DB_PATH", db_file)
-    monkeypatch.setattr("src.mcp_gateway.registry.load_live_mcp_tools", lambda: [])
     init_db(db_file)
     return db_file
 

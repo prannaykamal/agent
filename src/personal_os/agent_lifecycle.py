@@ -3,6 +3,8 @@ from src.orchestration.registry import update_sub_agent_status, get_sub_agent
 from src.orchestration.sub_agent import execute_sub_agent
 from src.personal_os.audit import log_personal_os_action
 
+_TERMINAL_STATUSES = {"COMPLETED", "FAILED", "TERMINATED"}
+
 
 @tool
 def spawn_agent(role: str, instructions: str) -> str:
@@ -20,10 +22,14 @@ def spawn_agent(role: str, instructions: str) -> str:
 
 @tool
 def terminate_agent(agent_id: str) -> str:
-    """Forces termination of a running sub-agent process."""
+    """Marks a running or paused sub-agent as terminated. Completed runs cannot be undone."""
     sub_rec = get_sub_agent(agent_id)
     if not sub_rec:
         return f"[Personal OS Agent Error] Sub-agent '{agent_id}' not found."
+
+    status = str(sub_rec.get("status") or "").upper()
+    if status in _TERMINAL_STATUSES:
+        return f"[Personal OS Agent Error] Sub-agent '{agent_id}' is already {status.lower()} and cannot be terminated."
 
     update_sub_agent_status(agent_id=agent_id, status="TERMINATED", result="Force terminated by user request.")
     log_personal_os_action(
@@ -37,10 +43,14 @@ def terminate_agent(agent_id: str) -> str:
 
 @tool
 def pause_agent(agent_id: str) -> str:
-    """Pauses execution of an active sub-agent process."""
+    """Pauses a running sub-agent record so it can be resumed later."""
     sub_rec = get_sub_agent(agent_id)
     if not sub_rec:
         return f"[Personal OS Agent Error] Sub-agent '{agent_id}' not found."
+
+    status = str(sub_rec.get("status") or "").upper()
+    if status != "RUNNING":
+        return f"[Personal OS Agent Error] Sub-agent '{agent_id}' is {status.lower()} and cannot be paused."
 
     update_sub_agent_status(agent_id=agent_id, status="PAUSED", result=sub_rec.get("result", ""))
     log_personal_os_action(
@@ -54,19 +64,31 @@ def pause_agent(agent_id: str) -> str:
 
 @tool
 def resume_agent(agent_id: str) -> str:
-    """Resumes execution of a paused sub-agent process."""
+    """Resumes a paused sub-agent by re-running its original role and instructions."""
     sub_rec = get_sub_agent(agent_id)
     if not sub_rec:
         return f"[Personal OS Agent Error] Sub-agent '{agent_id}' not found."
 
-    update_sub_agent_status(agent_id=agent_id, status="RUNNING", result=sub_rec.get("result", ""))
+    status = str(sub_rec.get("status") or "").upper()
+    if status != "PAUSED":
+        return f"[Personal OS Agent Error] Sub-agent '{agent_id}' is {status.lower()} and cannot be resumed."
+
+    update_sub_agent_status(agent_id=agent_id, status="RESUMED", result="Re-dispatched original instructions.")
     log_personal_os_action(
         tool_name="resume_agent",
         action="PERSONAL_OS_AGENT_RESUMED",
         payload={"agent_id": agent_id},
         target_resource=agent_id,
     )
-    return f"[Personal OS Agent Resumed] Sub-agent '{agent_id}' has been resumed."
+    res = execute_sub_agent(
+        role=str(sub_rec.get("role") or "assistant"),
+        instructions=str(sub_rec.get("instructions") or ""),
+        parent_session_id=str(sub_rec.get("parent_session_id") or "main_session"),
+    )
+    return (
+        f"[Personal OS Agent Resumed] Sub-agent '{agent_id}' re-dispatched as '{res['agent_id']}' "
+        f"({res['status']}).\nResult: {res['result']}"
+    )
 
 
 @tool

@@ -1,12 +1,10 @@
 import pytest
-import sqlite3
-from pathlib import Path
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage
 
 from src.db import init_db
 from src.memory.episodic import log_episode, search_episodes_fts
-from src.memory.semantic import add_semantic_fact, search_facts_top_k, sync_memory_md, extract_and_save_facts
-from src.memory.procedural import add_procedural_skill, sync_skills_from_md, match_procedural_skills
+from src.memory.semantic import add_semantic_fact, search_facts_top_k
+from src.memory.procedural import sync_skills_from_md, match_procedural_skills
 from src.memory.retrieval_gate import should_retrieve_memory
 from src.harness.graph import agent_app
 
@@ -64,14 +62,18 @@ def test_procedural_memory_sync_and_match(temp_env):
     assert matches[0]["name"] == "Code Review Workflow"
 
 def test_retrieval_gate():
-    # Math & greetings should skip retrieval
+    # Math, greetings, and acknowledgements should skip retrieval
     assert should_retrieve_memory("2 + 2") is False
     assert should_retrieve_memory("hello") is False
+    assert should_retrieve_memory("thanks") is False
 
     # Personal memory queries should trigger retrieval
     assert should_retrieve_memory("What did I say about my meeting?") is True
     assert should_retrieve_memory("Remember that I prefer morning slots") is True
     assert should_retrieve_memory("Who am I meeting tomorrow?") is True
+    assert should_retrieve_memory("send mail to khushambansal@gmail.com saying hi") is True
+    assert should_retrieve_memory("email alice about the invoice") is True
+    assert should_retrieve_memory("send 5 mails to Prannay saying hi in Spanish") is True
 
 def test_end_to_end_memory_workflow(temp_env, monkeypatch):
     db_path = temp_env["db"]
@@ -84,8 +86,6 @@ def test_end_to_end_memory_workflow(temp_env, monkeypatch):
     monkeypatch.setattr("src.harness.graph.search_facts_top_k", lambda query, k: search_facts_top_k(query, k, db_path=db_path))
     monkeypatch.setattr("src.harness.graph.search_episodes_fts", lambda query, limit: search_episodes_fts(query, limit, db_path=db_path))
     monkeypatch.setattr("src.harness.graph.match_procedural_skills", lambda query: match_procedural_skills(query, db_path=db_path))
-    monkeypatch.setattr("src.harness.graph.log_episode", lambda session_id, content: log_episode(session_id, content, db_path=db_path))
-    monkeypatch.setattr("src.harness.graph.extract_and_save_facts", lambda user_input, assistant_output: extract_and_save_facts(user_input, assistant_output, db_path=db_path, memory_path=mem_path))
 
     # Add a initial fact
     add_semantic_fact(category="user_preference", fact_text="User prefers dark theme mode", db_path=db_path, memory_path=mem_path)

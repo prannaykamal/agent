@@ -39,9 +39,16 @@ export default function ScheduledCockpit({ onRefresh }) {
       let runUrl = "/api/tools/cron/runs?limit=20";
       if (runStatusFilter !== "ALL") runUrl += `&status=${encodeURIComponent(runStatusFilter)}`;
       if (runScheduleIdFilter.trim()) runUrl += `&schedule_id=${encodeURIComponent(runScheduleIdFilter.trim())}`;
-      const [scheduleData, runData] = await Promise.all([api.get(schedUrl), api.get(runUrl)]);
-      setSchedules(scheduleData.schedules || []);
-      setRuns(runData.runs || []);
+      const [scheduleRes, runRes] = await Promise.allSettled([api.get(schedUrl), api.get(runUrl)]);
+      const scheduleData = scheduleRes.status === "fulfilled" ? scheduleRes.value : null;
+      const runData = runRes.status === "fulfilled" ? runRes.value : null;
+      setSchedules(scheduleData?.schedules || []);
+      setRuns(runData?.runs || []);
+      if (!scheduleData && !runData) {
+        setError("Failed to load schedules");
+      } else if (!scheduleData || !runData) {
+        setError("Part of the scheduled jobs view could not load.");
+      }
     } catch (e) {
       setError(e.message || "Failed to load schedules");
     } finally {
