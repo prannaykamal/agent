@@ -30,10 +30,13 @@ function Metric({ label, value }) {
   );
 }
 
-function Panel({ title, children }) {
+function Panel({ title, actions, children }) {
   return (
     <section className="glass-card">
-      <h3 style={{ marginBottom: 12 }}>{title}</h3>
+      <div className="panel-heading">
+        <h3>{title}</h3>
+        {actions}
+      </div>
       {children}
     </section>
   );
@@ -54,6 +57,8 @@ export default function MemoryObservabilityCockpit() {
   const [traceError, setTraceError] = useState(null);
   const [jobStatus, setJobStatus] = useState("");
   const [includePayload, setIncludePayload] = useState(false);
+  const [consolidating, setConsolidating] = useState(false);
+  const [consolidateNotice, setConsolidateNotice] = useState(null);
 
   const loadPanelData = async () => {
     setLoading(true);
@@ -92,6 +97,38 @@ export default function MemoryObservabilityCockpit() {
       setError(err.message || "Failed to load memory observability");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleTriggerConsolidation = async () => {
+    setConsolidating(true);
+    setConsolidateNotice(null);
+    try {
+      const payload = await api.post("/api/memory/observability/semantic/consolidate", {});
+      const inserted = payload.inserted ?? payload.enqueued ?? 0;
+      if (!inserted) {
+        setConsolidateNotice({
+          kind: "info",
+          text: "No pending sessions to consolidate.",
+        });
+      } else {
+        setConsolidateNotice({
+          kind: "ok",
+          text: `Queued consolidation for ${inserted} session${inserted === 1 ? "" : "s"}. The worker will pick it up.`,
+        });
+      }
+      await loadPanelData();
+      window.setTimeout(() => {
+        loadPanelData();
+      }, 2000);
+    } catch (err) {
+      console.error(err);
+      setConsolidateNotice({
+        kind: "error",
+        text: err.message || "Failed to trigger consolidation",
+      });
+    } finally {
+      setConsolidating(false);
     }
   };
 
@@ -206,7 +243,19 @@ export default function MemoryObservabilityCockpit() {
             ) : <div className="lede">Run a trace to inspect planner and retrieval decisions.</div>}
           </Panel>
 
-          <Panel title="Semantic Pipeline">
+          <Panel
+            title="Semantic Pipeline"
+            actions={
+              <button
+                className="btn btn-primary btn-sm"
+                onClick={handleTriggerConsolidation}
+                disabled={consolidating}
+              >
+                {consolidating ? "Triggering…" : "Trigger consolidation"}
+              </button>
+            }
+          >
+            {consolidateNotice ? <Notice kind={consolidateNotice.kind}>{consolidateNotice.text}</Notice> : null}
             <SimpleTable rows={semantic.candidates || []} emptyText="No semantic candidates." columns={["id", "status", "category", "fact_preview", "confidence", "session_id", "created_at"]} />
             <SimpleTable rows={semantic.recent_consolidation_runs || []} emptyText="No semantic consolidation runs." columns={["id", "status", "trigger_type", "promoted_count", "created_at"]} />
           </Panel>

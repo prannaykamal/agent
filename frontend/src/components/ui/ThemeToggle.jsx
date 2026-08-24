@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from "react";
 import Icon from "./Icon.jsx";
 
-const THEME_KEY = "astra-theme";
+const THEME_KEY = "ivo-theme";
 
 function readTheme() {
   try {
-    const saved = localStorage.getItem(THEME_KEY);
+    const saved = localStorage.getItem(THEME_KEY) || localStorage.getItem("astra-theme");
     if (saved === "light" || saved === "dark") return saved;
   } catch {
     /* ignore */

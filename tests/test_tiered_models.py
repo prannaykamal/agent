@@ -17,7 +17,7 @@ def test_tiered_model_pairs_catalog():
     assert "pairs" in catalog
     pairs = catalog["pairs"]
 
-    assert pairs["openai"]["primary"] == "gpt-4o"
+    assert pairs["openai"]["primary"] == "GPT-5.5"
     assert pairs["openai"]["secondary"] == "gpt-4o-mini"
     assert pairs["openai"]["context_window"] == 128000
 

@@ -1,4 +1,4 @@
-﻿import json
+import json
 import sqlite3
 from datetime import datetime, timedelta
 
@@ -175,3 +175,21 @@ def test_skills_endpoint_does_not_reload_or_record_usage(temp_db, monkeypatch):
     resp = client.get("/api/memory/observability/skills")
 
     assert resp.status_code == 200
+
+
+def test_manual_semantic_consolidate_enqueues_job(temp_db):
+    _execute(
+        temp_db,
+        """
+        INSERT INTO pending_fact_candidates (id, session_id, fact, category, confidence, explicit, source, status)
+        VALUES ('factcand-1', 'sess', 'User likes compact UI', 'preference', 0.8, 0, 'test', 'PENDING')
+        """,
+    )
+
+    resp = client.post("/api/memory/observability/semantic/consolidate", json={})
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["inserted"] >= 1
+    assert data["trigger_type"] == "manual"
+    assert "sess" in data["sessions"]

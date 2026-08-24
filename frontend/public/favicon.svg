@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Ivo">
+  <rect width="32" height="32" rx="9" fill="#c4784a"/>
+  <g
+    fill="none"
+    stroke="#faf6f0"
+    stroke-width="1.8"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    transform="translate(4 4) scale(1)"
+  >
+    <path d="M12 3v4M12 17v4M3 12h4M17 12h4" />
+    <path d="M6.3 6.3l2.8 2.8M14.9 14.9l2.8 2.8M17.7 6.3l-2.8 2.8M9.1 14.9l-2.8 2.8" />
+  </g>
+</svg>

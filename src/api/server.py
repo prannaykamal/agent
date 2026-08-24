@@ -7,7 +7,7 @@ from pathlib import Path
 from queue import Empty
 from typing import Optional, Dict, Any, List
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, StreamingResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -60,6 +60,7 @@ from src.memory.observability import (
     get_skill_observability,
     get_worker_observability,
 )
+from src.memory.consolidation_scheduler import enqueue_manual_semantic_consolidation
 from src.startup import ensure_system_initialized
 from src.personal_os.backup import export_agent_backup, restore_agent_backup
 
@@ -98,7 +99,7 @@ class ChatRequest(BaseModel):
     message: str
     session_id: Optional[str] = "default_session"
     provider: Optional[str] = "openai"
-    model_name: Optional[str] = "gpt-4o-mini"
+    model_name: Optional[str] = "GPT-5.5"
     secondary_provider: Optional[str] = "openai"
     secondary_model_name: Optional[str] = "gpt-4o-mini"
 
@@ -156,6 +157,10 @@ class RetrievalTraceRequest(BaseModel):
     include_candidates: bool = True
     include_prompt_block: bool = False
     max_candidates: int = 20
+
+
+class ManualConsolidationRequest(BaseModel):
+    session_id: Optional[str] = None
 ALLOWED_DATA_TABLES = [
     "episodes", "facts", "skills", "checkpoints", "approval_requests",
     "sub_agents", "tasks", "scheduled_jobs", "resource_locks", "events_log",
@@ -377,7 +382,7 @@ def _chat_payload(req: ChatRequest) -> Dict[str, Any]:
         "pending_approval_id": None,
         "approval_status": None,
         "provider": norm_provider,
-        "model_name": req.model_name or "gpt-4o-mini",
+        "model_name": req.model_name or "GPT-5.5",
         "secondary_provider": norm_sec_provider,
         "secondary_model_name": req.secondary_model_name or "gpt-4o-mini"
     }
@@ -567,6 +572,11 @@ def api_memory_observability_semantic(
     limit: int = 100,
 ):
     return get_semantic_observability(session_id=session_id, status=status, limit=limit)
+
+@app.post("/api/memory/observability/semantic/consolidate")
+def api_memory_observability_semantic_consolidate(req: Optional[ManualConsolidationRequest] = None):
+    body = req or ManualConsolidationRequest()
+    return enqueue_manual_semantic_consolidation(session_id=body.session_id)
 
 @app.get("/api/memory/observability/procedural")
 def api_memory_observability_procedural(status: Optional[str] = None, limit: int = 100):
@@ -944,8 +954,8 @@ def api_mcp_oauth_callback(
     return HTMLResponse(
         "<html><body>"
         f"<h1>Signed in to {provider}</h1>"
-        "<p>You can close this tab and ask ASTRA to create the Gmail draft again.</p>"
-        "<p><a href='http://localhost:5173'>Back to ASTRA</a></p>"
+        "<p>You can close this tab and ask Ivo to create the Gmail draft again.</p>"
+        "<p><a href='http://localhost:5173'>Back to Ivo</a></p>"
         "</body></html>"
     )
 
@@ -1193,7 +1203,7 @@ def api_get_system_health():
         worker_status = "STOPPED"
     return {
         "status": "HEALTHY",
-        "app_name": "ASTRA (Autonomous System for Tasks, Reasoning & Assistance)",
+        "app_name": "Ivo",
         "database_path": str(DB_PATH),
         "schema_version": schema_ver,
         "worker_status": worker_status,
@@ -1366,6 +1376,14 @@ frontend_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__f
 dist_path = os.path.join(frontend_path, "dist")
 target_static = dist_path if os.path.exists(dist_path) else frontend_path
 
+favicon_path = os.path.join(frontend_path, "public", "favicon.svg")
+
+@app.get("/favicon.svg")
+def serve_favicon():
+    if os.path.exists(favicon_path):
+        return FileResponse(favicon_path, media_type="image/svg+xml")
+    raise HTTPException(status_code=404, detail="Favicon not found")
+
 if os.path.exists(target_static):
     app.mount("/static", StaticFiles(directory=target_static), name="static")
 
@@ -1373,7 +1391,6 @@ if os.path.exists(target_static):
     def serve_frontend():
         index_file = os.path.join(target_static, "index.html")
         if os.path.exists(index_file):
-            from fastapi.responses import FileResponse
             return FileResponse(index_file)
         return {"message": "24x7 Personal Assistant API Backend Online"}
 

@@ -4,7 +4,7 @@
 
 Phase 5B replaces legacy synchronous short-term memory compaction with token-based oldest-chunk summarization and immutable summary blocks.
 
-After Phase 5A, ASTRA has pure provider-aware token budgeting primitives in `src/memory/token_budget.py`, but the runtime graph still calls `manage_short_term_memory_with_budget()` in `src/memory/short_term.py`. That legacy function uses message-count chunking and may call the secondary LLM inside the chat path. Phase 5B moves summary generation out of chat and into the existing Phase 3B memory worker infrastructure.
+After Phase 5A, Ivo has pure provider-aware token budgeting primitives in `src/memory/token_budget.py`, but the runtime graph still calls `manage_short_term_memory_with_budget()` in `src/memory/short_term.py`. That legacy function uses message-count chunking and may call the secondary LLM inside the chat path. Phase 5B moves summary generation out of chat and into the existing Phase 3B memory worker infrastructure.
 
 The target behavior is:
 
@@ -16,7 +16,7 @@ The target behavior is:
 - Raw turns are retained and are not deleted.
 - If summary generation is pending, delayed, or failed, chat remains responsive through an explicit token-bounded recent-history fallback.
 
-The important transition decision is explicit: Phase 5B must not block chat waiting for a summary. If a conversation is over budget and no completed summary block exists yet, ASTRA should enqueue or reuse a pending summary job, omit the oldest unsummarized raw turns from the immediate prompt using token-based selection, and include a small internal system notice that older unsummarized context is temporarily unavailable until background summarization completes. This is safer than silently overfilling the model context or reintroducing synchronous secondary LLM calls.
+The important transition decision is explicit: Phase 5B must not block chat waiting for a summary. If a conversation is over budget and no completed summary block exists yet, Ivo should enqueue or reuse a pending summary job, omit the oldest unsummarized raw turns from the immediate prompt using token-based selection, and include a small internal system notice that older unsummarized context is temporarily unavailable until background summarization completes. This is safer than silently overfilling the model context or reintroducing synchronous secondary LLM calls.
 
 ## 2. Scope
 

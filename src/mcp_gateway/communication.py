@@ -43,13 +43,18 @@ def email_draft(to: str, subject: str, body: str) -> str:
 
 
 @tool
-def email_send(to: str, subject: str, body: str) -> str:
+def email_send(to: str, subject: str, body: str, draft_id: str = "") -> str:
     """Send Gmail through Gmail MCP after HITL approval.
 
     Use this only when the user explicitly asks to send. For drafts, call email_draft instead.
+    After creating a draft, copy the exact to/subject/body from that draft tool result.
+    Never invent placeholder addresses such as name@example.com.
+    If a Gmail draft id is known, pass draft_id so the existing draft is sent.
     Falls back to creating a draft if send is not exposed by the provider.
     """
     args = _gmail_message_args(to, subject, body)
+    if str(draft_id or "").strip():
+        args["draft_id"] = str(draft_id).strip()
     result = mcp_invocation.invoke_provider_tool(
         provider_ids=("gmail",),
         tool_hints=("send", "send_message"),

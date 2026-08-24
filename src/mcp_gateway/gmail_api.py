@@ -144,7 +144,19 @@ class GmailClient:
             return f"Created Gmail draft {draft_id} to {to_text}." + (f" Message id {message_id}." if message_id else "")
         return f"Created a Gmail draft to {to_text}."
 
-    def send_message(self, to: Recipient, subject: str, body: str) -> str:
+    def send_draft(self, draft_id: str) -> str:
+        clean_id = str(draft_id or "").strip()
+        if not clean_id:
+            raise GmailApiError(400, "A draft send requires a draft id.")
+        payload = self.request("POST", "/drafts/send", body={"id": clean_id})
+        message_id = str(payload.get("id") or "").strip()
+        if message_id:
+            return f"Sent Gmail draft {clean_id} as message {message_id}."
+        return f"Sent Gmail draft {clean_id}."
+
+    def send_message(self, to: Recipient, subject: str, body: str, draft_id: str = "") -> str:
+        if str(draft_id or "").strip():
+            return self.send_draft(draft_id)
         recipients = normalize_recipients(to)
         if not recipients:
             raise GmailApiError(400, "A send requires at least one recipient.")

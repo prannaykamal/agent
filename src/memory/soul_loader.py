@@ -8,7 +8,7 @@ def load_soul_prompt(path: Optional[Path] = None) -> SystemMessage:
     target_path = path or SOUL_PATH
     if not target_path.exists():
         default_content = (
-            "You are Antigravity, a 24x7 Personal AI Assistant. "
+            "You are Ivo, a 24x7 Personal AI Assistant. "
             "Operate professionally, maintain privacy, and adhere strictly to safety rules."
         )
         return SystemMessage(content=default_content)

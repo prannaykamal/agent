@@ -114,7 +114,10 @@ export default function App() {
     <div className="app-shell app-container">
       <aside className="sidebar">
         <div className="brand">
-          <strong className="brand-title">Astra</strong>
+          <span className="brand-mark" aria-hidden="true">
+            <Icon name="spark" />
+          </span>
+          <strong className="brand-title">Ivo</strong>
           <span className="brand-sub">local</span>
         </div>
 

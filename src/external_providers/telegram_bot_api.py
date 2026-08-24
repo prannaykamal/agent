@@ -94,7 +94,7 @@ def _ingest_updates(payload: Any) -> int:
     if max_update_id:
         get_json(
             f"{_api_root()}/getUpdates?offset={max_update_id + 1}&limit=1",
-            headers={"X-ASTRA-Provider-ID": PROVIDER_ID},
+            headers={"X-IVO-Provider-ID": PROVIDER_ID},
         )
     return stored
 
@@ -112,7 +112,7 @@ def read_messages(limit: int = 5) -> ExternalProviderResult:
     capped = max(1, min(int(limit or 5), 20))
     updates = get_json(
         f"{_api_root()}/getUpdates?limit={capped}&timeout=0",
-        headers={"X-ASTRA-Provider-ID": PROVIDER_ID},
+        headers={"X-IVO-Provider-ID": PROVIDER_ID},
     )
     if updates.ok:
         try:
@@ -171,7 +171,7 @@ def send_message(chat_id: str, text: str) -> ExternalProviderResult:
     result = post_json(
         f"{_api_root()}/sendMessage",
         {"chat_id": clean_chat_id, "text": clean_text},
-        headers={"X-ASTRA-Provider-ID": PROVIDER_ID},
+        headers={"X-IVO-Provider-ID": PROVIDER_ID},
     )
     if result.ok:
         _store_message(clean_chat_id, clean_text, "SENT")

@@ -16,7 +16,7 @@ class DeterministicStreamLLM:
         return self
 
     def invoke(self, messages):
-        return AIMessage(content="Streamed hello from ASTRA.")
+        return AIMessage(content="Streamed hello from Ivo.")
 
 
 def test_chat_stream_emits_steps_then_finished(tmp_path, monkeypatch):
@@ -56,7 +56,7 @@ def test_chat_stream_emits_steps_then_finished(tmp_path, monkeypatch):
     assert "step" in types
     assert "run_finished" in types
     finished = next(event for event in events if event.get("type") == "run_finished")
-    assert finished["response"] == "Streamed hello from ASTRA."
+    assert finished["response"] == "Streamed hello from Ivo."
     step_types = [event.get("step_type") for event in events if event.get("type") == "step"]
     assert "USER_INPUT" in step_types
     assert "LLM_STARTED" in step_types

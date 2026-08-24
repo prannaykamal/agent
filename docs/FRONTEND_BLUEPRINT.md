@@ -2,7 +2,7 @@
 
 ## 1. Executive Summary
 
-This blueprint maps the existing ASTRA frontend in `frontend/src` to the backend APIs implemented in `src/api/server.py`. It is intentionally limited to integration work: no visual redesign, no new endpoints, no backend API changes, no dependency changes, and no speculative features.
+This blueprint maps the existing Ivo frontend in `frontend/src` to the backend APIs implemented in `src/api/server.py`. It is intentionally limited to integration work: no visual redesign, no new endpoints, no backend API changes, no dependency changes, and no speculative features.
 
 The frontend already has working panels for chat, sessions, loop events, memory browsing, memory observability, approvals, tool catalog, tools observability, cron schedules, data inspection, and task/sub-agent listing. The main gaps are incomplete coverage of existing backend APIs, partial handling of approval/provider-unavailable states, and disconnected direct provider wrappers for search, calendar, email, skills, backups, and integration status. The safest next implementation step is to refine existing components and API adapters around the current response shapes rather than redesigning the UI.
 

@@ -7,7 +7,7 @@ def test_phase1_memory_config_defaults_match_architecture():
     cfg = load_memory_config(environ={})
 
     assert cfg.primary_llm.provider == "openai"
-    assert cfg.primary_llm.model_name == "gpt-4o-mini"
+    assert cfg.primary_llm.model_name == "GPT-5.5"
     assert cfg.secondary_llm.provider == "openai"
     assert cfg.secondary_llm.model_name == "gpt-4o-mini"
 

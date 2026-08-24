@@ -16,3 +16,5 @@ build/
 .coverage
 .vscode/
 .idea/
+.DS_Store
+*.egg-info/

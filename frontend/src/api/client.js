@@ -1,5 +1,5 @@
 /**
- * Lightweight Frontend API Helper for ASTRA
+ * Lightweight Frontend API Helper for Ivo
  * Centralizes fetch handling, parses FastAPI detail error messages,
  * and preserves existing relative endpoint paths.
  */

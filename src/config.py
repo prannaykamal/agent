@@ -17,7 +17,7 @@ MEMORY_PATH = AGENT_DIR / "MEMORY.md"
 SKILL_PATH = AGENT_DIR / "SKILL.md"
 
 # LLM Configurations
-PRIMARY_MODEL = os.getenv("PRIMARY_MODEL", "gpt-4o-mini")
+PRIMARY_MODEL = os.getenv("PRIMARY_MODEL", "GPT-5.5")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
 
 # Short-term memory limits
