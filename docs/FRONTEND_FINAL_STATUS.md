@@ -1,7 +1,7 @@
-# Frontend Integration Final Status — ASTRA Personal Assistant
+# Frontend Integration Final Status — Ivo Personal Assistant
 
 ## Executive Summary
-This document records the final integration state, testing results, and operational context for the ASTRA Personal Assistant Cockpit frontend (Tasks F0–F8) following resolution of the Codex review blockers.
+This document records the final integration state, testing results, and operational context for the Ivo Personal Assistant Cockpit frontend (Tasks F0–F8) following resolution of the Codex review blockers.
 
 The frontend operates as a unified single-page React application connected to the FastAPI backend service (`src/api/server.py`). All component states, approval workflows, scheduler operations, MCP discovery views, direct provider status views, memory fact entry, skill management, data inspection, and system backup/restore admin functions have been wired, verified, and aligned with backend API contracts.
 

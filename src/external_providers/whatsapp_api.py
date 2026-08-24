@@ -161,7 +161,7 @@ def send_message(recipient: str, message: str) -> ExternalProviderResult:
     result = post_json(
         url,
         payload,
-        headers={"Authorization": f"Bearer {token}", "X-ASTRA-Provider-ID": PROVIDER_ID},
+        headers={"Authorization": f"Bearer {token}", "X-IVO-Provider-ID": PROVIDER_ID},
     )
     if result.ok:
         _store_message(phone_number_id, clean_recipient, clean_message, "SENT")

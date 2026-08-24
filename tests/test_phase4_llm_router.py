@@ -63,7 +63,7 @@ def test_primary_and_secondary_selectors_use_role_defaults():
     primary = resolve_llm_selector(role="primary", provider="openai")
     secondary = resolve_llm_selector(role="secondary", provider="openai")
 
-    assert primary.model_name == "gpt-4o"
+    assert primary.model_name == "GPT-5.5"
     assert secondary.model_name == "gpt-4o-mini"
     assert primary.context_window == 128000
     assert secondary.context_window == 128000

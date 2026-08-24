@@ -1,12 +1,12 @@
-# ASTRA (Autonomous System for Tasks, Reasoning & Assistance) - Architecture & System Technical Specification
+# Ivo - Architecture & System Technical Specification
 
-This document provides the authoritative technical architecture, schema specifications, Human-In-The-Loop (HITL) workflows, backup lifecycle, background worker specification, provider setup instructions, and known limitations for **ASTRA**.
+This document provides the authoritative technical architecture, schema specifications, Human-In-The-Loop (HITL) workflows, backup lifecycle, background worker specification, provider setup instructions, and known limitations for **Ivo**.
 
 ---
 
 ## 1. High-Level System Architecture
 
-ASTRA is built as an autonomous, multi-provider personal assistant operating on a hybrid local-first architecture.
+Ivo is built as an autonomous, multi-provider personal assistant operating on a hybrid local-first architecture.
 
 ```text
                                +----------------------------------+
@@ -47,7 +47,7 @@ ASTRA is built as an autonomous, multi-provider personal assistant operating on 
 
 ## 2. Feature Status & Capability Matrix
 
-ASTRA categorizes tool features into three distinct operational modes:
+Ivo categorizes tool features into three distinct operational modes:
 
 | Feature / Tool Component | Execution Status | Provider Adapter / Engine | Required Environment Variables |
 | :--- | :--- | :--- | :--- |
@@ -65,7 +65,7 @@ ASTRA categorizes tool features into three distinct operational modes:
 
 ## 3. SQLite Database Schema Specification (`.agent/state.db`)
 
-ASTRA uses an integrated SQLite database (`.agent/state.db`) managed via versioned schema migrations (`src/db_migrations.py`, current version: **v7**).
+Ivo uses an integrated SQLite database (`.agent/state.db`) managed via versioned schema migrations (`src/db_migrations.py`, current version: **v7**).
 
 ### Core Tables
 
@@ -217,6 +217,6 @@ Direct local provider credentials for Tavily REST, DuckDuckGo libraries, Google 
 ## 8. Known Limitations & Development Scope
 
 1. **Single-User Local Desktop Boundaries**:
-   - ASTRA is designed for single-user desktop or personal server deployment. Multi-tenant auth/isolation is not enabled.
+   - Ivo is designed for single-user desktop or personal server deployment. Multi-tenant auth/isolation is not enabled.
 2. **SQLite Write Lock Boundaries**:
    - SQLite uses file-level locking during write transactions. High-concurrency simultaneous API calls may encounter brief database busy locks.

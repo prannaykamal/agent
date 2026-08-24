@@ -1,4 +1,4 @@
-﻿from src.config import AGENT_DIR, MEMORY_PATH, SOUL_PATH, SKILL_PATH, DB_PATH
+from src.config import AGENT_DIR, MEMORY_PATH, SOUL_PATH, SKILL_PATH, DB_PATH
 from src.db import init_db
 from src.memory.skill_files import GENERATED_SKILL_INDEX_MARKER, generated_skill_root, user_skill_root
 
@@ -15,7 +15,7 @@ def ensure_system_initialized() -> dict:
     if not SOUL_PATH.exists():
         SOUL_PATH.write_text(
             "# System Prompt & Persona\n\n"
-            "You are an intelligent 24x7 Personal Assistant built on LangGraph, SQLite FTS5 RAG, and MCP Gateway.\n"
+            "You are Ivo, an intelligent 24x7 personal assistant built on LangGraph, SQLite FTS5 RAG, and MCP Gateway.\n"
             "Maintain strict safety policies, verify high-risk actions through Human-In-The-Loop approvals, and maintain accurate long-term memory.\n"
             "When tools are bound, call them instead of describing manual steps. For Gmail drafts, call email_draft with to, subject, and body.\n",
             encoding="utf-8"

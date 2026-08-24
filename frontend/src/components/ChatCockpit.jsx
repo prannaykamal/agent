@@ -111,7 +111,7 @@ export default function ChatCockpit({ activeSessionId, onNewSession, onSessionCh
   const [sessions, setSessions] = useState([]);
   const [currentSession, setCurrentSession] = useState(activeSessionId || "default_session");
   const [provider, setProvider] = useState("openai");
-  const [modelName, setModelName] = useState("gpt-4o-mini");
+  const [modelName, setModelName] = useState("GPT-5.5");
   const [secondaryProvider, setSecondaryProvider] = useState("openai");
   const [secondaryModelName, setSecondaryModelName] = useState("gpt-4o-mini");
   const [modelCatalog, setModelCatalog] = useState({});
@@ -139,7 +139,10 @@ export default function ChatCockpit({ activeSessionId, onNewSession, onSessionCh
   const loadModels = async () => {
     try {
       const data = await api.get("/api/models");
-      setModelCatalog(data.catalog || {});
+      const catalog = data.catalog || {};
+      setModelCatalog(catalog);
+      const openaiDefault = catalog.providers?.openai?.default || catalog.openai?.default;
+      if (openaiDefault) setModelName(openaiDefault);
     } catch (e) {
       console.error("Failed to load models:", e);
     }
@@ -518,7 +521,7 @@ export default function ChatCockpit({ activeSessionId, onNewSession, onSessionCh
                   );
                 }
                 const cls = item.type === "user" ? "user" : "assistant";
-                const role = cls === "user" ? "You" : "Astra";
+                const role = cls === "user" ? "You" : "Ivo";
                 return (
                   <div key={item.id} className={`msg ${cls}`}>
                     <div className="msg-meta">{role}</div>

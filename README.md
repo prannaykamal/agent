@@ -1,4 +1,4 @@
-﻿## ðŸš€ ASTRA (Autonomous System for Tasks, Reasoning & Assistance)
+## Ivo
 
 An autonomous, multi-provider AI Assistant and Agent Cockpit built with **LangGraph**, **LangChain**, **FastAPI**, **React**, and **SQLite FTS5**.
 

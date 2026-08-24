@@ -1,6 +1,6 @@
 # Phase X Memory Architecture Implementation Roadmap
 
-This roadmap is the finalized migration plan for moving ASTRA from the current memory scaffold to the approved Dual-LLM Memory Architecture described in `verify&implement.md`.
+This roadmap is the finalized migration plan for moving Ivo from the current memory scaffold to the approved Dual-LLM Memory Architecture described in `verify&implement.md`.
 
 The plan is based on:
 

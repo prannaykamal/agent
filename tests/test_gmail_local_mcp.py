@@ -61,6 +61,23 @@ def test_gmail_send_message_posts_raw_message():
     assert "Sent Gmail message msg-sent-1 to user@example.com." in text
 
 
+def test_gmail_send_draft_posts_draft_id():
+    captured = {}
+
+    def fake_request(method, url, headers, body):
+        captured["method"] = method
+        captured["url"] = url
+        captured["body"] = json.loads(body.decode("utf-8"))
+        return {"id": "msg-from-draft"}
+
+    client = GmailClient("ya29-test", request_fn=fake_request)
+    text = client.send_message(["ignored@example.com"], "Hi", "Hello", draft_id="draft-9")
+    assert captured["method"] == "POST"
+    assert captured["url"] == f"{GMAIL_API_ROOT}/drafts/send"
+    assert captured["body"] == {"id": "draft-9"}
+    assert "Sent Gmail draft draft-9 as message msg-from-draft." in text
+
+
 def test_gmail_list_and_search_summarize_headers():
     def fake_request(method, url, headers, body):
         if url.startswith(f"{GMAIL_API_ROOT}/messages?") and "q=" in url:
@@ -143,7 +160,7 @@ def test_local_mcp_create_draft_uses_gmail_client():
 
 def test_local_mcp_send_message_uses_gmail_client():
     class FakeClient:
-        def send_message(self, to, subject, body):
+        def send_message(self, to, subject, body, draft_id=""):
             return f"Sent Gmail message x to {to[0]}."
 
     response = handle_rpc(

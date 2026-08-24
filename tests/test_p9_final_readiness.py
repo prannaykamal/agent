@@ -41,12 +41,12 @@ def test_p9_gate_3_and_4_clean_startup_and_dist_serving(isolated_env):
 
     resp = client.get("/")
     assert resp.status_code == 200
-    assert "ASTRA" in resp.text
+    assert "Ivo" in resp.text
 
 def test_p9_gate_5_new_chat_browser_ui(isolated_env):
     """Gate 5: New chat works through browser UI REST API."""
     sess_id = "sess_gate_5"
-    res = client.post("/api/chat", json={"message": "Hello ASTRA assistant", "session_id": sess_id})
+    res = client.post("/api/chat", json={"message": "Hello Ivo assistant", "session_id": sess_id})
     assert res.status_code == 200
     data = res.json()
     assert "response" in data
@@ -169,6 +169,6 @@ def test_p9_gate_11_readme_matches_actual_behavior():
     """Gate 11: Verify README.md matches actual system behavior and test count."""
     readme = BASE_DIR / "README.md"
     content = readme.read_text(encoding="utf-8")
-    assert "ASTRA" in content
+    assert "Ivo" in content
     assert "pytest" in content
     assert "docs/ARCHITECTURE.md" in content

@@ -62,13 +62,13 @@ def test_normalize_llm_messages_moves_trailing_system_to_front():
 
     normalized = _normalize_llm_messages(
         [
-            SystemMessage(content="You are Astra."),
+            SystemMessage(content="You are Ivo."),
             HumanMessage(content="send mail to a@gmail.com saying hi"),
             SystemMessage(content="[Retrieved Long-Term Memory]\n- fact"),
         ]
     )
     assert [type(message).__name__ for message in normalized] == ["SystemMessage", "HumanMessage"]
-    assert "You are Astra." in normalized[0].content
+    assert "You are Ivo." in normalized[0].content
     assert "[Retrieved Long-Term Memory]" in normalized[0].content
     assert normalized[1].content == "send mail to a@gmail.com saying hi"
 
@@ -79,7 +79,7 @@ def test_sanitize_drops_orphan_tool_messages():
 
     sanitized = _sanitize_llm_messages(
         [
-            SystemMessage(content="You are Astra."),
+            SystemMessage(content="You are Ivo."),
             HumanMessage(content="yes"),
             AIMessage(content="[HUMAN APPROVAL REQUIRED]"),
             ToolMessage(content="Sent.", tool_call_id="call_1", name="email_send"),

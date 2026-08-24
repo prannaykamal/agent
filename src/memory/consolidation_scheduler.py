@@ -5,14 +5,15 @@ The chat graph must never import or call this module.
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from src.db import get_connection
 from src.memory.config import load_memory_config
 from src.memory.jobs import enqueue_semantic_consolidation_job
-from src.memory.semantic_consolidation import SemanticConsolidationService
+from src.memory.semantic_consolidation import SemanticConsolidationService, trigger_for_manual
 
 
 LAST_DAILY_IDLE_AT_KEY = "last_daily_idle_at"
@@ -149,6 +150,60 @@ def maybe_enqueue_idle_semantic_consolidation(
         except Exception:
             pass
     return enqueued
+
+
+def enqueue_manual_semantic_consolidation(
+    *,
+    session_id: Optional[str] = None,
+    db_path: Optional[Path] = None,
+    reason: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Enqueue consolidation immediately, ignoring idle/count thresholds."""
+    selected = str(session_id or "").strip()
+    sessions = [selected] if selected else list_consolidation_session_ids(db_path=db_path)
+    if not sessions:
+        return {
+            "enqueued": 0,
+            "inserted": 0,
+            "sessions": [],
+            "jobs": [],
+            "trigger_type": "manual",
+        }
+
+    config = load_memory_config()
+    unique_reason = str(reason or "").strip() or f"ui_{uuid.uuid4().hex[:12]}"
+    queue = None if db_path is None else _queue_for(db_path)
+    jobs = []
+    inserted = 0
+    for sid in sessions:
+        trigger = trigger_for_manual(sid, reason=unique_reason)
+        result = enqueue_semantic_consolidation_job(
+            session_id=trigger.session_id,
+            trigger_type=trigger.trigger_type,
+            window_key=trigger.window_key,
+            primary_provider=config.primary_llm.provider,
+            primary_model_name=config.primary_llm.model_name,
+            secondary_provider=config.secondary_llm.provider,
+            secondary_model_name=config.secondary_llm.model_name,
+            queue=queue,
+        )
+        jobs.append(
+            {
+                "session_id": sid,
+                "job_id": result.job_id,
+                "inserted": result.inserted,
+                "status": result.status,
+            }
+        )
+        if result.inserted:
+            inserted += 1
+    return {
+        "enqueued": len(jobs),
+        "inserted": inserted,
+        "sessions": sessions,
+        "jobs": jobs,
+        "trigger_type": "manual",
+    }
 
 
 def _queue_for(db_path: Path):

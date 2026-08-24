@@ -77,6 +77,12 @@ const ICONS = {
       <rect x="13" y="13" width="8" height="7" rx="1.5" />
     </>
   ),
+  spark: (
+    <>
+      <path d="M12 3v4M12 17v4M3 12h4M17 12h4" />
+      <path d="M6.3 6.3l2.8 2.8M14.9 14.9l2.8 2.8M17.7 6.3l-2.8 2.8M9.1 14.9l-2.8 2.8" />
+    </>
+  ),
   sun: (
     <>
       <circle cx="12" cy="12" r="4" />

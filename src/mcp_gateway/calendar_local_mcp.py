@@ -10,7 +10,7 @@ from src.mcp_gateway.calendar_api import CalendarApiError, CalendarClient, acces
 from src.mcp_gateway.protocol.json_rpc import build_response
 
 PROTOCOL_VERSION = "2024-11-05"
-SERVER_INFO = {"name": "astra-calendar-local", "version": "1.0.0"}
+SERVER_INFO = {"name": "ivo-calendar-local", "version": "1.0.0"}
 
 TOOLS = [
     {

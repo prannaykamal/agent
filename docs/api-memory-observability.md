@@ -104,6 +104,14 @@ Query parameters:
 
 Reads pending fact candidates, dedup events, consolidation runs, and permanent fact counts.
 
+## `POST /api/memory/observability/semantic/consolidate`
+
+Optional JSON body:
+
+- `session_id`
+
+Enqueues a `semantic_consolidation` job with `trigger_type=manual` for the given session, or for every session that has pending candidates or structured episodes. The memory worker processes the job; this endpoint does not run the worker inline.
+
 ## `GET /api/memory/observability/procedural`
 
 Query parameters:

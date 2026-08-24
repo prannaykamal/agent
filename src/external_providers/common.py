@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import os
@@ -201,8 +201,12 @@ def request_json(
     payload: Mapping[str, Any] | None = None,
     timeout: int = 20,
 ) -> ExternalProviderResult:
-    provider_id = str(headers.get("X-ASTRA-Provider-ID") or "external_api")
-    clean_headers = {key: value for key, value in headers.items() if key != "X-ASTRA-Provider-ID"}
+    provider_id = str(headers.get("X-IVO-Provider-ID") or headers.get("X-ASTRA-Provider-ID") or "external_api")
+    clean_headers = {
+        key: value
+        for key, value in headers.items()
+        if key not in {"X-IVO-Provider-ID", "X-ASTRA-Provider-ID"}
+    }
     encoded = json.dumps(dict(payload)).encode("utf-8") if payload is not None else None
     if encoded is not None:
         clean_headers = {**clean_headers, "Content-Type": "application/json"}

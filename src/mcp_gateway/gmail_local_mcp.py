@@ -10,7 +10,7 @@ from src.mcp_gateway.gmail_api import GmailApiError, GmailClient, access_token_f
 from src.mcp_gateway.protocol.json_rpc import build_response
 
 PROTOCOL_VERSION = "2024-11-05"
-SERVER_INFO = {"name": "astra-gmail-local", "version": "1.0.0"}
+SERVER_INFO = {"name": "ivo-gmail-local", "version": "1.0.0"}
 
 TOOLS = [
     {
@@ -43,6 +43,10 @@ TOOLS = [
                 },
                 "subject": {"type": "string"},
                 "body": {"type": "string"},
+                "draft_id": {
+                    "type": "string",
+                    "description": "If set, send this existing Gmail draft instead of composing a new message.",
+                },
             },
             "required": ["to", "subject", "body"],
         },
@@ -116,6 +120,7 @@ def _call_tool(params: Dict[str, Any], *, client: GmailClient) -> Dict[str, Any]
                     arguments.get("to") or [],
                     str(arguments.get("subject") or ""),
                     str(arguments.get("body") or ""),
+                    draft_id=str(arguments.get("draft_id") or ""),
                 )
             )
         if name == "gmail_search":

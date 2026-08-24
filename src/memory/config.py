@@ -190,7 +190,7 @@ def load_memory_config(environ: Optional[Dict[str, str]] = None) -> MemoryArchit
         primary = _build_llm_role_config(
             role="primary",
             provider_default="openai",
-            model_default="gpt-4o-mini",
+            model_default="GPT-5.5",
             temperature_default=0.7,
         )
         secondary = _build_llm_role_config(

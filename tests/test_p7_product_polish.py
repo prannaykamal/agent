@@ -11,18 +11,18 @@ def test_p7_1_system_health_endpoint():
     data = res.json()
 
     assert data["status"] == "HEALTHY"
-    assert "ASTRA" in data["app_name"]
+    assert "Ivo" in data["app_name"]
     assert "database_path" in data
     assert "schema_version" in data
     assert data["worker_status"] in ("RUNNING", "IDLE", "STOPPED")
     assert isinstance(data["providers"], dict)
 
 def test_p7_2_product_branding_title_standardization():
-    """P7 Item 2: Verifies standardized ASTRA product title in system health endpoint."""
+    """P7 Item 2: Verifies standardized Ivo product title in system health endpoint."""
     res = client.get("/api/system/health")
     assert res.status_code == 200
     data = res.json()
-    assert data["app_name"] == "ASTRA (Autonomous System for Tasks, Reasoning & Assistance)"
+    assert data["app_name"] == "Ivo"
 
 def test_p7_3_session_rename_and_delete_endpoints():
     """P7 Item 9: Verifies session rename and delete REST contracts."""

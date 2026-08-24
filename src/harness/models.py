@@ -28,7 +28,7 @@ CONTEXT_WINDOW_CAPACITIES: Dict[str, int] = {
 # Primary and Secondary Tiered Model Pairings
 MODEL_PAIRS: Dict[str, Dict[str, Any]] = {
     "openai": {
-        "primary": "gpt-4o",  # Fallback for GPT-5.5 / GPT-5
+        "primary": "GPT-5.5",
         "primary_options": ["GPT-5.5", "GPT-5", "gpt-4o", "o1-mini", "o3-mini"],
         "secondary": "gpt-4o-mini",  # Fallback for GPT-5 nano
         "secondary_options": ["GPT-5 nano", "gpt-4o-mini"],
@@ -61,8 +61,8 @@ SUPPORTED_PROVIDERS: Dict[str, Dict[str, Any]] = {
     "openai": {
         "name": "OpenAI",
         "env_key": "OPENAI_API_KEY",
-        "models": ["gpt-4o-mini", "gpt-4o", "o1-mini", "o3-mini", "GPT-5.5", "GPT-5"],
-        "default": "gpt-4o-mini"
+        "models": ["GPT-5.5", "GPT-5", "gpt-4o", "gpt-4o-mini", "o1-mini", "o3-mini"],
+        "default": "GPT-5.5"
     },
     "anthropic": {
         "name": "Anthropic Claude",
@@ -141,7 +141,7 @@ def get_context_window(model_name: str, provider: str = "openai") -> int:
 
 def get_model_instance(
     provider: str = "openai",
-    model_name: str = "gpt-4o-mini",
+    model_name: str = "GPT-5.5",
     temperature: float = 0.7
 ) -> Optional[Any]:
     """
@@ -163,8 +163,12 @@ def get_model_instance(
     try:
         if norm_provider == "openai":
             from langchain_openai import ChatOpenAI
-            # Map future models to current fallbacks if needed
-            target_model = "gpt-4o" if model_name in ("GPT-5.5", "GPT-5") else ("gpt-4o-mini" if model_name == "GPT-5 nano" else model_name)
+            openai_api_models = {
+                "GPT-5.5": "gpt-5.5",
+                "GPT-5": "gpt-5",
+                "GPT-5 nano": "gpt-5-nano",
+            }
+            target_model = openai_api_models.get(model_name, model_name)
             return ChatOpenAI(model=target_model, temperature=temperature, api_key=api_key)
 
         elif norm_provider == "anthropic":

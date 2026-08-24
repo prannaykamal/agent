@@ -2,7 +2,7 @@
 
 ## Provider Model
 
-ASTRA separates providers into three groups:
+Ivo separates providers into three groups:
 
 - MCP providers: Gmail, Google Calendar, Tavily Search, DuckDuckGo Search.
 - Direct API providers: WhatsApp API and Telegram Bot API.

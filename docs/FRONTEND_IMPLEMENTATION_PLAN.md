@@ -1,4 +1,4 @@
-# ASTRA Frontend Implementation Plan
+# Ivo Frontend Implementation Plan
 
 ## 1. Confirmed Frontend Gaps from Blueprint
 

@@ -1,9 +1,13 @@
+import sqlite3
 from datetime import datetime
 
 import pytest
 
 from src.db import init_db
-from src.memory.consolidation_scheduler import maybe_enqueue_idle_semantic_consolidation
+from src.memory.consolidation_scheduler import (
+    enqueue_manual_semantic_consolidation,
+    maybe_enqueue_idle_semantic_consolidation,
+)
 from src.memory.episode_store import StructuredEpisodeRepository, StructuredEpisodeWrite
 from src.memory.worker import process_one_memory_job
 
@@ -36,8 +40,6 @@ def _episode(index: int) -> StructuredEpisodeWrite:
 
 
 def _consolidation_jobs(db_path):
-    import sqlite3
-
     conn = sqlite3.connect(db_path)
     try:
         return conn.execute(
@@ -149,3 +151,26 @@ def test_episode_threshold_still_enqueues_when_daily_is_inside_interval(temp_db)
     assert created >= 1
     assert "structured_episode_threshold" in types
     assert types.count("daily_idle") == 1
+
+
+def test_manual_enqueue_bypasses_idle_thresholds(temp_db):
+    conn = sqlite3.connect(temp_db)
+    try:
+        conn.execute(
+            """
+            INSERT INTO pending_fact_candidates (id, session_id, fact, category, confidence, explicit, source, status)
+            VALUES ('factcand-manual', 'sess', 'User likes compact UI', 'preference', 0.8, 0, 'test', 'PENDING')
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    result = enqueue_manual_semantic_consolidation(
+        db_path=temp_db,
+        reason="test_manual",
+    )
+
+    assert result["inserted"] == 1
+    assert result["sessions"] == ["sess"]
+    assert "manual" in _job_trigger_types(temp_db)

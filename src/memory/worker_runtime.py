@@ -38,11 +38,11 @@ def start_memory_worker_runtime() -> bool:
         _THREAD = Thread(
             target=run_memory_worker_loop,
             kwargs={
-                "worker_id": "astra-memory-worker",
+                "worker_id": "ivo-memory-worker",
                 "interval_seconds": 5,
                 "stop_event": _STOP,
             },
-            name="astra-memory-worker",
+            name="ivo-memory-worker",
             daemon=True,
         )
         _THREAD.start()

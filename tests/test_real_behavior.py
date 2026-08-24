@@ -124,7 +124,7 @@ def test_frontend_static_assets_and_html(temp_db):
     """4. Frontend smoke test validating index.html static mounting and component assets."""
     r_index = client.get("/")
     assert r_index.status_code == 200
-    assert "ASTRA" in r_index.text
+    assert "Ivo" in r_index.text
     assert "assets" in r_index.text or "main.jsx" in r_index.text
 
 

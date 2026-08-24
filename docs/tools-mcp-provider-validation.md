@@ -248,4 +248,4 @@ The final local rule remains unchanged: do not add local duplicate implementatio
 
 ## Provider Architecture Update
 
-WhatsApp and Telegram are no longer target MCP providers. Do not configure them under `.agent/mcp_config.json` as MCP servers for ASTRA. Use direct API environment configuration and keep send actions behind HITL approval. Gmail, Google Calendar, and Tavily/DuckDuckGo Search remain provider-managed MCP integrations.
+WhatsApp and Telegram are no longer target MCP providers. Do not configure them under `.agent/mcp_config.json` as MCP servers for Ivo. Use direct API environment configuration and keep send actions behind HITL approval. Gmail, Google Calendar, and Tavily/DuckDuckGo Search remain provider-managed MCP integrations.

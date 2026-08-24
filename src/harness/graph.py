@@ -1,4 +1,4 @@
-﻿import json
+import json
 import uuid
 import logging
 from datetime import datetime
@@ -24,6 +24,7 @@ from src.memory.procedural import match_procedural_skills
 
 from src.hitl.classifier import classify_tool_risk
 from src.hitl.approval_engine import create_approval_request, process_approval_decision, get_approval_request, generate_payload_preview
+from src.mcp_gateway.email_send_bind import bind_email_send_args
 from src.tools.removed_tools import get_removed_tool_blocked_message, is_removed_tool_name
 from src.tools.invocation import invoke_registered_tool
 from src.tools.policy import ToolCallerSource, evaluate_tool_policy
@@ -176,6 +177,8 @@ def _tool_use_guidance(tools) -> str:
         lines.append(
             "When the user asks to send email, or replies yes/send it/go ahead after discussing an email, "
             "you MUST call email_send(to, subject, body) in that same turn. Do not ask the user to confirm in chat. "
+            "After email_draft, copy the exact recipient, subject, and body from that draft tool result. "
+            "Never invent addresses like name@example.com or placeholder signatures like [Your Name]. "
             "Do not mention safety protocols or extra authorization. HITL is handled by the system after the tool call. "
             "Never say an email was sent unless email_send returned a Sent result."
         )
@@ -333,7 +336,7 @@ def node_manage_memory(state: AgentState) -> dict:
         session_id=session_id,
         current_messages=messages,
         provider=state.get("provider", "openai"),
-        model_name=state.get("model_name", "gpt-4o-mini"),
+        model_name=state.get("model_name", "GPT-5.5"),
         secondary_provider=state.get("secondary_provider"),
         secondary_model_name=state.get("secondary_model_name"),
     )
@@ -428,7 +431,7 @@ def node_retrieval_gate(state: AgentState) -> dict:
             query=query_str,
             session_id=state.get("session_id", "default_session"),
             provider=state.get("provider", "openai"),
-            model_name=state.get("model_name", "gpt-4o-mini"),
+            model_name=state.get("model_name", "GPT-5.5"),
             messages=messages,
             gate_allows_retrieval=needs_retrieval,
         )
@@ -471,7 +474,7 @@ def node_agent(state: AgentState) -> dict:
     messages = list(state.get("messages", []))
     session_id = state.get("session_id", "default_session")
     provider = state.get("provider", "openai")
-    model_name = state.get("model_name", "gpt-4o-mini")
+    model_name = state.get("model_name", "GPT-5.5")
     loop_count = (state.get("loop_count") or 0) + 1
     events = list(state.get("loop_events") or [])
     tools_used = list(state.get("tools_used") or [])
@@ -517,6 +520,7 @@ def node_agent(state: AgentState) -> dict:
         hint = primary_route.error or f"No usable {env_key}. Add it to .env and restart the backend."
         response = _offline_ai_message(messages, provider, model_name, hint)
 
+    response = _bind_email_send_on_response(response, messages, session_id)
     tool_calls = getattr(response, "tool_calls", []) or []
 
     if tool_calls:
@@ -568,6 +572,42 @@ def _tool_call_args(call: Any) -> Dict[str, Any]:
     if isinstance(call, dict):
         return dict(call.get("args") or {})
     return dict(getattr(call, "args", None) or {})
+
+
+def _last_user_text(messages) -> str:
+    return next((str(m.content) for m in reversed(messages or []) if isinstance(m, HumanMessage)), "")
+
+
+def _bind_email_send_call(call: Any, messages, session_id: str) -> Any:
+    if _tool_call_name(call) != "email_send":
+        return call
+    bound_args = bind_email_send_args(
+        _tool_call_args(call),
+        messages=messages,
+        last_user_text=_last_user_text(messages),
+        session_id=session_id,
+    )
+    if bound_args == _tool_call_args(call):
+        return call
+    if isinstance(call, dict):
+        updated = dict(call)
+        updated["args"] = bound_args
+        return updated
+    return {
+        "name": "email_send",
+        "args": bound_args,
+        "id": _tool_call_id(call) or f"call_{uuid.uuid4().hex[:6]}",
+    }
+
+
+def _bind_email_send_on_response(response, messages, session_id: str):
+    tool_calls = getattr(response, "tool_calls", None) or []
+    if not any(_tool_call_name(call) == "email_send" for call in tool_calls):
+        return response
+    bound_calls = [_bind_email_send_call(call, messages, session_id) for call in tool_calls]
+    if bound_calls == list(tool_calls):
+        return response
+    return AIMessage(content=getattr(response, "content", "") or "", tool_calls=bound_calls)
 
 
 _INTERNAL_TOOL_ARG_KEYS = frozenset({"_tool_call_id", "_batch_calls"})
@@ -644,11 +684,13 @@ def _pause_for_high_risk_tool(
     events: List[Dict[str, Any]],
     last_user_text: str = "",
     sibling_calls: Optional[List[Any]] = None,
+    messages: Optional[List[Any]] = None,
 ) -> dict:
+    call = _bind_email_send_call(call, messages or [], session_id)
     detected_tool = _tool_call_name(call)
     tool_args = _tool_call_args(call)
     tool_call_id = _tool_call_id(call) or f"call_{uuid.uuid4().hex[:6]}"
-    batch = [_normalize_tool_call(item) for item in (sibling_calls or [call])]
+    batch = [_normalize_tool_call(_bind_email_send_call(item, messages or [], session_id)) for item in (sibling_calls or [call])]
     if not batch:
         batch = [_normalize_tool_call(call)]
 
@@ -723,6 +765,7 @@ def node_hitl_check(state: AgentState) -> dict:
             events,
             last_user_text,
             sibling_calls=batch,
+            messages=messages,
         )
 
     return {"pending_approval_id": None, "approval_status": "NONE"}
@@ -747,7 +790,7 @@ def node_tools(state: AgentState) -> dict:
     hitl_pause = None
     for call in tool_calls:
         tname = call["name"]
-        targs = call.get("args", {})
+        targs = _tool_call_args(_bind_email_send_call(call, messages, session_id))
         tcall_id = call.get("id", f"call_{uuid.uuid4().hex[:6]}")
 
         invocation = invoke_registered_tool(
@@ -778,6 +821,7 @@ def node_tools(state: AgentState) -> dict:
                 events,
                 last_user_text,
                 sibling_calls=_same_tool_high_risk_batch(tool_calls, tname),
+                messages=messages,
             )
 
         attempted_nonblocked_tool = policy_decision and not policy_decision.blocked and not policy_decision.requires_approval
@@ -1048,7 +1092,11 @@ def resume_graph_after_approval(request_id: str, decision: str) -> Dict[str, Any
         ai_calls = []
         for item in batch_calls:
             item_name = item["name"]
-            item_args = item["args"]
+            item_args = bind_email_send_args(
+                item["args"],
+                last_user_text=next((str(turn.get("content") or "") for turn in reversed(past_turns) if turn.get("sender") == "user"), ""),
+                session_id=session_id,
+            )
             item_id = item["id"]
             invocation = invoke_registered_tool(
                 item_name,
