@@ -19,8 +19,10 @@ class AgentState(TypedDict):
     memory_config_version: Optional[str]
     memory_job_ids: Optional[List[str]]
     summary_omitted_turn_ids: Optional[List[str]]
-    episode_trigger_reasons: Optional[List[str]]
-    fact_candidates: Optional[List[Dict[str, Any]]]
+    # Long-term memory routing (cognee + Jev). Kept apart from tool execution state.
+    user_id: Optional[str]
+    memory_storage_decision: Optional[Dict[str, Any]]
+    memory_retrieval_decision: Optional[Dict[str, Any]]
     loop_count: Optional[int]
     tools_used: Optional[List[str]]
     loop_events: Optional[List[Dict[str, Any]]]

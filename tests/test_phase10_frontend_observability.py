@@ -29,12 +29,12 @@ def test_component_fetches_observability_endpoints_only():
         "/api/memory/observability/workers",
         "/api/memory/observability/dead-letter",
         "/api/memory/observability/retrieval/trace",
-        "/api/memory/observability/semantic",
-        "/api/memory/observability/procedural",
-        "/api/memory/observability/skills",
+        "/api/memory/observability/long-term",
     ]
     for endpoint in expected:
         assert endpoint in text
+    for removed in ["/observability/semantic", "/observability/procedural", "/observability/skills"]:
+        assert removed not in text
     assert "/api/chat" not in text
     assert "/api/skills" not in text
     assert "/api/approvals" not in text
@@ -47,9 +47,8 @@ def test_empty_and_error_states_rendered_in_component():
     assert "No memory jobs found." in text
     assert "No worker heartbeats recorded" in text
     assert "No dead-lettered memory jobs." in text
-    assert "No semantic candidates." in text
-    assert "No procedural candidates." in text
-    assert "No active skill versions." in text
+    assert "No cognee jobs yet." in text
+    assert "Nothing recalled." in text
     assert "Failed to load memory observability" in text
     assert "Trace failed" in text
 

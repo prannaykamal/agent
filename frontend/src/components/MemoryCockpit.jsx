@@ -4,89 +4,81 @@ import PageHeader from "./ui/PageHeader.jsx";
 import Notice from "./ui/Notice.jsx";
 import Spinner from "./ui/Spinner.jsx";
 import Badge from "./ui/Badge.jsx";
-import { asList } from "../lib/format.js";
+
+const SEARCH_TYPES = ["GRAPH_COMPLETION", "RAG_COMPLETION", "CHUNKS", "SUMMARIES"];
 
 export default function MemoryCockpit({ onRefresh }) {
-  const [activeSubTab, setActiveSubTab] = useState("semantic");
-  const [memoryData, setMemoryData] = useState(null);
-  const [skillsList, setSkillsList] = useState([]);
-  const [searchQuery, setSearchQuery] = useState("");
+  const [activeSubTab, setActiveSubTab] = useState("recall");
+  const [backend, setBackend] = useState(null);
+  const [soulMd, setSoulMd] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [successNotice, setSuccessNotice] = useState(null);
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchType, setSearchType] = useState("");
+  const [searching, setSearching] = useState(false);
+  const [results, setResults] = useState(null);
+
   const [factCategory, setFactCategory] = useState("user_preference");
   const [factText, setFactText] = useState("");
   const [submittingFact, setSubmittingFact] = useState(false);
-  const [showSkillModal, setShowSkillModal] = useState(false);
-  const [skillName, setSkillName] = useState("");
-  const [skillDescription, setSkillDescription] = useState("");
-  const [skillKeywords, setSkillKeywords] = useState("");
-  const [skillSteps, setSkillSteps] = useState("");
-  const [submittingSkill, setSubmittingSkill] = useState(false);
 
-  const fetchMemory = async (q = "") => {
+  const [procName, setProcName] = useState("");
+  const [procDescription, setProcDescription] = useState("");
+  const [procKeywords, setProcKeywords] = useState("");
+  const [procSteps, setProcSteps] = useState("");
+  const [submittingProc, setSubmittingProc] = useState(false);
+
+  const fetchOverview = async () => {
     setLoading(true);
     setError(null);
     try {
-      const url = q ? `/api/memory/full?query=${encodeURIComponent(q)}` : "/api/memory/full";
-      const [fullRes, structuredRes] = await Promise.allSettled([
-        api.get(url),
-        api.get("/api/data/table/structured_episodes?limit=50"),
-      ]);
-      if (fullRes.status !== "fulfilled") {
-        throw fullRes.reason || new Error("Failed to load memory data");
-      }
-      const data = fullRes.value;
-      let structuredRows = structuredRes.status === "fulfilled" ? (structuredRes.value.rows || []) : [];
-      if (q.trim()) {
-        const needle = q.trim().toLowerCase();
-        structuredRows = structuredRows.filter((row) => JSON.stringify(row).toLowerCase().includes(needle));
-      }
-      const structuredEpisodes = structuredRows.map((row) => ({
-        id: row.id,
-        session_id: row.session_id,
-        timestamp: row.created_at || row.timestamp,
-        content: row.summary || row.title || row.content,
-        tool_calls: JSON.stringify({ title: row.title || "", summary: row.summary || "" }),
-      }));
-      const seen = new Set(structuredEpisodes.map((item) => `${item.session_id}:${item.content}`));
-      const legacy = (data.episodes || []).filter((item) => !seen.has(`${item.session_id}:${item.content}`));
-      setMemoryData({ ...data, episodes: [...structuredEpisodes, ...legacy] });
+      const data = await api.get("/api/memory/full");
+      setBackend(data.backend || null);
+      setSoulMd(data.soul_md || "");
     } catch (e) {
-      setError(e.message || "Failed to load memory data");
+      setError(e.message || "Failed to load memory status");
     } finally {
       setLoading(false);
     }
   };
 
-  const fetchSkills = async () => {
+  useEffect(() => {
+    fetchOverview();
+  }, []);
+
+  const runSearch = async () => {
+    if (!searchQuery.trim()) return;
+    setSearching(true);
+    setError(null);
     try {
-      const data = await api.get("/api/skills");
-      setSkillsList(data.skills || []);
+      const body = { query: searchQuery.trim() };
+      if (searchType) body.search_type = searchType;
+      setResults(await api.post("/api/memory/search", body));
     } catch (e) {
-      console.error("Failed to load active skills:", e);
+      setError(`Search failed: ${e.message}`);
+    } finally {
+      setSearching(false);
     }
   };
 
-  useEffect(() => {
-    fetchMemory();
-    fetchSkills();
-  }, []);
+  const queuedNotice = (label, res) =>
+    `${label} queued (${res.inserted ? "new" : "already queued"}). It becomes searchable once the memory worker processes it.`;
 
   const handleAddFact = async (e) => {
     e.preventDefault();
-    if (!factCategory.trim() || !factText.trim()) {
-      setError("Category and fact text must not be empty.");
+    if (!factText.trim()) {
+      setError("Fact text must not be empty.");
       return;
     }
     setSubmittingFact(true);
     setError(null);
     setSuccessNotice(null);
     try {
-      await api.post("/api/memory/fact", { category: factCategory.trim(), fact_text: factText.trim() });
-      setSuccessNotice(`Fact persisted under '${factCategory.trim()}'.`);
+      const res = await api.post("/api/memory/fact", { category: factCategory.trim(), fact_text: factText.trim() });
+      setSuccessNotice(queuedNotice("Fact", res));
       setFactText("");
-      fetchMemory(searchQuery);
       if (onRefresh) onRefresh();
     } catch (e) {
       setError(`Failed to add fact: ${e.message}`);
@@ -95,49 +87,31 @@ export default function MemoryCockpit({ onRefresh }) {
     }
   };
 
-  const handleCreateSkill = async (e) => {
+  const handleAddProcedure = async (e) => {
     e.preventDefault();
-    if (!skillName.trim() || !skillDescription.trim()) {
-      setError("Skill name and description must not be empty.");
+    if (!procName.trim() || !procSteps.trim()) {
+      setError("Procedure name and steps must not be empty.");
       return;
     }
-    setSubmittingSkill(true);
+    setSubmittingProc(true);
     setError(null);
     setSuccessNotice(null);
     try {
-      await api.post("/api/skills", {
-        name: skillName.trim(),
-        description: skillDescription.trim(),
-        trigger_keywords: skillKeywords.trim(),
-        execution_steps: skillSteps.trim(),
+      const res = await api.post("/api/memory/procedure", {
+        name: procName.trim(),
+        description: procDescription.trim(),
+        trigger_keywords: procKeywords.trim(),
+        execution_steps: procSteps.trim(),
       });
-      setSuccessNotice(`Active skill '${skillName.trim()}' created successfully.`);
-      setSkillName("");
-      setSkillDescription("");
-      setSkillKeywords("");
-      setSkillSteps("");
-      setShowSkillModal(false);
-      fetchSkills();
+      setSuccessNotice(queuedNotice(`Procedure '${procName.trim()}'`, res));
+      setProcName("");
+      setProcDescription("");
+      setProcKeywords("");
+      setProcSteps("");
     } catch (e) {
-      setError(`Failed to create skill: ${e.message}`);
+      setError(`Failed to add procedure: ${e.message}`);
     } finally {
-      setSubmittingSkill(false);
-    }
-  };
-
-  const getKeywordsList = (val) => asList(val, ",");
-  const getStepsList = (val) => asList(val, "\n");
-
-  const handleDeleteSkill = async (name) => {
-    if (!window.confirm(`Are you sure you want to delete/archive skill '${name}'?`)) return;
-    setError(null);
-    setSuccessNotice(null);
-    try {
-      await api.delete(`/api/skills/${encodeURIComponent(name)}`);
-      setSuccessNotice(`Active skill '${name}' deleted successfully.`);
-      fetchSkills();
-    } catch (e) {
-      setError(`Failed to delete skill '${name}': ${e.message}`);
+      setSubmittingProc(false);
     }
   };
 
@@ -145,31 +119,35 @@ export default function MemoryCockpit({ onRefresh }) {
     <div className="page">
       <PageHeader
         title="Memory"
-        subtitle="Facts, skills, and identity files."
-        actions={<button className="btn btn-primary" onClick={() => { fetchMemory(searchQuery); fetchSkills(); if (onRefresh) onRefresh(); }}>Refresh</button>}
+        subtitle="One cognee knowledge graph. Jev decides what to store and when to recall."
+        actions={<button className="btn btn-primary" onClick={() => { fetchOverview(); if (onRefresh) onRefresh(); }}>Refresh</button>}
       />
 
       {successNotice ? <Notice kind="ok">{successNotice}</Notice> : null}
       {error ? <Notice kind="error">Error: {error}</Notice> : null}
 
-      <div className="actions">
-        <input
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && fetchMemory(searchQuery)}
-          placeholder="Search semantic facts or past episodes..."
-        />
-        <button className="btn btn-primary" onClick={() => fetchMemory(searchQuery)}>Search</button>
-      </div>
+      {loading && !backend ? (
+        <Spinner label="Loading memory status..." />
+      ) : backend ? (
+        <section className="glass-card">
+          <div className="chip-row">
+            <Badge value={backend.available ? "available" : "unavailable"} />
+            <span className="lede">dataset <code>{backend.dataset_name}</code></span>
+            <span className="lede">search <code>{backend.search_type}</code></span>
+            <span className="lede">idle merge after <code>{backend.session_idle_timeout_minutes} min</code></span>
+            {!backend.storage_enabled ? <Badge value="storage off" /> : null}
+            {!backend.retrieval_enabled ? <Badge value="retrieval off" /> : null}
+            {backend.version ? <span className="lede">cognee <code>{backend.version}</code></span> : null}
+          </div>
+          {!backend.available && backend.error ? <div className="lede" style={{ marginTop: 8 }}>{backend.error}</div> : null}
+        </section>
+      ) : null}
 
       <div className="tabs">
         {[
-          { id: "semantic", label: "Semantic Facts" },
-          { id: "active_skills", label: "Active Skills" },
-          { id: "episodic", label: "Past Episodes" },
+          { id: "recall", label: "Recall" },
+          { id: "teach", label: "Teach" },
           { id: "soul", label: "SOUL.md" },
-          { id: "skill_md", label: "SKILL.md Catalog" },
-          { id: "memory_md", label: "MEMORY.md Mirror" },
         ].map((tab) => (
           <button key={tab.id} className={`tab ${activeSubTab === tab.id ? "active" : ""}`} onClick={() => setActiveSubTab(tab.id)}>
             {tab.label}
@@ -177,152 +155,86 @@ export default function MemoryCockpit({ onRefresh }) {
         ))}
       </div>
 
-      {loading && !memoryData ? (
-        <Spinner label="Loading memory data..." />
-      ) : (
+      {activeSubTab === "recall" && (
         <>
-          {activeSubTab === "semantic" && (
-            <>
-              <section className="glass-card">
-                <h3>Add fact</h3>
-                <form onSubmit={handleAddFact} className="form-grid" style={{ marginTop: 12 }}>
-                  <label className="field">
-                    Category
-                    <input value={factCategory} onChange={(e) => setFactCategory(e.target.value)} placeholder="e.g. user_preference" />
-                  </label>
-                  <label className="field">
-                    Fact Text
-                    <input value={factText} onChange={(e) => setFactText(e.target.value)} placeholder="e.g. User prefers concise bullet points for summaries." />
-                  </label>
-                  <button type="submit" className="btn btn-primary" disabled={submittingFact}>
-                    {submittingFact ? "Saving..." : "Save Permanent Fact"}
-                  </button>
-                </form>
-              </section>
-              <section className="glass-card">
-                <h3>Semantic Facts ({memoryData?.facts?.length || 0})</h3>
-                {(!memoryData?.facts || memoryData.facts.length === 0) ? (
-                  <div className="lede">No semantic facts registered yet.</div>
-                ) : (
-                  memoryData.facts.map((f, i) => (
-                    <div key={f.id || i} className="row-card">
-                      <span><Badge value={f.category || "fact"} /> {f.fact_text || f.fact || f.content || ""}</span>
-                    </div>
-                  ))
-                )}
-              </section>
-            </>
-          )}
-
-          {activeSubTab === "active_skills" && (
-            <>
-              <section className="glass-card">
-                <div className="card-head">
-                  <div>
-                    <h3>Skills</h3>
-                    <p className="lede">Live skills. Memory Ops tracks candidates and versions.</p>
-                  </div>
-                  <button className="btn btn-primary" onClick={() => setShowSkillModal(true)}>Create Active Skill</button>
-                </div>
-                {showSkillModal ? (
-                  <form onSubmit={handleCreateSkill} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                    <div className="form-grid">
-                      <label className="field">Skill Name<input value={skillName} onChange={(e) => setSkillName(e.target.value)} placeholder="e.g. summarize_email" /></label>
-                      <label className="field">Description<input value={skillDescription} onChange={(e) => setSkillDescription(e.target.value)} placeholder="Summarizes email threads into key bullet points" /></label>
-                    </div>
-                    <label className="field">Trigger Keywords (comma separated)
-                      <input value={skillKeywords} onChange={(e) => setSkillKeywords(e.target.value)} placeholder="summarize, email, inbox, digest" />
-                    </label>
-                    <label className="field">Execution Steps (one per line)
-                      <textarea rows={3} value={skillSteps} onChange={(e) => setSkillSteps(e.target.value)} placeholder={"Step 1: Fetch recent unread emails\nStep 2: Extract top 3 key action items\nStep 3: Format summary"} />
-                    </label>
-                    <div className="actions" style={{ justifyContent: "flex-end" }}>
-                      <button type="button" className="btn btn-ghost" onClick={() => setShowSkillModal(false)}>Cancel</button>
-                      <button type="submit" className="btn btn-primary" disabled={submittingSkill}>{submittingSkill ? "Creating..." : "Save Active Skill"}</button>
-                    </div>
-                  </form>
-                ) : null}
-              </section>
-              <section className="glass-card">
-                {skillsList.length === 0 ? (
-                  <div className="lede">No active skills registered in backend registry.</div>
-                ) : (
-                  skillsList.map((s) => {
-                    const keywords = getKeywordsList(s.trigger_keywords);
-                    const steps = getStepsList(s.execution_steps);
-                    return (
-                      <div key={s.name} className="provider-card" style={{ marginBottom: 10 }}>
-                        <div className="row-card" style={{ border: 0, padding: 0 }}>
-                          <div>
-                            <strong>{s.name}</strong>
-                            <p className="lede">{s.description}</p>
-                            <div className="chip-row">
-                              {keywords.map((k, idx) => <Badge key={idx} value={k} />)}
-                            </div>
-                            {steps.length > 0 ? (
-                              <ol style={{ margin: "8px 0 0 18px", color: "var(--text-secondary)", fontSize: 12 }}>
-                                {steps.map((step, idx) => <li key={idx}>{step}</li>)}
-                              </ol>
-                            ) : null}
-                          </div>
-                          <button className="btn btn-danger btn-sm" onClick={() => handleDeleteSkill(s.name)}>Delete</button>
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </section>
-            </>
-          )}
-
-          {activeSubTab === "episodic" && (
+          <section className="glass-card">
+            <div className="actions">
+              <input
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && runSearch()}
+                placeholder="Ask the knowledge graph, e.g. what does the user prefer for summaries?"
+              />
+              <select value={searchType} onChange={(e) => setSearchType(e.target.value)}>
+                <option value="">Default search</option>
+                {SEARCH_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}
+              </select>
+              <button className="btn btn-primary" onClick={runSearch} disabled={searching}>{searching ? "Searching..." : "Search"}</button>
+            </div>
+            <div className="lede" style={{ marginTop: 10 }}>Searches the main graph only. Sessions join it after they go idle.</div>
+          </section>
+          {results ? (
             <section className="glass-card">
-              <h3>Past Episodes ({memoryData?.episodes?.length || 0})</h3>
-              {(!memoryData?.episodes || memoryData.episodes.length === 0) ? (
-                <div className="lede">No past episodes recorded.</div>
+              <h3>Results ({results.memories?.length || 0}) <span className="lede">{results.search_type}</span></h3>
+              {results.error ? <Notice kind="error">{results.error}</Notice> : null}
+              {(results.memories || []).length === 0 ? (
+                <div className="lede">Nothing relevant in memory yet.</div>
               ) : (
-                memoryData.episodes.map((ep, i) => {
-                  let extra = {};
-                  try {
-                    extra = typeof ep.tool_calls === "string" ? JSON.parse(ep.tool_calls) : (ep.tool_calls || {});
-                  } catch {
-                    extra = {};
-                  }
-                  const title = extra.title || "";
-                  const summary = extra.summary || ep.content || "";
-                  return (
-                    <div key={ep.id || i} className="row-card">
-                      <div>
-                        <strong>{title || ep.timestamp}</strong> — <code>{ep.session_id}</code>
-                        {title ? <div className="lede">{ep.timestamp}</div> : null}
-                        <div className="lede">{summary}</div>
-                      </div>
-                    </div>
-                  );
-                })
+                results.memories.map((item, i) => (
+                  <div key={i} className="row-card">
+                    <span style={{ whiteSpace: "pre-wrap" }}>{item.content}</span>
+                  </div>
+                ))
               )}
             </section>
-          )}
-
-          {activeSubTab === "soul" && (
-            <section className="glass-card">
-              <h3>SOUL.md</h3>
-              <pre className="md-block">{memoryData?.soul_md || "(Empty SOUL.md)"}</pre>
-            </section>
-          )}
-          {activeSubTab === "skill_md" && (
-            <section className="glass-card">
-              <h3>SKILL.md</h3>
-              <pre className="md-block">{memoryData?.skill_md || "(Empty SKILL.md)"}</pre>
-            </section>
-          )}
-          {activeSubTab === "memory_md" && (
-            <section className="glass-card">
-              <h3>MEMORY.md</h3>
-              <pre className="md-block">{memoryData?.memory_md || "(Empty MEMORY.md)"}</pre>
-            </section>
-          )}
+          ) : null}
         </>
+      )}
+
+      {activeSubTab === "teach" && (
+        <>
+          <section className="glass-card">
+            <h3>Add fact</h3>
+            <form onSubmit={handleAddFact} className="form-grid" style={{ marginTop: 12 }}>
+              <label className="field">
+                Category
+                <input value={factCategory} onChange={(e) => setFactCategory(e.target.value)} placeholder="e.g. user_preference" />
+              </label>
+              <label className="field">
+                Fact Text
+                <input value={factText} onChange={(e) => setFactText(e.target.value)} placeholder="e.g. User prefers concise bullet points for summaries." />
+              </label>
+              <button type="submit" className="btn btn-primary" disabled={submittingFact}>
+                {submittingFact ? "Saving..." : "Save Fact"}
+              </button>
+            </form>
+          </section>
+          <section className="glass-card">
+            <h3>Add procedure</h3>
+            <form onSubmit={handleAddProcedure} style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 12 }}>
+              <div className="form-grid">
+                <label className="field">Name<input value={procName} onChange={(e) => setProcName(e.target.value)} placeholder="e.g. weekly inbox digest" /></label>
+                <label className="field">Purpose<input value={procDescription} onChange={(e) => setProcDescription(e.target.value)} placeholder="Summarize unread email into action items" /></label>
+              </div>
+              <label className="field">Use when (keywords)
+                <input value={procKeywords} onChange={(e) => setProcKeywords(e.target.value)} placeholder="summarize, inbox, digest" />
+              </label>
+              <label className="field">Steps
+                <textarea rows={3} value={procSteps} onChange={(e) => setProcSteps(e.target.value)} placeholder={"1. Fetch unread email\n2. Extract the top 3 action items\n3. Format as bullets"} />
+              </label>
+              <div className="actions" style={{ justifyContent: "flex-end" }}>
+                <button type="submit" className="btn btn-primary" disabled={submittingProc}>{submittingProc ? "Saving..." : "Save Procedure"}</button>
+              </div>
+            </form>
+          </section>
+        </>
+      )}
+
+      {activeSubTab === "soul" && (
+        <section className="glass-card">
+          <h3>SOUL.md</h3>
+          <pre className="md-block">{soulMd || "(Empty SOUL.md)"}</pre>
+        </section>
       )}
     </div>
   );

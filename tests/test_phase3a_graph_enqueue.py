@@ -33,7 +33,12 @@ def _memory_jobs(db_path):
         conn.close()
 
 
-def _completed_state(approval_status="NONE"):
+@pytest.fixture(autouse=True)
+def _cognee_enabled(fake_cognee):
+    return fake_cognee
+
+
+def _completed_state(approval_status="NONE", should_store=True):
     return {
         "messages": [
             HumanMessage(content="Remember that I prefer careful migrations."),
@@ -53,15 +58,16 @@ def _completed_state(approval_status="NONE"):
         "tools_used": [],
         "loop_count": 1,
         "loop_events": [],
+        "memory_storage_decision": {"should_store": should_store, "source": "jev"},
     }
 
 
-def test_node_consolidate_enqueues_semantic_candidate_job(temp_db):
+def test_node_consolidate_enqueues_session_write_job(temp_db):
     result = node_consolidate(_completed_state())
     jobs = _memory_jobs(temp_db)
 
     assert len(jobs) >= 1
-    assert jobs[0]["job_type"] == "semantic_candidate_extraction"
+    assert jobs[0]["job_type"] == "memory_session_write"
     assert jobs[0]["status"] == "QUEUED"
     assert jobs[0]["session_id"] == "phase3a-graph"
     assert jobs[0]["result_json"] is None
@@ -71,9 +77,9 @@ def test_node_consolidate_enqueues_semantic_candidate_job(temp_db):
     assert result["memory_job_ids"][0] == jobs[0]["id"]
 
 
-def test_successful_graph_turn_enqueues_semantic_candidate_extraction(temp_db):
+def test_successful_graph_turn_stores_only_when_jev_says_so(temp_db, fake_jev):
     state = {
-        "messages": [HumanMessage(content="Hello assistant!")],
+        "messages": [HumanMessage(content="Remember that I prefer careful migrations.")],
         "session_id": "phase3a-agent",
         "summary": "",
         "token_count": 0,
@@ -83,16 +89,26 @@ def test_successful_graph_turn_enqueues_semantic_candidate_extraction(temp_db):
         "approval_status": None,
         "provider": "openai",
         "model_name": "gpt-4o-mini",
-        "secondary_provider": "openai",
-        "secondary_model_name": "gpt-4o-mini",
     }
 
-    result = agent_app.invoke(state)
+    fake_jev.memory = {"should_store": False, "should_retrieve": False}
+    agent_app.invoke(state)
+    assert _memory_jobs(temp_db) == []
+
+    fake_jev.memory = {"should_store": True, "should_retrieve": False}
+    result = agent_app.invoke({**state, "session_id": "phase3a-agent-2"})
     jobs = _memory_jobs(temp_db)
 
     assert result.get("memory_job_ids")
-    assert any(job["job_type"] == "semantic_candidate_extraction" for job in jobs)
+    assert [job["job_type"] for job in jobs] == ["memory_session_write"]
     assert all(job["status"] == "QUEUED" for job in jobs)
+
+
+def test_turn_not_worth_storing_enqueues_no_job(temp_db):
+    result = node_consolidate(_completed_state(should_store=False))
+
+    assert result == {"memory_job_ids": []}
+    assert _count_rows(temp_db, "memory_jobs") == 0
 
 
 def test_hitl_pending_enqueues_no_job(temp_db):
@@ -109,15 +125,13 @@ def test_hitl_rejected_enqueues_no_job(temp_db):
     assert _count_rows(temp_db, "memory_jobs") == 0
 
 
-def test_node_consolidate_does_not_call_old_secondary_worker(temp_db, monkeypatch):
-    def fail(*args, **kwargs):
-        raise AssertionError("old secondary worker must not be called")
-
-    monkeypatch.setattr("src.memory.async_workers.run_secondary_fact_extraction", fail)
+def test_node_consolidate_does_not_call_cognee_inline(temp_db, fake_cognee):
 
     result = node_consolidate(_completed_state())
 
     assert result["memory_job_ids"]
+    assert fake_cognee.remember_calls == []
+    assert fake_cognee.improve_calls == []
 
 
 def test_node_consolidate_does_not_call_get_secondary_llm(temp_db, monkeypatch):

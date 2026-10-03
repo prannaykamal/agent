@@ -30,18 +30,22 @@ Ivo is built as an autonomous, multi-provider personal assistant operating on a 
                                 /               |                \
                                v                v                 v
             +--------------------+   +-------------------+   +--------------------+
-            | Primary LLM Tier   |   | Memory Subsystems |   | Tool Infrastructure|
-            | (OpenAI/Anthropic/ |   | (Episodic,        |   | (22 OS Tools +     |
-            | Gemini/Grok)       |   |  Semantic FTS5,   |   |  MCP Gateway)      |
-            +--------------------+   |  Procedural)      |   +--------------------+
+            | Primary LLM Tier   |   | Memory            |   | Tool Infrastructure|
+            | (OpenAI/Anthropic/ |   | (short-term       |   | (22 OS Tools +     |
+            | Gemini/Grok)       |   |  summaries +      |   |  MCP Gateway)      |
+            +--------------------+   |  cognee graph)    |   +--------------------+
                                      +-------------------+
-                                                |
-                                                v
-                                     +-------------------+
-                                     | SQLite state.db   |
-                                     |  (FTS5 Tables)    |
-                                     +-------------------+
+                                        |           |
+                                        v           v
+                         +-------------------+   +----------------------+
+                         | SQLite state.db   |   | cognee knowledge     |
+                         | (turns, summaries,|   | graph .agent/cognee  |
+                         |  memory_jobs)     |   | (facts, episodes,    |
+                         +-------------------+   |  procedures)         |
+                                                 +----------------------+
 ```
+
+Long-term memory is one cognee knowledge graph. A small routing model, Jev, decides per message whether to store it (into a per-conversation cognee session that merges into the main graph after `SESSION_IDLE_TIMEOUT` idle minutes) and whether the primary agent needs recalled memory. Jev can also escalate medium-risk tool calls to HITL, never the reverse. See [Memory Architecture](memory-architecture.md).
 
 ---
 
@@ -60,6 +64,7 @@ Ivo categorizes tool features into three distinct operational modes:
 | **Task Management** | LOCAL-ONLY | SQLite `tasks` table | None |
 | **Sub-Agent Spawn** | REAL / LOCAL | LangChain Async Sub-Agent | None |
 | **System Backup** | REAL | Zip compressed archive | None |
+| **Long-Term Memory** | REAL / DEGRADES SAFELY | cognee knowledge graph (`src/memory/cognee_memory.py`) | `OPENAI_API_KEY` or cognee's `LLM_*` / `EMBEDDING_*` settings |
 
 ---
 
@@ -69,17 +74,19 @@ Ivo uses an integrated SQLite database (`.agent/state.db`) managed via versioned
 
 ### Core Tables
 
-1. **`episodes`** (FTS5 Virtual Table):
-   - Stores historical conversation turns and outcomes for semantic retrieval.
+Long-term knowledge is no longer stored in SQLite; it lives in cognee's stores under `.agent/cognee`. Tables 1–3 are legacy: nothing writes to them, and they are kept so `python -m src.memory.cognee_backfill` can import their contents into cognee.
+
+1. **`episodes`** (legacy FTS5 Virtual Table):
+   - Historical conversation turns from before cognee.
    - Fields: `session_id`, `timestamp`, `content`, `tool_calls`, `outcome`.
 
-2. **`facts`** (FTS5 Virtual Table):
-   - Stores extracted long-term memory facts auto-synced with `.agent/MEMORY.md`.
+2. **`facts`** (legacy FTS5 Virtual Table):
+   - Long-term facts from before cognee.
    - Fields: `category`, `fact_text`, `source`, `confidence`, `created_at`.
 
-3. **`skills`** (FTS5 Virtual Table):
-   - Stores procedural memory skills auto-synced with `.agent/SKILL.md`.
-   - Fields: `name`, `description`, `trigger`, `instructions`, `created_at`.
+3. **`skills`** (legacy table):
+   - Procedural skills from before cognee.
+   - Fields: `name`, `description`, `trigger_keywords`, `execution_steps`, `created_at`.
 
 4. **`checkpoints`**:
    - Stores LangGraph state checkpoints for session pause, HITL resumption, and context recovery.
@@ -176,14 +183,14 @@ Ivo uses an integrated SQLite database (`.agent/state.db`) managed via versioned
 ## 5. System Backup & Restore Lifecycle
 
 ### Export Backup (`export_agent_backup()`)
-- Packages `state.db`, `SOUL.md`, `MEMORY.md`, and `SKILL.md` into a compressed zip archive (`agent_backup_YYYYMMDD_HHMMSS.zip`).
+- Packages `state.db`, `SOUL.md`, legacy `MEMORY.md`/`SKILL.md` (when present), and the cognee data directory (under `cognee/`) into a compressed zip archive (`agent_backup_YYYYMMDD_HHMMSS.zip`).
 - Automatically triggers `rotate_backups(max_backups=5)` to prune oldest archives exceeding 5 files.
 
 ### Restore Safety Protocol (`restore_agent_backup()`)
 1. Validates that the file is a valid zip archive.
 2. Inspects `state.db` bytes inside the zip to verify the SQLite 16-byte magic header (`b"SQLite format 3\x00"`). Raises `ValueError` if missing or corrupt.
 3. Creates a pre-restore rollback copy `.agent/state.db.bak` of the active database prior to overwriting.
-4. Overwrites workspace files and reports restored file list.
+4. Overwrites workspace files, restores `cognee/` entries into the cognee data directory (skipping any path that would escape it), and reports the restored file list.
 
 ---
 

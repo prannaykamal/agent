@@ -32,33 +32,52 @@ class AdaptiveSummarizationConfig:
     medium_context_max_tokens: int = 500000
 
 
-@dataclass(frozen=True)
-class EpisodicMemoryConfig:
-    conversation_idle_timeout_seconds: int = 2700
-    episode_idle_timeout_seconds: int = 2700
-    long_conversation_token_threshold: int = 50000
-    max_episodic_memories: int = 10000
+COGNEE_SEARCH_TYPES = (
+    "GRAPH_COMPLETION",
+    "RAG_COMPLETION",
+    "CHUNKS",
+    "SUMMARIES",
+)
 
 
 @dataclass(frozen=True)
-class SemanticMemoryConfig:
-    max_pending_facts: int = 100
-    consolidation_episode_frequency: int = 10
-    consolidation_pending_fact_frequency: int = 100
-    candidate_batch_size: int = 25
-    deduplication_top_k_min: int = 3
-    deduplication_top_k_max: int = 10
+class CogneeMemoryConfig:
+    """Long-term memory backed by a single cognee knowledge graph.
+
+    Worth-storing turns go to a per-session cognee session cache first and are
+    merged into the main graph (``dataset_name``) once the session is idle.
+    Retrieval only ever reads the main graph.
+    """
+
+    enabled: bool = True
+    storage_enabled: bool = True
+    retrieval_enabled: bool = True
+    dataset_name: str = "ivo_memory"
+    data_dir: str = ""
+    user_id: str = "default_user"
+    search_type: str = "GRAPH_COMPLETION"
+    top_k: int = 8
+    recall_timeout_seconds: float = 8.0
+    retrieval_token_budget: int = 1500
+    session_idle_timeout_minutes: int = 30
 
 
 @dataclass(frozen=True)
-class ProceduralMemoryConfig:
-    promotion_occurrence_threshold: int = 3
-    promotion_confidence_threshold: float = 0.90
-    max_procedural_candidates: int = 500
-    max_active_procedural_skills: int = 100
-    max_retrieved_procedural_skills: int = 3
-    consolidation_episode_frequency: int = 10
-    consolidation_candidate_frequency: int = 20
+class JevConfig:
+    """Jev: a small decision/routing model behind an OpenAI-compatible endpoint.
+
+    The API key is read from ``JEV_API_KEY`` at call time and is deliberately
+    not part of this config, because the config is exposed by ``/api/models``.
+    """
+
+    endpoint: str = ""
+    model: str = ""
+    timeout_seconds: float = 5.0
+    tool_review_enabled: bool = True
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.endpoint and self.model)
 
 
 @dataclass(frozen=True)
@@ -86,9 +105,8 @@ class MemoryArchitectureConfig:
     secondary_llm: LLMRoleConfig
     short_term: ShortTermMemoryConfig
     adaptive_summarization: AdaptiveSummarizationConfig
-    episodic: EpisodicMemoryConfig
-    semantic: SemanticMemoryConfig
-    procedural: ProceduralMemoryConfig
+    cognee: CogneeMemoryConfig
+    jev: JevConfig
     queue: QueueConfig
     metrics: MetricsConfig
     config_sources: tuple[str, ...] = SUPPORTED_CONFIG_SOURCES
@@ -216,30 +234,25 @@ def load_memory_config(environ: Optional[Dict[str, str]] = None) -> MemoryArchit
             medium_context_max_tokens=_env_int("MEMORY_MEDIUM_CONTEXT_MAX_TOKENS", 500000),
         )
 
-        episodic = EpisodicMemoryConfig(
-            conversation_idle_timeout_seconds=_env_int("MEMORY_CONVERSATION_IDLE_TIMEOUT_SECONDS", 2700),
-            episode_idle_timeout_seconds=_env_int("MEMORY_EPISODE_IDLE_TIMEOUT_SECONDS", 2700),
-            long_conversation_token_threshold=_env_int("MEMORY_LONG_CONVERSATION_TOKEN_THRESHOLD", 50000),
-            max_episodic_memories=_env_int("MEMORY_MAX_EPISODIC_MEMORIES", 10000),
+        cognee = CogneeMemoryConfig(
+            enabled=_env_bool("COGNEE_ENABLED", True),
+            storage_enabled=_env_bool("MEMORY_STORAGE_ENABLED", True),
+            retrieval_enabled=_env_bool("MEMORY_RETRIEVAL_ENABLED", True),
+            dataset_name=_env_str("MEMORY_COGNEE_DATASET", "ivo_memory"),
+            data_dir=_env_str("MEMORY_COGNEE_DATA_DIR", ""),
+            user_id=_env_str("MEMORY_USER_ID", "default_user"),
+            search_type=_env_str("MEMORY_COGNEE_SEARCH_TYPE", "GRAPH_COMPLETION").upper(),
+            top_k=_env_int("MEMORY_COGNEE_TOP_K", 8),
+            recall_timeout_seconds=_env_float("MEMORY_COGNEE_RECALL_TIMEOUT_SECONDS", 8.0),
+            retrieval_token_budget=_env_int("MEMORY_COGNEE_RETRIEVAL_TOKEN_BUDGET", 1500),
+            session_idle_timeout_minutes=_env_int("SESSION_IDLE_TIMEOUT", 30),
         )
 
-        semantic = SemanticMemoryConfig(
-            max_pending_facts=_env_int("MEMORY_MAX_PENDING_FACTS", 100),
-            consolidation_episode_frequency=_env_int("MEMORY_SEMANTIC_CONSOLIDATION_EPISODE_FREQUENCY", 10),
-            consolidation_pending_fact_frequency=_env_int("MEMORY_SEMANTIC_CONSOLIDATION_PENDING_FACT_FREQUENCY", 100),
-            candidate_batch_size=_env_int("MEMORY_SEMANTIC_CANDIDATE_BATCH_SIZE", 25),
-            deduplication_top_k_min=_env_int("MEMORY_SEMANTIC_DEDUP_TOP_K_MIN", 3),
-            deduplication_top_k_max=_env_int("MEMORY_SEMANTIC_DEDUP_TOP_K_MAX", 10),
-        )
-
-        procedural = ProceduralMemoryConfig(
-            promotion_occurrence_threshold=_env_int("MEMORY_PROCEDURAL_PROMOTION_OCCURRENCES", 3),
-            promotion_confidence_threshold=_env_float("MEMORY_PROCEDURAL_PROMOTION_CONFIDENCE", 0.90),
-            max_procedural_candidates=_env_int("MEMORY_MAX_PROCEDURAL_CANDIDATES", 500),
-            max_active_procedural_skills=_env_int("MEMORY_MAX_ACTIVE_PROCEDURAL_SKILLS", 100),
-            max_retrieved_procedural_skills=_env_int("MEMORY_MAX_RETRIEVED_PROCEDURAL_SKILLS", 3),
-            consolidation_episode_frequency=_env_int("MEMORY_PROCEDURAL_CONSOLIDATION_EPISODE_FREQUENCY", 10),
-            consolidation_candidate_frequency=_env_int("MEMORY_PROCEDURAL_CONSOLIDATION_CANDIDATE_FREQUENCY", 20),
+        jev = JevConfig(
+            endpoint=_env_str("JEV_ENDPOINT", "").rstrip("/"),
+            model=_env_str("JEV_MODEL", ""),
+            timeout_seconds=_env_float("JEV_TIMEOUT_SECONDS", 5.0),
+            tool_review_enabled=_env_bool("TOOL_JEV_ENABLED", True),
         )
 
         queue = QueueConfig(
@@ -262,9 +275,8 @@ def load_memory_config(environ: Optional[Dict[str, str]] = None) -> MemoryArchit
         _validate_config(
             short_term=short_term,
             adaptive=adaptive,
-            episodic=episodic,
-            semantic=semantic,
-            procedural=procedural,
+            cognee=cognee,
+            jev=jev,
             queue=queue,
         )
 
@@ -273,9 +285,8 @@ def load_memory_config(environ: Optional[Dict[str, str]] = None) -> MemoryArchit
             secondary_llm=secondary,
             short_term=short_term,
             adaptive_summarization=adaptive,
-            episodic=episodic,
-            semantic=semantic,
-            procedural=procedural,
+            cognee=cognee,
+            jev=jev,
             queue=queue,
             metrics=metrics,
         )
@@ -288,9 +299,8 @@ def load_memory_config(environ: Optional[Dict[str, str]] = None) -> MemoryArchit
 def _validate_config(
     short_term: ShortTermMemoryConfig,
     adaptive: AdaptiveSummarizationConfig,
-    episodic: EpisodicMemoryConfig,
-    semantic: SemanticMemoryConfig,
-    procedural: ProceduralMemoryConfig,
+    cognee: CogneeMemoryConfig,
+    jev: JevConfig,
     queue: QueueConfig,
 ) -> None:
     for name, value in {
@@ -301,7 +311,6 @@ def _validate_config(
         "MEMORY_SMALL_CONTEXT_CHUNK_RATIO": adaptive.small_context_chunk_ratio,
         "MEMORY_MEDIUM_CONTEXT_CHUNK_RATIO": adaptive.medium_context_chunk_ratio,
         "MEMORY_LARGE_CONTEXT_CHUNK_RATIO": adaptive.large_context_chunk_ratio,
-        "MEMORY_PROCEDURAL_PROMOTION_CONFIDENCE": procedural.promotion_confidence_threshold,
     }.items():
         _validate_ratio(name, value)
 
@@ -309,22 +318,9 @@ def _validate_config(
         "MEMORY_MAX_SUMMARY_BLOCKS": short_term.max_summary_blocks,
         "MEMORY_SMALL_CONTEXT_MAX_TOKENS": adaptive.small_context_max_tokens,
         "MEMORY_MEDIUM_CONTEXT_MAX_TOKENS": adaptive.medium_context_max_tokens,
-        "MEMORY_CONVERSATION_IDLE_TIMEOUT_SECONDS": episodic.conversation_idle_timeout_seconds,
-        "MEMORY_EPISODE_IDLE_TIMEOUT_SECONDS": episodic.episode_idle_timeout_seconds,
-        "MEMORY_LONG_CONVERSATION_TOKEN_THRESHOLD": episodic.long_conversation_token_threshold,
-        "MEMORY_MAX_EPISODIC_MEMORIES": episodic.max_episodic_memories,
-        "MEMORY_MAX_PENDING_FACTS": semantic.max_pending_facts,
-        "MEMORY_SEMANTIC_CONSOLIDATION_EPISODE_FREQUENCY": semantic.consolidation_episode_frequency,
-        "MEMORY_SEMANTIC_CONSOLIDATION_PENDING_FACT_FREQUENCY": semantic.consolidation_pending_fact_frequency,
-        "MEMORY_SEMANTIC_CANDIDATE_BATCH_SIZE": semantic.candidate_batch_size,
-        "MEMORY_SEMANTIC_DEDUP_TOP_K_MIN": semantic.deduplication_top_k_min,
-        "MEMORY_SEMANTIC_DEDUP_TOP_K_MAX": semantic.deduplication_top_k_max,
-        "MEMORY_PROCEDURAL_PROMOTION_OCCURRENCES": procedural.promotion_occurrence_threshold,
-        "MEMORY_MAX_PROCEDURAL_CANDIDATES": procedural.max_procedural_candidates,
-        "MEMORY_MAX_ACTIVE_PROCEDURAL_SKILLS": procedural.max_active_procedural_skills,
-        "MEMORY_MAX_RETRIEVED_PROCEDURAL_SKILLS": procedural.max_retrieved_procedural_skills,
-        "MEMORY_PROCEDURAL_CONSOLIDATION_EPISODE_FREQUENCY": procedural.consolidation_episode_frequency,
-        "MEMORY_PROCEDURAL_CONSOLIDATION_CANDIDATE_FREQUENCY": procedural.consolidation_candidate_frequency,
+        "MEMORY_COGNEE_TOP_K": cognee.top_k,
+        "MEMORY_COGNEE_RETRIEVAL_TOKEN_BUDGET": cognee.retrieval_token_budget,
+        "SESSION_IDLE_TIMEOUT": cognee.session_idle_timeout_minutes,
         "MEMORY_QUEUE_WORKER_COUNT": queue.background_worker_count,
         "MEMORY_QUEUE_MAX_SIZE": queue.maximum_queue_size,
         "MEMORY_QUEUE_RETRY_LIMIT": queue.retry_limit,
@@ -334,8 +330,18 @@ def _validate_config(
     }.items():
         _validate_positive_int(name, value)
 
-    if semantic.deduplication_top_k_min > semantic.deduplication_top_k_max:
-        raise ValueError("MEMORY_SEMANTIC_DEDUP_TOP_K_MIN must be <= MEMORY_SEMANTIC_DEDUP_TOP_K_MAX")
+    if cognee.search_type not in COGNEE_SEARCH_TYPES:
+        raise ValueError(f"MEMORY_COGNEE_SEARCH_TYPE must be one of {', '.join(COGNEE_SEARCH_TYPES)}")
+    if cognee.recall_timeout_seconds <= 0:
+        raise ValueError("MEMORY_COGNEE_RECALL_TIMEOUT_SECONDS must be positive")
+    if not cognee.dataset_name.replace("_", "").replace("-", "").isalnum():
+        raise ValueError("MEMORY_COGNEE_DATASET may only contain letters, digits, '_' and '-'")
+    if not cognee.user_id.replace("_", "").replace("-", "").isalnum():
+        raise ValueError("MEMORY_USER_ID may only contain letters, digits, '_' and '-'")
+    if jev.timeout_seconds <= 0:
+        raise ValueError("JEV_TIMEOUT_SECONDS must be positive")
+    if jev.endpoint and not jev.endpoint.startswith(("http://", "https://")):
+        raise ValueError("JEV_ENDPOINT must be an http(s) URL")
 
     if adaptive.small_context_max_tokens > adaptive.medium_context_max_tokens:
         raise ValueError("MEMORY_SMALL_CONTEXT_MAX_TOKENS must be <= MEMORY_MEDIUM_CONTEXT_MAX_TOKENS")

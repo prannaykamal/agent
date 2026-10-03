@@ -24,41 +24,49 @@ def test_api_starts_memory_worker_outside_the_chat_path():
     assert "start_memory_worker_runtime(" in text
 
 
-def test_retrieval_planner_and_assembler_have_no_llm_calls_or_writes():
-    combined = "\n".join(_text(path) for path in ["src/memory/retrieval_planner.py", "src/memory/context_assembler.py"])
+def _function_source(path, name):
+    source = _text(path)
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+            return ast.get_source_segment(source, node)
+    raise AssertionError(f"{name} not found in {path}")
+
+
+def test_chat_retrieval_node_is_read_only_and_makes_no_llm_calls():
+    text = _function_source("src/harness/graph.py", "node_memory_router")
     forbidden = [
         "resolve_secondary_llm",
         "get_secondary_llm",
         ".invoke(",
         "INSERT",
-        "UPDATE",
-        "DELETE",
         "commit(",
         "enqueue_",
-        "add_explicit_fact",
-        "record_used",
-        "reload_active_skills",
-    ]
-
-    for token in forbidden:
-        assert token not in combined
-
-
-def test_retrieval_sources_do_not_write_or_mutate_runtime_state():
-    text = _text("src/memory/retrieval_sources.py")
-    forbidden = [
-        "upsert_embedding",
-        "add_explicit_fact",
-        "record_used",
-        "reload_active_skills",
-        "INSERT INTO",
-        "UPDATE ",
-        "DELETE FROM",
-        "commit(",
+        ".remember(",
+        ".cognify(",
     ]
 
     for token in forbidden:
         assert token not in text
+    assert ".recall(" in text
+
+
+def test_cognee_recall_requests_context_only_and_never_writes():
+    text = _function_source("src/memory/cognee_memory.py", "recall")
+
+    assert '"only_context"' in text
+    for token in ["cognee.add(", "cognee.cognify(", "enqueue_", "INSERT", "commit("]:
+        assert token not in text
+
+
+def test_only_the_adapter_imports_cognee():
+    offenders = [
+        str(path)
+        for path in Path("src").rglob("*.py")
+        if path.as_posix() != "src/memory/cognee_memory.py"
+        and re.search(r"^\s*(import cognee|from cognee)", _text(path), re.MULTILINE)
+    ]
+    assert offenders == []
 
 
 def test_observability_helper_has_no_sql_writes_or_mutating_repository_calls():
@@ -73,11 +81,10 @@ def test_observability_helper_has_no_sql_writes_or_mutating_repository_calls():
         "recover_stale_running_jobs",
         "upsert_worker_heartbeat",
         "create_approval_request",
-        "create_version",
         "enqueue_",
-        "add_explicit_fact",
-        "record_used",
-        "reload_active_skills",
+        ".remember(",
+        ".cognify(",
+        "forget_all(",
     ]
 
     for token in forbidden:
@@ -103,24 +110,33 @@ def test_api_chat_return_shape_has_no_public_debug_keys():
 
 
 def test_memory_job_handler_registry_final_shape():
-    from src.memory.job_handlers import NoOpMemoryJobHandler, build_default_handler_registry
+    from src.memory.job_handlers import build_default_handler_registry
 
     registry = build_default_handler_registry()
 
-    assert registry["summary_generation"].__class__.__name__ == "SummaryGenerationJobHandler"
-    assert registry["episode_generation"].__class__.__name__ == "EpisodeGenerationJobHandler"
-    assert registry["semantic_candidate_extraction"].__class__.__name__ == "SemanticCandidateExtractionJobHandler"
-    assert registry["semantic_consolidation"].__class__.__name__ == "SemanticConsolidationJobHandler"
-    assert registry["procedural_candidate_generation"].__class__.__name__ == "ProceduralCandidateGenerationJobHandler"
-    assert registry["skill_promotion"].__class__.__name__ == "SkillPromotionJobHandler"
-    assert isinstance(registry["procedural_consolidation"], NoOpMemoryJobHandler)
+    assert {job_type: handler.__class__.__name__ for job_type, handler in registry.items()} == {
+        "summary_generation": "SummaryGenerationJobHandler",
+        "cognee_ingest": "CogneeIngestJobHandler",
+        "memory_session_write": "MemorySessionWriteJobHandler",
+        "memory_session_merge": "MemorySessionMergeJobHandler",
+    }
 
 
-def test_generated_skill_path_contract_documented_and_implemented():
-    text = _text("src/memory/skill_files.py")
-    assert "skills" in text
-    assert "generated" in text
-    assert "v{int(version):04d}" in text or "vNNNN" in _text("docs/memory-architecture.md")
+def test_jev_can_only_escalate_tool_calls():
+    text = _function_source("src/harness/graph.py", "_jev_tool_escalation")
+
+    # Jev is consulted only for calls policy would already run directly, and returns an
+    # escalation reason or None; it never invokes tools or touches approvals itself.
+    assert "policy.requires_approval" in text
+    for token in ["invoke_registered_tool", "process_approval_decision", '"approved": True']:
+        assert token not in text
+
+
+def test_jev_is_a_router_not_an_agent():
+    text = _text("src/memory/jev.py")
+
+    for token in ["bind_tools", "invoke_registered_tool", "get_cognee_memory", "enqueue_", "create_approval_request"]:
+        assert token not in text
 
 
 def test_docs_exist_and_cover_required_phase11_topics():
@@ -136,7 +152,7 @@ def test_docs_exist_and_cover_required_phase11_topics():
         assert Path(path).exists(), path
 
     architecture = _text("docs/memory-architecture.md").lower()
-    for term in ["primary", "secondary", "memory_jobs", "structured", "semantic", "procedural", "retrieval", "observability", "legacy"]:
+    for term in ["primary", "secondary", "memory_jobs", "cognee", "jev", "session_idle_timeout", "memory_session_merge", "should_store", "should_retrieve", "retrieval", "observability", "legacy"]:
         assert term in architecture
 
 

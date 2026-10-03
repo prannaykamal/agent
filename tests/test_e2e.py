@@ -3,7 +3,10 @@ from pathlib import Path
 from langchain_core.messages import HumanMessage, AIMessage
 
 from src.db import init_db
-from src.memory.semantic import add_semantic_fact, sync_memory_md
+from datetime import datetime, timedelta, timezone
+
+from src.memory.cognee_memory import get_cognee_memory
+from src.memory.worker import process_one_memory_job
 from src.orchestration.tools import spawn_agent
 from src.personal_os.tasks import create_task
 from src.personal_os.concurrency import lock_resource, unlock_resource
@@ -22,16 +25,15 @@ def temp_db(tmp_path, monkeypatch):
     init_db(db_file)
     return {"db": db_file, "mem": mem_file}
 
-def test_e2e_full_conversation_and_memory_sync(temp_db):
+def test_e2e_conversation_is_remembered_through_cognee(temp_db, fake_cognee, fake_jev, monkeypatch):
     db_path = temp_db["db"]
-    mem_path = temp_db["mem"]
+    memory = get_cognee_memory()
+    memory.remember_permanent(["Fact about the user (user_preference): User prefers dark mode UI and Python"])
 
-    # 1. Add semantic fact
-    add_semantic_fact("user_preference", "User prefers dark mode UI and Python", db_path=db_path, memory_path=mem_path)
-
-    # 2. Invoke multi-turn conversation
+    # 1. Jev asks for retrieval and storage: chat recalls the existing fact.
+    fake_jev.memory = {"should_store": True, "should_retrieve": True}
     input_state = {
-        "messages": [HumanMessage(content="Remember that my name is Sam and I prefer morning meetings")],
+        "messages": [HumanMessage(content="Remember that my name is Sam and I prefer morning meetings with Python demos")],
         "session_id": "e2e_session_01",
         "summary": "",
         "token_count": 0,
@@ -40,14 +42,25 @@ def test_e2e_full_conversation_and_memory_sync(temp_db):
         "pending_approval_id": None,
         "approval_status": None
     }
-
     result = agent_app.invoke(input_state)
     assert result["retrieval_triggered"] is True
+    assert result["memory_storage_decision"]["should_store"] is True
     assert len(result["messages"]) >= 2
 
-    # 3. Verify MEMORY.md synced file content
-    mem_content = mem_path.read_text(encoding="utf-8")
-    assert "dark mode" in mem_content or "Sam" in mem_content
+    # 2. The worker writes the turn into the session graph; the merge waits for idle.
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    monkeypatch.setattr("src.memory.job_handlers._utcnow", lambda: now)
+    write = process_one_memory_job("e2e-worker", db_path=db_path, now=now)
+    assert (write.job_type, write.status) == ("memory_session_write", "SUCCEEDED")
+    assert memory.recall("When does Sam prefer meetings?").memories == []
+
+    # 3. After the idle timeout the session merges into the main graph and becomes recallable.
+    later = now + timedelta(minutes=31)
+    monkeypatch.setattr("src.memory.job_handlers._utcnow", lambda: later)
+    merge = process_one_memory_job("e2e-worker", db_path=db_path, now=later)
+    assert (merge.job_type, merge.status) == ("memory_session_merge", "SUCCEEDED")
+    recalled = memory.recall("When does Sam prefer meetings?")
+    assert any("morning meetings" in item.content for item in recalled.memories)
 
 def test_e2e_sub_agent_delegation(temp_db):
     tool_output = spawn_agent.invoke({

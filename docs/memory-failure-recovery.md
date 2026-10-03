@@ -20,12 +20,83 @@ Recovery:
 python -c "from src.memory.worker import recover_stale_running_jobs; print(recover_stale_running_jobs(worker_id='recovery-operator'))"
 ```
 
+## cognee Not Installed Or Disabled
+
+Expected behavior:
+
+- Chat still works. Recall returns nothing, so no `[Retrieved Long-Term Memory]` block is injected.
+- Memory health reports `DEGRADED`, and `/api/memory/observability/long-term` shows `available: false` with the reason.
+- `memory_session_write`, `memory_session_merge`, and `cognee_ingest` jobs fail as non-retryable and go straight to dead letters, so they are not retried forever.
+
+Recovery:
+
+1. Install cognee (`pip install -r requirements.txt`) or set `COGNEE_ENABLED=true`.
+2. Restart the API. The import result is cached per process, so a running process will not notice a fresh install.
+3. Re-queue lost knowledge: turns from the outage are in `raw_turns` but were not ingested. Run the legacy backfill for older data; re-ingesting outage turns is a manual, backed-up maintenance action.
+
+## cognee Provider Outage (LLM Or Embeddings)
+
+Expected behavior:
+
+- Chat still works without long-term context. Recall failures are logged, and the timeout (`MEMORY_COGNEE_RECALL_TIMEOUT_SECONDS`) bounds the added latency.
+- Session writes, merges, and `cognee_ingest` jobs retry with backoff, then dead-letter.
+
+Recovery:
+
+1. Fix `LLM_API_KEY`, `EMBEDDING_API_KEY`, or the provider settings (they default to `OPENAI_API_KEY`).
+2. Restart the API.
+3. Force-merge sessions whose merges dead-lettered: `POST /api/memory/sessions/<session_id>/merge`.
+4. Check `/api/memory/observability/long-term` for new `SUCCEEDED` merges.
+
+## Jev Unavailable Or Misbehaving
+
+Expected behavior:
+
+- Chat still works. `memory.store.decision` and `memory.retrieve.decision` logs show `source: fallback` with an `error_category`.
+- Fallback decisions: nothing is stored from chat, retrieval runs for every non-trivial message, and tool calls follow policy alone (no escalation).
+
+Recovery:
+
+1. Check `JEV_ENDPOINT`, `JEV_MODEL`, `JEV_API_KEY`, and that the endpoint answers OpenAI-style `POST /chat/completions`.
+2. `ValidationError` or `JevError` categories mean the model is not returning the required JSON; use a model that follows instructions, or a server with JSON mode.
+3. Raise `JEV_TIMEOUT_SECONDS` only if the model is slow but correct; every chat turn waits for the decision.
+
+## Session Merge Stuck Or Failing
+
+Merges retry when cognee reports `errored`, `running`, or a lock held by another run. Exhausted retries dead-letter.
+
+Recovery:
+
+1. Inspect `/api/memory/observability/dead-letter` for `memory_session_merge` jobs and the redacted error.
+2. Fix the cause (usually cognee's LLM or embedding provider).
+3. `POST /api/memory/sessions/<session_id>/merge`. Forced merges skip the idle check; a merge with nothing new is a no-op, so repeating it is safe.
+
+## Embedding Dimension Mismatch
+
+If a merge, explicit write, or search fails with a vector dimension error, the configured embedding model and `EMBEDDING_DIMENSIONS` disagree, or the model changed after data was stored.
+
+Recovery:
+
+1. Set `EMBEDDING_DIMENSIONS` to the model's real size.
+2. If the embedding model changed, the stored vectors are incompatible: back up, reset long-term memory (`forget_all()`), and re-import with the backfill.
+
+## Knowledge Not Showing Up In Recall
+
+Chat knowledge is searchable only after its session merges into the main graph, which happens once the conversation has been idle for `SESSION_IDLE_TIMEOUT` minutes. Only messages Jev marked `should_store` are written at all.
+
+Recovery:
+
+1. Check that the `cognee_ingest` job for the turn `SUCCEEDED`.
+1a. If there is no `memory_session_write` job for the turn, Jev decided not to store it (see `memory.store.decision` logs).
+2. Check that a later `memory_session_merge` job `SUCCEEDED` with `merged: true`; if it was deferred, the conversation is still active. To merge now, `POST /api/memory/sessions/<session_id>/merge`.
+3. Run a retrieval trace with the same query. Try `search_type: "CHUNKS"` to separate graph-extraction problems from storage problems.
+
 ## Secondary Outage
 
 Expected behavior:
 
 - Chat still works.
-- Worker jobs requiring secondary LLM retry or dead-letter.
+- `summary_generation` jobs retry or dead-letter.
 
 Recovery:
 
@@ -34,66 +105,13 @@ Recovery:
 3. Run explicit worker step.
 4. Inspect health and dead letters.
 
-## Invalid LLM JSON
-
-Handlers parse direct JSON and fenced JSON. Invalid output should retry without partial permanent writes.
+## Corrupt cognee Data Directory
 
 Recovery:
 
-1. Inspect job type and error preview.
-2. Fix model/provider/prompt boundary if needed.
-3. Re-run worker after retry time.
-
-## Semantic Consolidation Failure
-
-Candidates claimed as `IN_CONSOLIDATION` should return to `PENDING` on global pre-LLM failure, secondary outage, or invalid JSON. Candidate-specific failures should not clear the whole batch.
-
-Recovery:
-
-1. Inspect `consolidation_runs`.
-2. Inspect candidate statuses.
-3. Re-run consolidation after fixing the cause.
-
-## Approval Linkage Mismatch
-
-Approval decisions without procedural linkage should preserve existing non-procedural approval behavior. No skill promotion may occur without `procedural_skill_approvals` linkage.
-
-Recovery:
-
-1. Inspect approval request.
-2. Inspect procedural approval linkage.
-3. Recreate promotion request if linkage was never durably created.
-
-## Skill Reload Failure
-
-Reload keeps the previous runtime snapshot when generated skill files are invalid.
-
-Recovery:
-
-1. Inspect skill observability.
-2. Validate generated `SKILL.md` frontmatter and content hash.
-3. Roll back to a valid version or disable the skill.
-4. Reload again.
-
-## Corrupt Generated Skill File
-
-Generated skill files are immutable. Do not patch old versions in place unless restoring from backup.
-
-Recovery:
-
-1. Disable or archive the bad version.
-2. Roll back active pointer to a valid version.
-3. Restore file from backup if needed.
-
-## Retrieval Source Failure
-
-Retrieval source failures are isolated inside `retrieve_all_sources()`. Global planner, retriever, or assembler exceptions fall back to legacy retrieval wrappers.
-
-Recovery:
-
-1. Run retrieval trace.
-2. Check source errors.
-3. Fix the source-specific reader or data issue.
+1. Stop the API so the worker is not writing.
+2. Restore the latest backup; it contains the cognee directory under `cognee/`.
+3. If no backup exists, move `.agent/cognee` aside, restart, and re-import with the legacy backfill. Knowledge learned only from chat since the last backup is lost.
 
 ## DB Locked Or Unavailable
 

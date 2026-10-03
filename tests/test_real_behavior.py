@@ -98,12 +98,12 @@ def test_api_contract_all_endpoints(temp_db):
     # /api/memory/full
     r_mem = client.get("/api/memory/full")
     assert r_mem.status_code == 200
-    assert "facts" in r_mem.json()
+    assert "memories" in r_mem.json()
 
-    # /api/skills
-    r_skills = client.get("/api/skills")
-    assert r_skills.status_code == 200
-    assert "skills" in r_skills.json()
+    # /api/memory/search
+    r_search = client.post("/api/memory/search", json={"query": "anything"})
+    assert r_search.status_code == 200
+    assert "memories" in r_search.json()
 
     # /api/data/tables
     r_tables = client.get("/api/data/tables")

@@ -6,7 +6,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.api.server import app
-from src.db import add_fact, init_db
+from src.db import init_db
+from src.memory.cognee_memory import get_cognee_memory
 from src.memory.observability import redact_observability_payload
 
 client = TestClient(app)
@@ -16,7 +17,6 @@ client = TestClient(app)
 def temp_db(tmp_path, monkeypatch):
     db_file = tmp_path / "phase11_observability.db"
     monkeypatch.setattr("src.db.DB_PATH", db_file)
-    monkeypatch.setattr("src.config.MEMORY_PATH", tmp_path / "MEMORY.md")
     init_db(db_file)
     return db_file
 
@@ -27,16 +27,6 @@ TABLES = [
     "worker_heartbeats",
     "raw_turns",
     "summary_blocks",
-    "structured_episodes",
-    "pending_fact_candidates",
-    "facts",
-    "semantic_embeddings",
-    "semantic_dedup_events",
-    "consolidation_runs",
-    "skill_candidates",
-    "skill_versions",
-    "skill_usage_stats",
-    "procedural_skill_approvals",
     "approval_requests",
 ]
 
@@ -64,7 +54,7 @@ def _seed_observability_rows(db_path):
         db_path,
         """
         INSERT INTO memory_jobs (id, job_type, status, priority, session_id, idempotency_key, payload_json)
-        VALUES ('job-obs', 'semantic_candidate_extraction', 'QUEUED', 10, 'phase11', 'idem-obs', ?)
+        VALUES ('job-obs', 'cognee_ingest', 'QUEUED', 10, 'phase11', 'idem-obs', ?)
         """,
         (json.dumps(payload),),
     )
@@ -85,26 +75,17 @@ def _seed_observability_rows(db_path):
         """,
         (old, old),
     )
-    _execute(
-        db_path,
-        """
-        INSERT INTO pending_fact_candidates (id, session_id, fact, category, confidence, explicit, source, status)
-        VALUES ('factcand-obs', 'phase11', 'User likes tests', 'preference', 0.8, 0, 'test', 'PENDING')
-        """,
-    )
-    _execute(
-        db_path,
-        """
-        INSERT INTO skill_candidates (id, title, description, trigger_description, workflow_json, preferred_tools_json, tags_json, confidence, occurrences, source_episode_ids_json, status)
-        VALUES ('skillcand-obs', 'Deploy', 'Deploy flow', 'deploy', '[]', '[]', '[]', 0.95, 3, '[]', 'READY_FOR_PROMOTION')
-        """,
-    )
 
 
-def test_observability_endpoints_are_read_only_and_report_subsystems(temp_db):
-    add_fact("profile", "User prefers observability", db_path=temp_db)
+def _teach(text):
+    get_cognee_memory().remember_permanent([text])
+
+
+def test_observability_endpoints_are_read_only_and_report_subsystems(temp_db, fake_cognee):
+    _teach("Fact about the user (profile): User prefers observability")
     _seed_observability_rows(temp_db)
     before = _counts(temp_db)
+    graph_before = (len(fake_cognee.remember_calls), len(fake_cognee.improve_calls))
 
     endpoints = [
         ("GET", "/api/memory/observability/health"),
@@ -112,9 +93,7 @@ def test_observability_endpoints_are_read_only_and_report_subsystems(temp_db):
         ("GET", "/api/memory/observability/workers?stale_after_seconds=1"),
         ("GET", "/api/memory/observability/dead-letter?include_details=true"),
         ("POST", "/api/memory/observability/retrieval/trace"),
-        ("GET", "/api/memory/observability/semantic"),
-        ("GET", "/api/memory/observability/procedural"),
-        ("GET", "/api/memory/observability/skills"),
+        ("GET", "/api/memory/observability/long-term"),
         ("GET", "/api/memory/observability/overview"),
     ]
     responses = []
@@ -126,12 +105,18 @@ def test_observability_endpoints_are_read_only_and_report_subsystems(temp_db):
 
     assert all(response.status_code == 200 for response in responses)
     health = responses[0].json()
-    assert {"schema", "queue", "workers", "semantic", "procedural", "skills"} <= set(health)
+    assert {"schema", "queue", "workers", "long_term"} <= set(health)
+    assert health["long_term"]["available"] is True
+    assert health["long_term"]["pipeline"]["cognee_ingest"]["by_status"] == {"QUEUED": 1}
+    trace = responses[4].json()
+    assert trace["candidate_count"] == 1
+    assert "observability" in trace["candidates"][0]["content_preview"]
     assert _counts(temp_db) == before
+    assert (len(fake_cognee.remember_calls), len(fake_cognee.improve_calls)) == graph_before
 
 
-def test_jobs_dead_letter_and_trace_redact_payloads(temp_db):
-    add_fact("profile", "User prefers redaction", db_path=temp_db)
+def test_jobs_dead_letter_and_trace_redact_payloads(temp_db, fake_cognee):
+    _teach("Fact about the user (profile): User prefers redaction")
     _seed_observability_rows(temp_db)
 
     jobs = client.get("/api/memory/observability/jobs?include_payload=true").json()["jobs"][0]
@@ -146,12 +131,12 @@ def test_jobs_dead_letter_and_trace_redact_payloads(temp_db):
     assert jobs["payload"]["chain_of_thought"] == "[REDACTED]"
     assert dead["details"]["authorization"] == "[REDACTED]"
     assert dead["details"]["prompt"]["redacted"] is True
-    assert "prompt_block" in trace["assembly"]
+    assert trace["prompt_block"]["redacted"] is True
     assert "api_key" not in json.dumps(trace).lower()
 
 
-def test_retrieval_trace_creates_no_chat_turn_and_writes_no_memory(temp_db):
-    add_fact("profile", "User prefers trace safety", db_path=temp_db)
+def test_retrieval_trace_creates_no_chat_turn_and_writes_no_memory(temp_db, fake_cognee):
+    _teach("Fact about the user (profile): User prefers trace safety")
     before = _counts(temp_db)
 
     response = client.post(
@@ -184,15 +169,9 @@ def test_redaction_preserves_safe_fields_and_removes_nested_sensitive_values():
     assert redacted["nested"]["schema_version"] == 1
 
 
-def test_skills_observability_does_not_call_mutating_skill_helpers(temp_db, monkeypatch):
-    def fail(*args, **kwargs):
-        raise AssertionError("observability must not mutate skills")
+def test_health_is_degraded_when_cognee_is_unavailable(temp_db):
+    health = client.get("/api/memory/observability/health").json()
 
-    monkeypatch.setattr("src.memory.skill_reloader.SkillRuntimeReloader.reload_active_skills", fail)
-    monkeypatch.setattr("src.memory.skill_reloader.SkillRuntimeReloader.record_skill_used", fail)
-    monkeypatch.setattr("src.memory.skill_store.SkillVersionStore.record_used", fail)
-
-    response = client.get("/api/memory/observability/skills")
-
-    assert response.status_code == 200
-
+    assert health["status"] == "DEGRADED"
+    assert health["long_term"]["available"] is False
+    assert "disabled" in health["long_term"]["error"]

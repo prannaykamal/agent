@@ -2,7 +2,7 @@ import pytest
 import sqlite3
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
-from src.db import init_db, add_fact, query_facts_fts
+from src.db import init_db
 from src.memory.soul_loader import load_soul_prompt
 
 from src.memory.short_term import manage_short_term_memory
@@ -14,7 +14,7 @@ def temp_db(tmp_path):
     init_db(db_file)
     return db_file
 
-def test_db_initialization_and_fts5(temp_db):
+def test_db_initialization_keeps_legacy_tables_for_backfill(temp_db):
     # Verify tables created
     conn = sqlite3.connect(str(temp_db))
     cursor = conn.cursor()
@@ -26,12 +26,6 @@ def test_db_initialization_and_fts5(temp_db):
     assert "facts" in tables
     assert "skills" in tables
     assert "checkpoints" in tables
-
-    # Test FTS5 insertion and search
-    add_fact(category="preference", fact_text="User prefers dark mode UI", db_path=temp_db)
-    results = query_facts_fts(query="dark mode", db_path=temp_db)
-    assert len(results) >= 1
-    assert "dark mode" in results[0]["fact_text"]
 
 def test_soul_loader(tmp_path):
     soul_file = tmp_path / "SOUL.md"

@@ -3,6 +3,7 @@ import json
 import uuid
 import threading
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from queue import Empty
 from typing import Optional, Dict, Any, List
@@ -17,13 +18,8 @@ from src.db import get_connection
 from src.personal_os.scheduling import heartbeat, schedule_job, cancel_job
 from src.personal_os.registry import get_os_tool_catalog
 from src.mcp_gateway.registry import get_external_api_tool_catalog, get_mcp_tool_catalog
-from src.memory.semantic import get_all_semantic_facts, add_semantic_fact, search_facts_top_k
-from src.memory.episodic import search_episodes_fts, list_recent_episodes
-from src.memory.procedural import (
-    add_procedural_skill,
-    get_all_procedural_skills,
-    delete_procedural_skill
-)
+from src.memory.cognee_memory import get_cognee_memory
+from src.memory.jobs import SQLiteMemoryJobQueue, build_memory_session_merge_job_spec, enqueue_cognee_ingest
 from src.memory.short_term import get_raw_turns, log_raw_turn
 from src.hitl.approval_engine import (
     create_approval_request,
@@ -46,21 +42,17 @@ from src.mcp_gateway.calendar import (
     calendar_inspect_availability
 )
 
-from src.config import SOUL_PATH, SKILL_PATH, MEMORY_PATH
+from src.config import SOUL_PATH
 from src.memory.config import load_memory_config
-from src.memory.skill_promotion import ProceduralSkillApprovalRepository, process_procedural_skill_approval_decision
 from src.memory.observability import (
     get_dead_letter_observability,
     get_jobs_observability,
+    get_long_term_memory_observability,
     get_memory_health_summary,
     get_observability_overview,
-    get_procedural_observability,
     get_retrieval_trace,
-    get_semantic_observability,
-    get_skill_observability,
     get_worker_observability,
 )
-from src.memory.consolidation_scheduler import enqueue_manual_semantic_consolidation
 from src.startup import ensure_system_initialized
 from src.personal_os.backup import export_agent_backup, restore_agent_backup
 
@@ -108,11 +100,17 @@ class FactRequest(BaseModel):
     category: str
     fact_text: str
 
-class SkillRequest(BaseModel):
+class ProcedureRequest(BaseModel):
     name: str
     description: str
-    trigger_keywords: str
+    trigger_keywords: str = ""
     execution_steps: str
+
+
+class MemorySearchRequest(BaseModel):
+    query: str
+    search_type: Optional[str] = None
+    top_k: Optional[int] = None
 
 class DecisionRequest(BaseModel):
     decision: str  # "APPROVED" or "REJECTED"
@@ -152,15 +150,11 @@ class CronSchedulePatchRequest(BaseModel):
 class RetrievalTraceRequest(BaseModel):
     query: str
     session_id: Optional[str] = None
-    provider: Optional[str] = "openai"
-    model_name: Optional[str] = "gpt-4o-mini"
+    search_type: Optional[str] = None
     include_candidates: bool = True
     include_prompt_block: bool = False
     max_candidates: int = 20
 
-
-class ManualConsolidationRequest(BaseModel):
-    session_id: Optional[str] = None
 ALLOWED_DATA_TABLES = [
     "episodes", "facts", "skills", "checkpoints", "approval_requests",
     "sub_agents", "tasks", "scheduled_jobs", "resource_locks", "events_log",
@@ -482,34 +476,91 @@ def api_chat_stream(req: ChatRequest):
 
 # --- Memory Endpoints ---
 
+_MEMORY_SEARCH_TYPES = ("GRAPH_COMPLETION", "RAG_COMPLETION", "CHUNKS", "SUMMARIES")
+
+
+def _queue_memory_documents(documents: List[str], source: str) -> Dict[str, Any]:
+    # Explicit user-entered knowledge goes straight to the main graph; no Jev decision needed.
+    result = enqueue_cognee_ingest(documents=documents, source=source)
+    return {
+        "status": "queued",
+        "job_id": result.job_id,
+        "inserted": result.inserted,
+        "message": "Queued for the main knowledge graph; it becomes searchable once the worker has processed it.",
+    }
+
+
 @app.get("/api/memory")
 def api_get_memory():
-    facts = get_all_semantic_facts()
-    return {"facts": facts, "total_facts": len(facts)}
+    return get_cognee_memory().status()
 
 @app.post("/api/memory/fact")
 def api_add_fact(req: FactRequest):
     if not req.fact_text.strip():
         raise HTTPException(status_code=400, detail="Fact text cannot be empty.")
-    add_semantic_fact(category=req.category, fact_text=req.fact_text, source="user_api")
-    return {"status": "success", "message": "Fact saved and MEMORY.md synced."}
+    category = req.category.strip() or "general"
+    text = f"Fact about the user ({category}): {req.fact_text.strip()}"
+    return _queue_memory_documents([text], source="api.memory.fact")
+
+@app.post("/api/memory/procedure")
+def api_add_procedure(req: ProcedureRequest):
+    if not req.name.strip() or not req.execution_steps.strip():
+        raise HTTPException(status_code=400, detail="Procedure name and steps cannot be empty.")
+    lines = [
+        f"Procedure: {req.name.strip()}",
+        f"Purpose: {req.description.strip()}",
+    ]
+    if req.trigger_keywords.strip():
+        lines.append(f"Use when: {req.trigger_keywords.strip()}")
+    lines.append(f"Steps: {req.execution_steps.strip()}")
+    return _queue_memory_documents(["\n".join(lines)], source="api.memory.procedure")
+
+@app.post("/api/memory/search")
+def api_search_memory(req: MemorySearchRequest):
+    if not req.query.strip():
+        raise HTTPException(status_code=400, detail="query must be non-empty")
+    if req.search_type and req.search_type.upper() not in _MEMORY_SEARCH_TYPES:
+        raise HTTPException(status_code=400, detail=f"search_type must be one of {', '.join(_MEMORY_SEARCH_TYPES)}")
+    result = get_cognee_memory().recall(
+        req.query,
+        top_k=max(1, min(int(req.top_k), 50)) if req.top_k else None,
+        search_type=req.search_type,
+    )
+    return {
+        "query": req.query,
+        "search_type": result.search_type,
+        "available": result.available,
+        "error": result.error,
+        "memories": [item.to_dict() for item in result.memories],
+    }
+
+@app.post("/api/memory/sessions/{session_id}/merge")
+def api_merge_memory_session(session_id: str):
+    """Recovery/ops: merge a session's cognee cache into the main graph now, without waiting for idle."""
+    if not session_id.strip():
+        raise HTTPException(status_code=400, detail="session_id must be non-empty")
+    memory = get_cognee_memory()
+    spec = build_memory_session_merge_job_spec(
+        user_id=memory.config.user_id,
+        session_id=session_id,
+        run_at=datetime.now(timezone.utc),
+        force=True,
+    )
+    result = SQLiteMemoryJobQueue().enqueue_spec(spec)
+    return {"status": "queued", "job_id": result.job_id, "inserted": result.inserted}
 
 @app.get("/api/memory/full")
 def api_get_full_memory(query: Optional[str] = None):
-    q = query or ""
-    facts = search_facts_top_k(query=q, k=10) if q else get_all_semantic_facts()
-    episodes = search_episodes_fts(query=q, limit=10) if q else list_recent_episodes(limit=20)
-
+    memory = get_cognee_memory()
+    q = (query or "").strip()
+    result = memory.recall(q) if q else None
     soul_content = SOUL_PATH.read_text(encoding="utf-8") if SOUL_PATH.exists() else ""
-    skill_content = SKILL_PATH.read_text(encoding="utf-8") if SKILL_PATH.exists() else ""
-    memory_content = MEMORY_PATH.read_text(encoding="utf-8") if MEMORY_PATH.exists() else ""
-
     return {
-        "facts": facts,
-        "episodes": episodes,
+        "backend": memory.status(),
+        "query": q,
+        "memories": [item.to_dict() for item in result.memories] if result else [],
+        "error": result.error if result else None,
         "soul_md": soul_content,
-        "skill_md": skill_content,
-        "memory_md": memory_content
     }
 
 # --- Memory Observability Endpoints ---
@@ -552,12 +603,13 @@ def api_memory_observability_dead_letter(limit: int = 50, include_details: bool 
 def api_memory_observability_retrieval_trace(req: RetrievalTraceRequest):
     if not req.query.strip():
         raise HTTPException(status_code=400, detail="query must be non-empty")
+    if req.search_type and req.search_type.upper() not in _MEMORY_SEARCH_TYPES:
+        raise HTTPException(status_code=400, detail=f"search_type must be one of {', '.join(_MEMORY_SEARCH_TYPES)}")
     try:
         return get_retrieval_trace(
             query=req.query,
             session_id=req.session_id,
-            provider=req.provider,
-            model_name=req.model_name,
+            search_type=req.search_type,
             include_candidates=req.include_candidates,
             include_prompt_block=req.include_prompt_block,
             max_candidates=req.max_candidates,
@@ -565,54 +617,13 @@ def api_memory_observability_retrieval_trace(req: RetrievalTraceRequest):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-@app.get("/api/memory/observability/semantic")
-def api_memory_observability_semantic(
-    session_id: Optional[str] = None,
-    status: Optional[str] = None,
-    limit: int = 100,
-):
-    return get_semantic_observability(session_id=session_id, status=status, limit=limit)
-
-@app.post("/api/memory/observability/semantic/consolidate")
-def api_memory_observability_semantic_consolidate(req: Optional[ManualConsolidationRequest] = None):
-    body = req or ManualConsolidationRequest()
-    return enqueue_manual_semantic_consolidation(session_id=body.session_id)
-
-@app.get("/api/memory/observability/procedural")
-def api_memory_observability_procedural(status: Optional[str] = None, limit: int = 100):
-    return get_procedural_observability(status=status, limit=limit)
-
-@app.get("/api/memory/observability/skills")
-def api_memory_observability_skills(include_archived: bool = False):
-    return get_skill_observability(include_archived=include_archived)
+@app.get("/api/memory/observability/long-term")
+def api_memory_observability_long_term():
+    return get_long_term_memory_observability()
 
 @app.get("/api/memory/observability/overview")
 def api_memory_observability_overview():
     return get_observability_overview()
-
-# --- Procedural Skills Endpoints ---
-
-@app.get("/api/skills")
-def api_get_skills():
-    skills = get_all_procedural_skills()
-    return {"skills": skills, "total_skills": len(skills)}
-
-@app.post("/api/skills")
-def api_add_skill(req: SkillRequest):
-    if not req.name.strip():
-        raise HTTPException(status_code=400, detail="Skill name cannot be empty.")
-    add_procedural_skill(
-        name=req.name,
-        description=req.description,
-        trigger_keywords=req.trigger_keywords,
-        execution_steps=req.execution_steps
-    )
-    return {"status": "success", "message": f"Skill '{req.name}' saved as a versioned SKILL.md file"}
-
-@app.delete("/api/skills/{skill_name}")
-def api_delete_skill(skill_name: str):
-    delete_procedural_skill(name=skill_name)
-    return {"status": "success", "message": f"Skill '{skill_name}' disabled and archived"}
 
 # --- Calendar Endpoints ---
 
@@ -1258,31 +1269,6 @@ def api_get_approvals():
 def api_approval_decision(request_id: str, req: DecisionRequest):
     if req.decision not in ("APPROVED", "REJECTED"):
         raise HTTPException(status_code=400, detail="Decision must be APPROVED or REJECTED.")
-
-    procedural_link = ProceduralSkillApprovalRepository().get_by_approval_request_id(request_id)
-    if procedural_link is not None:
-        try:
-            processed = process_approval_decision(request_id, req.decision)
-            procedural_result = process_procedural_skill_approval_decision(
-                approval_request_id=request_id,
-                decision=req.decision,
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
-        status = str(req.decision).upper()
-        tool_name = str(processed.get("tool_name") or "procedural_skill_promotion")
-        message = procedural_result.message or f"Procedural skill approval {status}."
-        return {
-            "request_id": request_id,
-            "status": status,
-            "tool_name": tool_name,
-            "tool_result": message,
-            "response": message,
-            "message": message,
-            "procedural_skill_approval": procedural_result.to_dict(),
-        }
 
     try:
         res = resume_graph_after_approval(request_id=request_id, decision=req.decision)

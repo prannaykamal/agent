@@ -8,14 +8,14 @@ from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage, SystemMessage
 
 from src.config import DB_PATH, MEMORY_PATH
-from src.db import init_db, get_connection, add_fact
+from src.db import init_db, get_connection
 from src.startup import ensure_system_initialized
 from src.api.server import app
 from src.harness.graph import agent_app, resume_graph_after_approval
 from src.personal_os.scheduling import schedule_job
 from src.background_worker import process_due_scheduled_jobs
 from src.personal_os.backup import export_agent_backup, restore_agent_backup
-from src.memory.semantic import add_semantic_fact
+from src.memory.cognee_memory import get_cognee_memory
 from src.harness.models import get_primary_llm
 
 client = TestClient(app)
@@ -51,7 +51,7 @@ def test_p7_1_api_contract_every_frontend_fetch(temp_db):
     # 4. GET /api/memory/full
     r4 = client.get("/api/memory/full")
     assert r4.status_code == 200
-    assert "facts" in r4.json()
+    assert "memories" in r4.json()
 
     # 5. POST /api/memory/fact
     r5 = client.post("/api/memory/fact", json={"category": "api_test", "fact_text": "API contract verified"})
@@ -252,10 +252,10 @@ def test_p7_8_data_inspector_all_allowed_tables(temp_db):
         assert "rows" in data
         assert "columns" in data
 
-def test_p7_9_memory_retrieval_through_api_chat(temp_db):
+def test_p7_9_memory_retrieval_through_api_chat(temp_db, fake_cognee, fake_jev):
     """P7 Item 9: Memory retrieval test through /api/chat endpoint."""
-    add_fact(category="user_preference", fact_text="User prefers Python 3.11 and SQLite FTS5 for local storage.", source="user", db_path=temp_db)
-
+    get_cognee_memory().remember_permanent(["Fact about the user (user_preference): User prefers Python 3.11 and SQLite for local storage."])
+    fake_jev.memory = {"should_store": False, "should_retrieve": True}
 
     resp = client.post("/api/chat", json={
         "message": "what is my preference for local storage?",

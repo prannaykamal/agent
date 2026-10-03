@@ -1,6 +1,7 @@
 import json
 import uuid
 import logging
+import time
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from langgraph.graph import StateGraph, START, END
@@ -13,14 +14,9 @@ from src.memory.soul_loader import load_soul_prompt
 from src.memory.short_term import estimate_tokens, log_raw_turn, get_raw_turns
 from src.memory.summary_blocks import prepare_short_term_context_for_chat
 
-from src.memory.retrieval_gate import should_retrieve_memory
-from src.memory.profile_pin import assemble_pinned_profile
-from src.memory.context_assembler import ContextAssemblyOptions, assemble_retrieved_memory_context
-from src.memory.retrieval_planner import build_retrieval_plan
-from src.memory.retrieval_sources import retrieve_all_sources
-from src.memory.semantic import search_facts_top_k
-from src.memory.episodic import search_episodes_fts
-from src.memory.procedural import match_procedural_skills
+from src.memory.cognee_memory import get_cognee_memory
+from src.memory.events import log_memory_event
+from src.memory.jev import get_jev_client
 
 from src.hitl.classifier import classify_tool_risk
 from src.hitl.approval_engine import create_approval_request, process_approval_decision, get_approval_request, generate_payload_preview
@@ -28,6 +24,7 @@ from src.mcp_gateway.email_send_bind import bind_email_send_args
 from src.tools.removed_tools import get_removed_tool_blocked_message, is_removed_tool_name
 from src.tools.invocation import invoke_registered_tool
 from src.tools.policy import ToolCallerSource, evaluate_tool_policy
+from src.tools.registry_types import RiskClass
 from src.personal_os.checkpointing import checkpoint
 from src.harness.models import get_primary_llm
 from src.harness.llm_router import resolve_primary_llm
@@ -305,12 +302,6 @@ def node_ingest(state: AgentState) -> dict:
     last_user_msg = next((m.content for m in reversed(messages) if isinstance(m, HumanMessage)), None)
     if last_user_msg and not is_approval_resume:
         log_raw_turn(session_id=session_id, sender="user", content=str(last_user_msg))
-        try:
-            from src.memory.semantic import persist_explicit_facts_from_user_text
-
-            persist_explicit_facts_from_user_text(str(last_user_msg))
-        except Exception:
-            logger.exception("Failed to persist explicit long-term facts")
         evt = log_loop_event(
             session_id=session_id,
             step_index=0,
@@ -355,113 +346,102 @@ def node_manage_memory(state: AgentState) -> dict:
         "pending_summary_job_id": context.pending_summary_job_id,
     }
 
-def _legacy_retrieval_gate_fallback(messages: List[BaseMessage], query: str) -> dict:
-    """Best-effort legacy retrieval path used only if Phase 9B retrieval fails globally."""
-    try:
-        facts = search_facts_top_k(query=query, k=3)
-        episodes = search_episodes_fts(query=query, limit=2)
-        skills = match_procedural_skills(query=query)
-
-        retrieved_items: List[Dict[str, Any]] = []
-        memory_blocks = []
-        if facts:
-            fact_str = "\n".join(f"- [{f['category']}] {f['fact_text']}" for f in facts)
-            memory_blocks.append(f"Semantic Facts:\n{fact_str}")
-            retrieved_items.extend(facts)
-
-        if episodes:
-            ep_str = "\n".join(f"- {e['timestamp']}: {e['content']}" for e in episodes)
-            memory_blocks.append(f"Past Episodes:\n{ep_str}")
-            retrieved_items.extend(episodes)
-
-        if skills:
-            skill_str = "\n".join(f"- Skill '{s['name']}': {s['execution_steps']}" for s in skills)
-            memory_blocks.append(f"Procedural Skills:\n{skill_str}")
-            retrieved_items.extend(skills)
-
-        if memory_blocks:
-            context_block = "[Retrieved Long-Term Memory]\n" + "\n\n".join(memory_blocks)
-            messages.append(SystemMessage(content=context_block))
-
-        return {
-            "messages": _replace_messages(messages),
-            "retrieval_triggered": bool(memory_blocks),
-            "retrieved_memories": retrieved_items,
-        }
-    except Exception:
-        return {
-            "messages": _replace_messages(messages),
-            "retrieval_triggered": False,
-            "retrieved_memories": [],
-        }
+def _previous_assistant_text(messages) -> str:
+    """The assistant reply just before the latest user message (context for short follow-ups)."""
+    seen_user = False
+    for message in reversed(messages):
+        if isinstance(message, HumanMessage):
+            seen_user = True
+        elif seen_user and isinstance(message, AIMessage) and message.content:
+            return str(message.content)
+    return ""
 
 
-def node_retrieval_gate(state: AgentState) -> dict:
-    """Node: Runs Retrieval Gate and injects long-term memory if triggered."""
+def _error_category(error: Optional[str]) -> Optional[str]:
+    return error.split(":", 1)[0] if error else None
+
+
+def node_memory_router(state: AgentState) -> dict:
+    """Node: asks Jev whether to store/retrieve, and injects main-graph memory only when retrieval is needed.
+
+    Short-term context (trimming + summaries) is handled earlier by manage_memory
+    and is never replaced by cognee.
+    """
     messages = list(state.get("messages", []))
-    last_user_msg = next((m.content for m in reversed(messages) if isinstance(m, HumanMessage)), "")
-
-    needs_retrieval = should_retrieve_memory(str(last_user_msg))
-    if not needs_retrieval or not last_user_msg:
-        return {
-            "messages": _replace_messages(messages),
-            "retrieval_triggered": False,
-            "retrieved_memories": [],
-        }
-
     session_id = state.get("session_id", "default_session")
+    last_user_msg = next((m.content for m in reversed(messages) if isinstance(m, HumanMessage)), "")
+    result = {
+        "messages": _replace_messages(messages),
+        "retrieval_triggered": False,
+        "retrieved_memories": [],
+        "memory_storage_decision": None,
+        "memory_retrieval_decision": None,
+    }
+
+    # Approval resumes replay a turn that was already routed; no new user query, no Jev call.
+    if state.get("approval_status") in ("APPROVED", "REJECTED") or not last_user_msg:
+        return result
+
+    memory = get_cognee_memory()
+    config = memory.config
+    if not config.enabled or not (config.storage_enabled or config.retrieval_enabled):
+        return result
+
+    user_id = state.get("user_id") or config.user_id
+    query = str(last_user_msg)
+    decision = get_jev_client().decide_memory(query, _previous_assistant_text(messages))
+    should_store = decision.should_store and config.storage_enabled
+    should_retrieve = decision.should_retrieve and config.retrieval_enabled
+    common = {
+        "user_id": user_id,
+        "session_id": session_id,
+        "source": decision.source,
+        "latency_ms": decision.latency_ms,
+        "error_category": decision.error_category,
+    }
+    log_memory_event("memory.store.decision", decision=should_store, **common)
+    log_memory_event("memory.retrieve.decision", decision=should_retrieve, **common)
+    result["memory_storage_decision"] = {**decision.to_state(), "should_store": should_store}
+    result["memory_retrieval_decision"] = {**decision.to_state(), "should_retrieve": should_retrieve}
+    if not should_retrieve:
+        return result
+
     log_loop_event(
         session_id=session_id,
         step_index=0,
         step_type="RETRIEVAL",
         reasoning="Searching long-term memory",
     )
-
-    query_str = str(last_user_msg)
-    pin_text = ""
+    started = time.monotonic()
     try:
-        pin_text = assemble_pinned_profile()
+        recalled = memory.recall(query, user_id=user_id)
     except Exception:
-        pin_text = ""
-    if pin_text:
-        messages.append(SystemMessage(content=pin_text))
+        logger.exception("Long-term memory recall failed")
+        log_memory_event("memory.retrieve", user_id=user_id, session_id=session_id, success=False, error_category="unexpected")
+        return result
+    log_memory_event(
+        "memory.retrieve",
+        user_id=user_id,
+        session_id=session_id,
+        success=recalled.available and recalled.error is None,
+        hits=len(recalled.memories),
+        latency_ms=int((time.monotonic() - started) * 1000),
+        error_category=_error_category(recalled.error),
+    )
 
-    try:
-        plan = build_retrieval_plan(
-            query=query_str,
-            session_id=state.get("session_id", "default_session"),
-            provider=state.get("provider", "openai"),
-            model_name=state.get("model_name", "GPT-5.5"),
-            messages=messages,
-            gate_allows_retrieval=needs_retrieval,
-        )
-        if plan.should_retrieve and plan.retrieval_request is not None:
-            bundle = retrieve_all_sources(plan.retrieval_request)
-            assembled = assemble_retrieved_memory_context(
-                bundle,
-                ContextAssemblyOptions(
-                    total_token_budget=max(plan.total_token_budget, 512),
-                    budget_by_kind=plan.budget_by_kind,
-                ),
-            )
-            if assembled.block_text:
-                messages.append(SystemMessage(content=assembled.block_text))
-            if assembled.block_text or assembled.legacy_retrieved_items or pin_text:
-                return {
-                    "messages": _replace_messages(messages),
-                    "retrieval_triggered": True,
-                    "retrieved_memories": assembled.legacy_retrieved_items,
-                }
-    except Exception:
-        pass
-
-    fallback = _legacy_retrieval_gate_fallback(messages, query_str)
-    if pin_text and not fallback.get("retrieval_triggered"):
-        fallback = {
-            **fallback,
-            "retrieval_triggered": True,
-        }
-    return fallback
+    # Skip snippets the current conversation already contains.
+    active_context = "\n".join(str(m.content) for m in messages if not isinstance(m, SystemMessage))
+    fresh = recalled.without_known(active_context)
+    block = fresh.to_context_block(config.retrieval_token_budget)
+    if not block:
+        return result
+    messages.append(SystemMessage(content=block))
+    return {
+        **result,
+        "messages": _replace_messages(messages),
+        "retrieval_triggered": True,
+        "retrieved_memories": [item.to_dict() for item in fresh.memories],
+    }
 
 def node_agent(state: AgentState) -> dict:
     """Node: Invokes Primary LLM bound with tools and advances loop step."""
@@ -770,6 +750,43 @@ def node_hitl_check(state: AgentState) -> dict:
 
     return {"pending_approval_id": None, "approval_status": "NONE"}
 
+def _jev_tool_escalation(session_id: str, tool_name: str, tool_args: Dict[str, Any], messages) -> Optional[str]:
+    """Ask Jev whether a call that policy would run directly should go to HITL instead.
+
+    Escalation only: Jev is consulted for medium-risk or confirmation-recommended
+    calls that would otherwise execute without approval. It can add an approval
+    step but never removes one, and any Jev failure keeps the policy outcome.
+    """
+    jev = get_jev_client()
+    if not (jev.config.tool_review_enabled and jev.available):
+        return None
+    policy = evaluate_tool_policy(tool_name, tool_args, source=ToolCallerSource.CHAT, approval_context={"approved": False})
+    if policy.blocked or policy.unavailable or policy.requires_approval:
+        return None
+    if policy.risk_class != RiskClass.MEDIUM and policy.reason_code != "confirmation_recommended":
+        return None
+    user_request = next((str(m.content) for m in reversed(messages) if isinstance(m, HumanMessage)), "")
+    route = jev.review_tool_call(
+        user_request=user_request,
+        tool_name=tool_name,
+        tool_args=tool_args,
+        policy_reason=policy.reason,
+    )
+    log_memory_event(
+        "tool.route.decision",
+        session_id=session_id,
+        tool_name=tool_name,
+        risk_class=policy.risk_class.value,
+        requires_approval=route.requires_approval,
+        source=route.source,
+        latency_ms=route.latency_ms,
+        error_category=route.error_category,
+    )
+    if not route.requires_approval:
+        return None
+    return f"Jev review flagged this call for approval: {route.reason or 'it may not match your request'}"
+
+
 def node_tools(state: AgentState) -> dict:
     """Node: Executes requested tool calls, records observations, and updates loop events."""
     messages = list(state.get("messages", []))
@@ -792,6 +809,33 @@ def node_tools(state: AgentState) -> dict:
         tname = call["name"]
         targs = _tool_call_args(_bind_email_send_call(call, messages, session_id))
         tcall_id = call.get("id", f"call_{uuid.uuid4().hex[:6]}")
+
+        escalation = None
+        if approval_status != "APPROVED" and hitl_pause is None:
+            escalation = _jev_tool_escalation(session_id, tname, targs, messages)
+        if escalation is not None:
+            last_user_text = next((str(m.content) for m in reversed(messages) if isinstance(m, HumanMessage)), "")
+            hitl_pause = _pause_for_high_risk_tool(
+                session_id,
+                {"name": tname, "args": targs, "id": tcall_id},
+                escalation,
+                events,
+                last_user_text,
+                messages=messages,
+            )
+            held = f"Not executed: '{tname}' is waiting for human approval. {escalation}"
+            events.append(
+                log_loop_event(
+                    session_id=session_id,
+                    step_index=loop_count,
+                    step_type="OBSERVATION",
+                    tool_name=tname,
+                    tool_args=targs,
+                    tool_result=held,
+                )
+            )
+            tool_messages.append(ToolMessage(content=held, tool_call_id=tcall_id, name=tname))
+            continue
 
         invocation = invoke_registered_tool(
             tname,
@@ -1197,7 +1241,7 @@ def build_agent_graph():
     # Add Nodes
     workflow.add_node("ingest", node_ingest)
     workflow.add_node("manage_memory", node_manage_memory)
-    workflow.add_node("retrieval_gate", node_retrieval_gate)
+    workflow.add_node("memory_router", node_memory_router)
     workflow.add_node("agent", node_agent)
     workflow.add_node("hitl_check", node_hitl_check)
     workflow.add_node("tools", node_tools)
@@ -1206,8 +1250,8 @@ def build_agent_graph():
     # Add Edges
     workflow.add_edge(START, "ingest")
     workflow.add_edge("ingest", "manage_memory")
-    workflow.add_edge("manage_memory", "retrieval_gate")
-    workflow.add_edge("retrieval_gate", "agent")
+    workflow.add_edge("manage_memory", "memory_router")
+    workflow.add_edge("memory_router", "agent")
 
     workflow.add_conditional_edges(
         "agent",
