@@ -130,6 +130,18 @@ def _truncate(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[:limit] + "…"
 
 
+def _jev_api_key(endpoint: str) -> str:
+    """JEV_API_KEY, else the matching provider key for Google's or OpenAI's own endpoint."""
+    explicit = (os.getenv("JEV_API_KEY") or "").strip()
+    if explicit:
+        return explicit
+    if "generativelanguage.googleapis.com" in endpoint:
+        return os.getenv("GOOGLE_API_KEY") or "not-required"
+    if "api.openai.com" in endpoint:
+        return os.getenv("OPENAI_API_KEY") or "not-required"
+    return "not-required"
+
+
 class JevClient:
     def __init__(self, config: Optional[JevConfig] = None, completion_fn: Optional[CompletionFn] = None):
         self.config = config if config is not None else load_memory_config().jev
@@ -148,7 +160,7 @@ class JevClient:
 
                 self._client = OpenAI(
                     base_url=self.config.endpoint,
-                    api_key=os.getenv("JEV_API_KEY") or "not-required",
+                    api_key=_jev_api_key(self.config.endpoint),
                     timeout=self.config.timeout_seconds,
                     max_retries=0,
                 )

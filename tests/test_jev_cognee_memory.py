@@ -230,7 +230,7 @@ def test_should_retrieve_true_queries_main_graph_and_injects_memory(temp_db, fak
     result = _route("What email provider do I normally use?")
 
     call = fake_cognee.search_calls[-1]
-    assert call["datasets"] == ["ivo_memory"] and call["only_context"] is True
+    assert call["datasets"] == ["ivo_memory"] and call["query_type"] == "SUMMARIES"
     [block] = _memory_blocks(result["messages"])
     assert "Fastmail" in block.content
     assert "not the current conversation" in block.content
@@ -532,3 +532,26 @@ def test_force_merge_endpoint_merges_without_waiting(temp_db, fake_cognee, clock
 
     assert response.json()["status"] == "queued"
     assert len(fake_cognee.improve_calls) == 1
+
+
+def test_job_status_endpoint_reports_merge_result_without_payload(temp_db, fake_cognee, clock):
+    from fastapi.testclient import TestClient
+
+    from src.api.server import app
+
+    client = TestClient(app)
+    _store_turn(temp_db, clock, "s1", "My manager is Priya.")
+    queued = client.post("/api/memory/sessions/s1/merge").json()
+    clock["now"] = NOW + timedelta(minutes=1)
+    _work(temp_db, clock)
+
+    job = client.get(f"/api/memory/observability/jobs/{queued['job_id']}").json()
+    nothing = client.post("/api/memory/sessions/empty-session/merge").json()
+    clock["now"] = NOW + timedelta(minutes=2)
+    _work(temp_db, clock)
+    empty = client.get(f"/api/memory/observability/jobs/{nothing['job_id']}").json()
+
+    assert job["status"] == "SUCCEEDED" and job["result"]["merged"] is True
+    assert "payload" not in job and "Priya" not in json.dumps(job)
+    assert empty["status"] == "SUCCEEDED" and empty["result"]["skipped"] == "nothing_to_merge"
+    assert client.get("/api/memory/observability/jobs/does-not-exist").status_code == 404

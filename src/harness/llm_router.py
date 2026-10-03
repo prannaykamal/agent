@@ -4,6 +4,7 @@ from typing import Any, Literal, Mapping, Optional, Tuple
 from src.harness.models import (
     MODEL_PAIRS,
     SUPPORTED_PROVIDERS,
+    get_active_provider,
     get_context_window,
     get_model_instance,
 )
@@ -34,12 +35,12 @@ class LLMRouteResult:
 def _normalize_provider_with_fallback(provider: Optional[str]) -> Tuple[str, bool]:
     raw = (provider or "").strip().lower()
     if not raw:
-        return "openai", False
+        return get_active_provider(), False
     if raw == "xai":
         return "grok", False
     if raw in SUPPORTED_PROVIDERS:
         return raw, False
-    return "openai", True
+    return get_active_provider(), True
 
 
 def normalize_provider(provider: Optional[str]) -> str:

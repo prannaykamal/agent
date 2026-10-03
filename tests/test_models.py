@@ -10,7 +10,7 @@ def test_model_catalog():
 
     assert "gpt-4o-mini" in catalog["openai"]["models"]
     assert "claude-3-5-sonnet-latest" in catalog["anthropic"]["models"]
-    assert "gemini-1.5-flash" in catalog["gemini"]["models"]
+    assert "gemini-3.8-flash" in catalog["gemini"]["models"]
     assert "grok-2-latest" in catalog["grok"]["models"]
 
 def test_key_validation():

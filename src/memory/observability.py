@@ -326,6 +326,34 @@ def get_jobs_observability(
     }
 
 
+_JOB_RESULT_FIELDS = ("processed", "merged", "outcome", "skipped", "deferred", "merged_write_count", "documents_added", "message")
+
+
+def get_memory_job_status(job_id: str, db_path: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+    """One job's status plus a fixed allowlist of result fields; never payload text."""
+    row = _one(
+        "SELECT id, job_type, status, session_id, attempt_count, max_attempts, error_message, result_json, created_at, updated_at, completed_at FROM memory_jobs WHERE id = ?",
+        (job_id,),
+        db_path=db_path,
+    )
+    if row is None:
+        return None
+    result = safe_json_loads(row.get("result_json"), {}) or {}
+    return {
+        "id": row["id"],
+        "job_type": row["job_type"],
+        "status": row["status"],
+        "session_id": row["session_id"],
+        "attempt_count": row["attempt_count"],
+        "max_attempts": row["max_attempts"],
+        "last_error": truncate_preview(row.get("error_message") or "", 240) or None,
+        "result": {key: result[key] for key in _JOB_RESULT_FIELDS if isinstance(result, dict) and key in result},
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "completed_at": row["completed_at"],
+    }
+
+
 def get_worker_observability(
     *,
     db_path: Optional[Path] = None,

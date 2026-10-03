@@ -22,7 +22,7 @@ def test_phase1_memory_config_defaults_match_architecture():
     assert cfg.cognee.enabled is True
     assert cfg.cognee.dataset_name == "ivo_memory"
     assert cfg.cognee.data_dir == ""
-    assert cfg.cognee.search_type == "GRAPH_COMPLETION"
+    assert cfg.cognee.search_type == "SUMMARIES"
     assert cfg.cognee.top_k == 8
     assert cfg.cognee.recall_timeout_seconds == 8.0
     assert cfg.cognee.retrieval_token_budget == 1500

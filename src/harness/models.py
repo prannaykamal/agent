@@ -16,11 +16,12 @@ CONTEXT_WINDOW_CAPACITIES: Dict[str, int] = {
     "claude-3-5-sonnet-latest": 200000,
     "claude-3-5-haiku-latest": 200000,
     "claude-3-opus-latest": 200000,
-    "Gemini 2.5 Pro": 1000000,
-    "Gemini 2.5 Flash": 1000000,
-    "gemini-1.5-pro": 1000000,
-    "gemini-1.5-flash": 1000000,
-    "Gemini 2.5 Flash-Lite": 1000000,
+    "gemini-3.8-flash": 1000000,
+    "gemini-3.7-flash": 1000000,
+    "gemini-3.5-flash": 1000000,
+    "gemini-3.5-flash-lite": 1000000,
+    "gemini-2.5-flash": 1000000,
+    "gemini-2.5-flash-lite": 1000000,
     "grok-2-latest": 128000,
     "grok-beta": 128000
 }
@@ -42,10 +43,10 @@ MODEL_PAIRS: Dict[str, Dict[str, Any]] = {
         "context_window": 200000
     },
     "gemini": {
-        "primary": "gemini-1.5-pro",  # Fallback for Gemini 2.5 Pro / Gemini 2.5 Flash
-        "primary_options": ["Gemini 2.5 Pro", "Gemini 2.5 Flash", "gemini-1.5-pro"],
-        "secondary": "gemini-1.5-flash",  # Fallback for Gemini 2.5 Flash-Lite
-        "secondary_options": ["Gemini 2.5 Flash-Lite", "gemini-1.5-flash"],
+        "primary": "gemini-3.8-flash",
+        "primary_options": ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.5-flash", "gemini-2.5-flash"],
+        "secondary": "gemini-3.5-flash-lite",
+        "secondary_options": ["gemini-3.5-flash-lite", "gemini-2.5-flash-lite"],
         "context_window": 1000000
     },
     "grok": {
@@ -73,8 +74,8 @@ SUPPORTED_PROVIDERS: Dict[str, Dict[str, Any]] = {
     "gemini": {
         "name": "Google Gemini",
         "env_key": "GOOGLE_API_KEY",
-        "models": ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash", "Gemini 2.5 Pro", "Gemini 2.5 Flash"],
-        "default": "gemini-1.5-flash"
+        "models": ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-flash-lite"],
+        "default": "gemini-3.8-flash"
     },
     "grok": {
         "name": "xAI Grok",
@@ -83,6 +84,57 @@ SUPPORTED_PROVIDERS: Dict[str, Dict[str, Any]] = {
         "default": "grok-2-latest"
     }
 }
+
+
+# Providers selectable as the app-wide default with AI_PROVIDER. Each profile sets the
+# default chat and background models plus the models cognee uses for graph extraction
+# and embeddings, all on that provider's single API key.
+PROVIDER_PROFILES: Dict[str, Dict[str, Any]] = {
+    "openai": {
+        "primary": "GPT-5.5",
+        "secondary": "gpt-4o-mini",
+        "cognee_llm_provider": "openai",
+        "cognee_llm_model": "openai/gpt-4o-mini",
+        "embedding_provider": "openai",
+        "embedding_model": "openai/text-embedding-3-small",
+        "embedding_dimensions": 1536,
+    },
+    "gemini": {
+        "primary": "gemini-3.8-flash",
+        "secondary": "gemini-3.5-flash-lite",
+        "cognee_llm_provider": "gemini",
+        "cognee_llm_model": "gemini/gemini-3.5-flash-lite",
+        "embedding_provider": "gemini",
+        "embedding_model": "gemini/gemini-embedding-001",
+        "embedding_dimensions": 3072,
+    },
+}
+
+# Older display names and retired model ids, mapped to models that still exist.
+_GEMINI_MODEL_ALIASES: Dict[str, str] = {
+    "Gemini 2.5 Pro": "gemini-3.8-flash",
+    "Gemini 2.5 Flash": "gemini-2.5-flash",
+    "Gemini 2.5 Flash-Lite": "gemini-2.5-flash-lite",
+    "gemini-1.5-pro": "gemini-3.8-flash",
+    "gemini-1.5-flash": "gemini-3.5-flash-lite",
+    "gemini-2.0-flash": "gemini-2.5-flash",
+}
+
+
+def get_active_provider() -> str:
+    """The app-wide default provider from AI_PROVIDER (openai or gemini). Defaults to openai."""
+    value = (os.getenv("AI_PROVIDER") or "").strip().lower()
+    return value if value in PROVIDER_PROFILES else "openai"
+
+
+def get_provider_profile(provider: Optional[str] = None) -> Dict[str, Any]:
+    return PROVIDER_PROFILES[provider if provider in PROVIDER_PROFILES else get_active_provider()]
+
+
+def get_provider_api_key(provider: str) -> Optional[str]:
+    env_key = SUPPORTED_PROVIDERS.get(provider, {}).get("env_key")
+    value = os.getenv(env_key) if env_key else None
+    return value if is_valid_key(value) else None
 
 
 @dataclass(frozen=True)
@@ -119,6 +171,7 @@ def get_model_catalog() -> Dict[str, Any]:
     result["providers"] = SUPPORTED_PROVIDERS
     result["pairs"] = MODEL_PAIRS
     result["capacities"] = CONTEXT_WINDOW_CAPACITIES
+    result["active_provider"] = get_active_provider()
     try:
         result["role_defaults"] = asdict(get_model_role_config())
     except Exception:
@@ -182,7 +235,7 @@ def get_model_instance(
         elif norm_provider == "gemini":
             try:
                 from langchain_google_genai import ChatGoogleGenerativeAI
-                target_model = "gemini-1.5-pro" if model_name in ("Gemini 2.5 Pro", "Gemini 2.5 Flash") else ("gemini-1.5-flash" if model_name == "Gemini 2.5 Flash-Lite" else model_name)
+                target_model = _GEMINI_MODEL_ALIASES.get(model_name, model_name)
                 return ChatGoogleGenerativeAI(model=target_model, temperature=temperature, google_api_key=api_key)
             except ImportError:
                 return None

@@ -4,6 +4,7 @@ import ChatCockpit from "./components/ChatCockpit.jsx";
 import LoopCockpit from "./components/LoopCockpit.jsx";
 import MemoryCockpit from "./components/MemoryCockpit.jsx";
 import MemoryObservabilityCockpit from "./components/MemoryObservabilityCockpit.jsx";
+import MemoryGraphCockpit from "./components/MemoryGraphCockpit.jsx";
 import ApprovalInbox from "./components/ApprovalInbox.jsx";
 import ToolsCockpit from "./components/ToolsCockpit.jsx";
 import ToolsOpsCockpit from "./components/ToolsOpsCockpit.jsx";
@@ -32,6 +33,7 @@ const NAV_GROUPS = [
       { id: "tasks", label: "Tasks", icon: "tasks", component: TaskBoard },
       { id: "memory", label: "Memory", icon: "memory", component: MemoryCockpit },
       { id: "memory_ops", label: "Memory Ops", icon: "ops", component: MemoryObservabilityCockpit },
+      { id: "memory_graph", label: "Memory Graph", icon: "graph", component: MemoryGraphCockpit },
     ],
   },
   {
@@ -193,6 +195,7 @@ export default function App() {
             {activeTab === "tasks" && <TaskBoard />}
             {activeTab === "memory" && <MemoryCockpit />}
             {activeTab === "memory_ops" && <MemoryObservabilityCockpit />}
+            {activeTab === "memory_graph" && <MemoryGraphCockpit />}
             {activeTab === "approvals" && <ApprovalInbox />}
             {activeTab === "tools" && <ToolsCockpit />}
             {activeTab === "tools_ops" && <ToolsOpsCockpit />}
