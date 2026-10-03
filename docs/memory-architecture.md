@@ -84,7 +84,7 @@ Explicit writes skip Jev and the session: `POST /api/memory/fact`, `POST /api/me
 
 When `should_retrieve` is true, `node_memory_router`:
 
-1. Calls `CogneeMemory.recall(query)`: `cognee.search` over the user's main-graph dataset with the configured search type (default `GRAPH_COMPLETION`) and `only_context=True`, so cognee returns context rather than generating its own answer. Bounded by `MEMORY_COGNEE_RECALL_TIMEOUT_SECONDS` and `MEMORY_COGNEE_TOP_K`.
+1. Calls `CogneeMemory.recall(query)`: `cognee.search` over the user's main-graph dataset with the configured search type. The default, `SUMMARIES`, returns cognee's distilled facts (for example "Mira is the user's sister. Mira lives in Lisbon."). `CHUNKS` returns the raw stored text. `GRAPH_COMPLETION` and `RAG_COMPLETION` are called with `only_context=True`, so cognee returns context instead of its own answer, but in cognee 1.6 that context is a whole rendered prompt template, which is why it is not the default. Bounded by `MEMORY_COGNEE_RECALL_TIMEOUT_SECONDS` and `MEMORY_COGNEE_TOP_K`.
 2. Drops snippets already present verbatim in the current conversation.
 3. Truncates to `MEMORY_COGNEE_RETRIEVAL_TOKEN_BUDGET` (header included) and appends one clearly labelled system message:
 
@@ -149,7 +149,7 @@ Unchanged. `src/memory/token_budget.py`, `src/memory/summary_blocks.py`, and `sr
 | `MEMORY_USER_ID` | `default_user` | Memory scope (letters, digits, `_`, `-`) |
 | `MEMORY_COGNEE_DATASET` | `ivo_memory` | Main graph dataset |
 | `MEMORY_COGNEE_DATA_DIR` | `.agent/cognee` | cognee storage |
-| `MEMORY_COGNEE_SEARCH_TYPE` | `GRAPH_COMPLETION` | `GRAPH_COMPLETION`, `RAG_COMPLETION`, `CHUNKS`, or `SUMMARIES` |
+| `MEMORY_COGNEE_SEARCH_TYPE` | `SUMMARIES` | `SUMMARIES`, `CHUNKS`, `GRAPH_COMPLETION`, or `RAG_COMPLETION` |
 | `MEMORY_COGNEE_TOP_K` | `8` | Maximum recalled snippets |
 | `MEMORY_COGNEE_RECALL_TIMEOUT_SECONDS` | `8` | Recall timeout |
 | `MEMORY_COGNEE_RETRIEVAL_TOKEN_BUDGET` | `1500` | Token cap for the injected block |

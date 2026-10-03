@@ -31,7 +31,8 @@ from src.hitl.approval_engine import (
 
 from src.harness.graph import agent_app, resume_graph_after_approval
 from src.harness.models import get_model_catalog
-from src.harness.llm_router import normalize_provider
+from src.harness.llm_router import normalize_model_name, normalize_provider
+from src.harness.message_text import message_text
 from src.mcp_gateway.search import perform_web_search
 
 from src.mcp_gateway.communication import (
@@ -49,6 +50,7 @@ from src.memory.observability import (
     get_jobs_observability,
     get_long_term_memory_observability,
     get_memory_health_summary,
+    get_memory_job_status,
     get_observability_overview,
     get_retrieval_trace,
     get_worker_observability,
@@ -90,10 +92,11 @@ app.add_middleware(
 class ChatRequest(BaseModel):
     message: str
     session_id: Optional[str] = "default_session"
-    provider: Optional[str] = "openai"
-    model_name: Optional[str] = "GPT-5.5"
-    secondary_provider: Optional[str] = "openai"
-    secondary_model_name: Optional[str] = "gpt-4o-mini"
+    # Omitted provider/model fields fall back to AI_PROVIDER's profile.
+    provider: Optional[str] = None
+    model_name: Optional[str] = None
+    secondary_provider: Optional[str] = None
+    secondary_model_name: Optional[str] = None
 
 
 class FactRequest(BaseModel):
@@ -376,9 +379,9 @@ def _chat_payload(req: ChatRequest) -> Dict[str, Any]:
         "pending_approval_id": None,
         "approval_status": None,
         "provider": norm_provider,
-        "model_name": req.model_name or "GPT-5.5",
+        "model_name": normalize_model_name(norm_provider, req.model_name, "primary"),
         "secondary_provider": norm_sec_provider,
-        "secondary_model_name": req.secondary_model_name or "gpt-4o-mini"
+        "secondary_model_name": normalize_model_name(norm_sec_provider, req.secondary_model_name, "secondary")
     }
 
     try:
@@ -388,8 +391,8 @@ def _chat_payload(req: ChatRequest) -> Dict[str, Any]:
         # Find latest AI or System message
         last_ai_content = ""
         for m in reversed(messages):
-            if isinstance(m, (AIMessage, SystemMessage)) and m.content:
-                last_ai_content = str(m.content)
+            if isinstance(m, (AIMessage, SystemMessage)) and message_text(m):
+                last_ai_content = message_text(m)
                 break
 
         loop_trace = _loop_trace_for_session(target_session_id) or result.get("loop_events", [])
@@ -534,6 +537,19 @@ def api_search_memory(req: MemorySearchRequest):
         "memories": [item.to_dict() for item in result.memories],
     }
 
+@app.get("/api/memory/graph")
+def api_memory_graph(max_nodes: int = 300, include_documents: bool = False):
+    """Read-only snapshot of the main knowledge graph for the Memory Graph tab."""
+    memory = get_cognee_memory()
+    if not memory.is_available():
+        return {"available": False, "error": memory.status().get("error"), "nodes": [], "links": [], "node_types": {}}
+    try:
+        snapshot = memory.graph_snapshot(max_nodes=max(10, min(int(max_nodes), 1000)), include_documents=include_documents)
+    except Exception as exc:
+        return {"available": True, "error": f"{type(exc).__name__}: {str(exc)[:200]}", "nodes": [], "links": [], "node_types": {}}
+    return {"available": True, "error": None, **snapshot}
+
+
 @app.post("/api/memory/sessions/{session_id}/merge")
 def api_merge_memory_session(session_id: str):
     """Recovery/ops: merge a session's cognee cache into the main graph now, without waiting for idle."""
@@ -584,6 +600,13 @@ def api_memory_observability_jobs(
         limit=limit,
         include_payload=include_payload,
     )
+
+@app.get("/api/memory/observability/jobs/{job_id}")
+def api_memory_observability_job(job_id: str):
+    job = get_memory_job_status(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Memory job not found")
+    return job
 
 @app.get("/api/memory/observability/workers")
 def api_memory_observability_workers(
@@ -1372,6 +1395,10 @@ def serve_favicon():
 
 if os.path.exists(target_static):
     app.mount("/static", StaticFiles(directory=target_static), name="static")
+    # Vite's built index.html references its bundle at /assets/...
+    assets_path = os.path.join(target_static, "assets")
+    if os.path.isdir(assets_path):
+        app.mount("/assets", StaticFiles(directory=assets_path), name="assets")
 
     @app.get("/")
     def serve_frontend():

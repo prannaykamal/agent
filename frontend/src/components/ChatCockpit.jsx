@@ -121,6 +121,8 @@ export default function ChatCockpit({ activeSessionId, onNewSession, onSessionCh
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameInput, setRenameInput] = useState("");
   const [toastMessage, setToastMessage] = useState("");
+  const [memoryNotice, setMemoryNotice] = useState(null);
+  const [savingMemory, setSavingMemory] = useState(false);
   const scrollerRef = useRef(null);
   const historyReq = useRef(0);
   const abortRef = useRef(null);
@@ -141,8 +143,14 @@ export default function ChatCockpit({ activeSessionId, onNewSession, onSessionCh
       const data = await api.get("/api/models");
       const catalog = data.catalog || {};
       setModelCatalog(catalog);
-      const openaiDefault = catalog.providers?.openai?.default || catalog.openai?.default;
-      if (openaiDefault) setModelName(openaiDefault);
+      // Start on the server's AI_PROVIDER and its default primary/secondary models.
+      const active = catalog.active_provider || "openai";
+      const pair = catalog.pairs?.[active] || {};
+      setProvider(active);
+      setSecondaryProvider(active);
+      const primaryDefault = pair.primary || catalog.providers?.[active]?.default;
+      if (primaryDefault) setModelName(primaryDefault);
+      if (pair.secondary) setSecondaryModelName(pair.secondary);
     } catch (e) {
       console.error("Failed to load models:", e);
     }
@@ -387,6 +395,47 @@ export default function ChatCockpit({ activeSessionId, onNewSession, onSessionCh
     }
   };
 
+  // A save result belongs to the chat it was run in.
+  useEffect(() => {
+    setMemoryNotice(null);
+  }, [currentSession]);
+
+  // Merge this chat's long-term memory session into the main graph now, instead of after the idle timeout.
+  const handleSaveMemoryNow = async () => {
+    const sessionId = currentSession;
+    setSavingMemory(true);
+    setMemoryNotice({ kind: "info", text: "Saving this chat to long-term memory…" });
+    try {
+      const queued = await api.post(`/api/memory/sessions/${encodeURIComponent(sessionId)}/merge`, {});
+      const deadline = Date.now() + 180000;
+      while (Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        const job = await api.get(`/api/memory/observability/jobs/${encodeURIComponent(queued.job_id)}`);
+        if (job.status === "SUCCEEDED") {
+          const result = job.result || {};
+          setMemoryNotice(
+            result.merged
+              ? { kind: "ok", text: "Saved. This chat's memories are now in the main graph." }
+              : { kind: "info", text: "Nothing new to save. Jev hasn't marked anything in this chat as worth remembering since the last save." }
+          );
+          return;
+        }
+        if (job.status === "DEAD_LETTERED" || job.status === "FAILED") {
+          setMemoryNotice({ kind: "error", text: `Saving failed: ${job.last_error || job.status}` });
+          return;
+        }
+        if (job.status === "RETRYING") {
+          setMemoryNotice({ kind: "info", text: `Saving hit an error and will retry (attempt ${job.attempt_count}/${job.max_attempts})…` });
+        }
+      }
+      setMemoryNotice({ kind: "info", text: "Still saving in the background. Check Memory Ops for progress." });
+    } catch (e) {
+      setMemoryNotice({ kind: "error", text: `Saving failed: ${e.message}` });
+    } finally {
+      setSavingMemory(false);
+    }
+  };
+
   const threads = Array.from(new Set([currentSession, ...sessions].filter(Boolean)));
 
   return (
@@ -436,6 +485,14 @@ export default function ChatCockpit({ activeSessionId, onNewSession, onSessionCh
                 <strong>Session: {currentSession}</strong>
                 <button className="btn btn-ghost btn-sm" onClick={() => { setIsRenaming(true); setRenameInput(currentSession); }}>Rename</button>
                 <button className="btn btn-danger btn-sm" onClick={handleDeleteSession}>Delete</button>
+                <button
+                  className="btn btn-primary btn-sm"
+                  onClick={handleSaveMemoryNow}
+                  disabled={savingMemory}
+                  title="Merge this chat into long-term memory now instead of waiting for it to go idle"
+                >
+                  {savingMemory ? "Saving…" : "Save to memory now"}
+                </button>
               </div>
             )}
 
@@ -470,6 +527,7 @@ export default function ChatCockpit({ activeSessionId, onNewSession, onSessionCh
           </div>
 
           {toastMessage ? <Notice kind="ok">{toastMessage}</Notice> : null}
+          {memoryNotice ? <Notice kind={memoryNotice.kind}>{memoryNotice.text}</Notice> : null}
           {error ? <Notice kind="error">{error}</Notice> : null}
 
           <div className="messages" ref={scrollerRef}>

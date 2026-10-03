@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 from langchain_core.messages import AIMessage, HumanMessage
 
 from src.harness.state import AgentState
+from src.harness.message_text import message_text
 from src.memory.config import QueueConfig, load_memory_config
 from src.memory.types import MemoryJobType
 
@@ -211,7 +212,7 @@ def extract_latest_turn(state: AgentState) -> Tuple[Optional[str], Optional[str]
         None,
     )
     assistant_text = next(
-        (str(message.content) for message in reversed(messages) if isinstance(message, AIMessage) and str(message.content).strip()),
+        (message_text(message) for message in reversed(messages) if isinstance(message, AIMessage) and message_text(message).strip()),
         None,
     )
     return user_text, assistant_text

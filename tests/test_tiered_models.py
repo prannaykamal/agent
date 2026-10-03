@@ -26,7 +26,7 @@ def test_tiered_model_pairs_catalog():
 def test_context_window_capacities():
     assert get_context_window("GPT-5.5") == 128000
     assert get_context_window("Claude Opus 4.1") == 200000
-    assert get_context_window("Gemini 2.5 Pro") == 1000000
+    assert get_context_window("gemini-3.8-flash") == 1000000
 
 def test_get_primary_and_secondary_llm(monkeypatch):
     # Ensure placeholder keys trigger offline fallback gracefully

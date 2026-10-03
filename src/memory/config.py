@@ -55,7 +55,8 @@ class CogneeMemoryConfig:
     dataset_name: str = "ivo_memory"
     data_dir: str = ""
     user_id: str = "default_user"
-    search_type: str = "GRAPH_COMPLETION"
+    # SUMMARIES returns cognee's distilled facts; GRAPH_COMPLETION context echoes a whole prompt template.
+    search_type: str = "SUMMARIES"
     top_k: int = 8
     recall_timeout_seconds: float = 8.0
     retrieval_token_budget: int = 1500
@@ -174,9 +175,20 @@ def _build_llm_role_config(
     model_default: str,
     temperature_default: float,
 ) -> LLMRoleConfig:
+    from src.harness.models import MODEL_PAIRS, SUPPORTED_PROVIDERS
+
     prefix = role.upper()
+    explicit_provider = bool((os.getenv(f"{prefix}_PROVIDER") or "").strip())
     provider = _env_str(f"{prefix}_PROVIDER", provider_default).lower()
+    pair = MODEL_PAIRS.get(provider, {})
+    if provider != provider_default:
+        model_default = str(pair.get(role, model_default))
     model_name = _env_str(f"{prefix}_MODEL", model_default)
+    known_models = set(SUPPORTED_PROVIDERS.get(provider, {}).get("models", [])) | set(pair.get(f"{role}_options", [])) | {pair.get(role)}
+    if model_name not in known_models and not explicit_provider:
+        # A stale {PREFIX}_MODEL from another provider (e.g. PRIMARY_MODEL=GPT-5.5 with
+        # AI_PROVIDER=gemini) would pair a model with the wrong API; use the provider default.
+        model_name = model_default
     temperature = _env_float(f"{prefix}_TEMPERATURE", temperature_default)
     context_window = _context_window_for(model_name=model_name, provider=provider)
     _validate_ratio(f"{prefix}_TEMPERATURE_NORMALIZED", min(max(temperature, 0.0001), 0.9999))
@@ -205,16 +217,21 @@ def load_memory_config(environ: Optional[Dict[str, str]] = None) -> MemoryArchit
         os.environ.update(environ)
 
     try:
+        from src.harness.models import get_active_provider, get_provider_profile
+
+        # AI_PROVIDER picks the default provider and models; PRIMARY_*/SECONDARY_* still override.
+        active_provider = get_active_provider()
+        profile = get_provider_profile(active_provider)
         primary = _build_llm_role_config(
             role="primary",
-            provider_default="openai",
-            model_default="GPT-5.5",
+            provider_default=active_provider,
+            model_default=profile["primary"],
             temperature_default=0.7,
         )
         secondary = _build_llm_role_config(
             role="secondary",
-            provider_default="openai",
-            model_default="gpt-4o-mini",
+            provider_default=active_provider,
+            model_default=profile["secondary"],
             temperature_default=0.3,
         )
 
@@ -241,7 +258,7 @@ def load_memory_config(environ: Optional[Dict[str, str]] = None) -> MemoryArchit
             dataset_name=_env_str("MEMORY_COGNEE_DATASET", "ivo_memory"),
             data_dir=_env_str("MEMORY_COGNEE_DATA_DIR", ""),
             user_id=_env_str("MEMORY_USER_ID", "default_user"),
-            search_type=_env_str("MEMORY_COGNEE_SEARCH_TYPE", "GRAPH_COMPLETION").upper(),
+            search_type=_env_str("MEMORY_COGNEE_SEARCH_TYPE", "SUMMARIES").upper(),
             top_k=_env_int("MEMORY_COGNEE_TOP_K", 8),
             recall_timeout_seconds=_env_float("MEMORY_COGNEE_RECALL_TIMEOUT_SECONDS", 8.0),
             retrieval_token_budget=_env_int("MEMORY_COGNEE_RETRIEVAL_TOKEN_BUDGET", 1500),

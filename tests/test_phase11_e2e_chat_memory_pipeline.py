@@ -92,7 +92,7 @@ def test_chat_retrieval_injects_one_cognee_block_and_writes_nothing(temp_db, fak
     assert sum(1 for message in result["messages"] if isinstance(message, HumanMessage) and message.content == text) == 1
     # Retrieval is read-only and asks cognee for context, not a generated answer.
     assert after == before
-    assert fake_cognee.search_calls[-1]["only_context"] is True
+    assert fake_cognee.search_calls[-1]["query_type"] == "SUMMARIES"
     assert fake_cognee.search_calls[-1]["datasets"] == ["ivo_memory"]
 
 

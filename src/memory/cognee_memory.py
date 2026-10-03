@@ -41,13 +41,6 @@ logger = logging.getLogger(__name__)
 RETRIEVED_MEMORY_HEADER = "[Retrieved Long-Term Memory]"
 _DEFAULT_USER_ID = "default_user"
 
-# OpenAI embedding dimensions; cognee defaults to 3072 and fails on mismatch.
-_KNOWN_EMBEDDING_DIMENSIONS = {
-    "text-embedding-3-small": 1536,
-    "text-embedding-3-large": 3072,
-    "text-embedding-ada-002": 1536,
-}
-
 
 class CogneeUnavailableError(RuntimeError):
     """Raised when cognee is disabled, not installed, or failed to initialize."""
@@ -136,10 +129,6 @@ def _estimate_tokens(text: str) -> int:
     return max(1, len(text) // 4)
 
 
-def _is_placeholder(value: Optional[str]) -> bool:
-    return not value or not value.strip() or value.strip().startswith("your_")
-
-
 def resolve_data_dir(config: CogneeMemoryConfig) -> Path:
     if config.data_dir:
         return Path(config.data_dir).expanduser().resolve()
@@ -152,8 +141,11 @@ def prepare_cognee_environment(
     config: CogneeMemoryConfig,
     environ: Optional[Dict[str, str]] = None,
 ) -> Dict[str, str]:
-    """Fill cognee's env settings from this project's .env without overriding explicit values.
+    """Set cognee's storage and behaviour env defaults without overriding explicit values.
 
+    Model and key settings are not set here: cognee 1.x reads the project ``.env``
+    with precedence over process env vars, so those are applied through
+    ``cognee.config`` after import instead (see ``cognee_model_settings``).
     Returns the keys that were set so callers and tests can see what changed.
     """
     env = os.environ if environ is None else environ
@@ -164,17 +156,6 @@ def prepare_cognee_environment(
             env[key] = value
             applied[key] = value
 
-    openai_key = env.get("OPENAI_API_KEY")
-    if not _is_placeholder(openai_key):
-        set_default("LLM_API_KEY", openai_key)
-        if not env.get("EMBEDDING_PROVIDER") or env.get("EMBEDDING_PROVIDER") == "openai":
-            set_default("EMBEDDING_API_KEY", openai_key)
-
-    embedding_model = (env.get("EMBEDDING_MODEL") or "").strip()
-    bare_model = embedding_model.split("/")[-1]
-    if bare_model in _KNOWN_EMBEDDING_DIMENSIONS:
-        set_default("EMBEDDING_DIMENSIONS", str(_KNOWN_EMBEDDING_DIMENSIONS[bare_model]))
-
     data_dir = resolve_data_dir(config)
     set_default("SYSTEM_ROOT_DIRECTORY", str(data_dir / "system"))
     set_default("DATA_ROOT_DIRECTORY", str(data_dir / "data"))
@@ -183,6 +164,28 @@ def prepare_cognee_environment(
     # Session -> main graph merges are driven by our idle timeout, not cognee's own debounce.
     set_default("IMPROVE_AUTO_ENABLED", "false")
     return applied
+
+
+def cognee_model_settings(provider: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
+    """cognee LLM and embedding settings for the active AI_PROVIDER, using that provider's key."""
+    from src.harness.models import get_active_provider, get_provider_api_key, get_provider_profile
+
+    active = provider or get_active_provider()
+    profile = get_provider_profile(active)
+    api_key = get_provider_api_key(active) or ""
+    return {
+        "llm": {
+            "llm_provider": profile["cognee_llm_provider"],
+            "llm_model": profile["cognee_llm_model"],
+            "llm_api_key": api_key,
+        },
+        "embedding": {
+            "embedding_provider": profile["embedding_provider"],
+            "embedding_model": profile["embedding_model"],
+            "embedding_dimensions": profile["embedding_dimensions"],
+            "embedding_api_key": api_key,
+        },
+    }
 
 
 class _LoopThread:
@@ -308,6 +311,13 @@ class CogneeMemory:
                 cognee.config.data_root_directory(str(data_dir / "data"))
             except Exception:
                 logger.debug("cognee.config directory setters unavailable; relying on env", exc_info=True)
+            settings = cognee_model_settings()
+            try:
+                cognee.config.set_llm_config(settings["llm"])
+                cognee.config.set_embedding_config(settings["embedding"])
+            except Exception as exc:
+                self._init_error = f"cognee model configuration failed: {type(exc).__name__}: {exc}"
+                raise CogneeUnavailableError(self._init_error) from exc
             self._cognee = cognee
             return cognee
 
@@ -341,6 +351,9 @@ class CogneeMemory:
             "dataset_name": self.dataset_for(),
             "user_id": self.config.user_id,
             "search_type": self.config.search_type,
+            "ai_provider": _active_provider_name(),
+            "llm_model": cognee_model_settings()["llm"]["llm_model"],
+            "embedding_model": cognee_model_settings()["embedding"]["embedding_model"],
             "session_idle_timeout_minutes": self.config.session_idle_timeout_minutes,
             "data_dir": str(resolve_data_dir(self.config)),
             "version": getattr(self._cognee, "__version__", None) if available else None,
@@ -453,6 +466,36 @@ class CogneeMemory:
             available=True,
         )
 
+    # -- visualization (read-only) ----------------------------------------
+
+    def graph_snapshot(
+        self,
+        *,
+        user_id: Optional[str] = None,
+        max_nodes: int = 300,
+        include_documents: bool = False,
+        timeout: Optional[float] = 60,
+    ) -> Dict[str, Any]:
+        """A bounded, JSON-safe view of the main graph for display. Never includes session caches."""
+        empty = {"nodes": [], "links": [], "node_types": {}, "dataset_name": self.dataset_for(user_id)}
+        cognee = self._module()
+        visualize = getattr(cognee, "visualize_graph_json", None)
+        if visualize is None:
+            from cognee.api.v1.visualize.visualize import visualize_graph_json as visualize  # noqa: PLC0415
+        kwargs = _supported_kwargs(
+            visualize,
+            {"dataset": self.dataset_for(user_id), "include_session_events": False, "max_nodes": max_nodes},
+        )
+        try:
+            payload = self._run(visualize(**kwargs), timeout)
+        except Exception as exc:
+            # A dataset nothing has been merged into yet is an empty graph, not an error.
+            message = f"{type(exc).__name__}: {exc}".lower()
+            if type(exc).__name__ in {"NoDataError", "DatasetNotFoundError"} or "not found" in message or "no data" in message:
+                return empty
+            raise
+        return _compact_graph(payload or {}, include_documents=include_documents, dataset_name=empty["dataset_name"])
+
     # -- maintenance -----------------------------------------------------
 
     def forget_all(self, timeout: Optional[float] = 300) -> None:
@@ -464,6 +507,54 @@ class CogneeMemory:
             return
         self._run(cognee.prune.prune_data(), timeout)
         self._run(cognee.prune.prune_system(metadata=True), timeout)
+
+
+# Pipeline bookkeeping cognee keeps in the graph: useful for debugging, noise in a knowledge view.
+_DOCUMENT_NODE_TYPES = {"TextDocument", "Document", "DocumentChunk", "TextSummary", "Data", "NodeSet", "SessionQA", "SessionQAVector"}
+_NODE_TEXT_FIELDS = ("description", "text", "summary", "content")
+
+
+def _compact_graph(payload: Dict[str, Any], *, include_documents: bool, dataset_name: str) -> Dict[str, Any]:
+    nodes_out: List[Dict[str, Any]] = []
+    kept: set = set()
+    type_counts: Dict[str, int] = {}
+    for node in payload.get("nodes") or []:
+        if not isinstance(node, dict) or "id" not in node:
+            continue
+        node_type = str(node.get("type") or "Unknown")
+        if not include_documents and node_type in _DOCUMENT_NODE_TYPES:
+            continue
+        detail = next((str(node[field]) for field in _NODE_TEXT_FIELDS if isinstance(node.get(field), str) and node[field].strip()), "")
+        nodes_out.append(
+            {
+                "id": str(node["id"]),
+                "name": str(node.get("name") or node["id"])[:120],
+                "type": node_type,
+                "color": node.get("color"),
+                "detail": " ".join(detail.split())[:400],
+            }
+        )
+        kept.add(str(node["id"]))
+        type_counts[node_type] = type_counts.get(node_type, 0) + 1
+    links_out: List[Dict[str, Any]] = []
+    degree: Dict[str, int] = {}
+    for link in payload.get("links") or []:
+        if not isinstance(link, dict):
+            continue
+        source, target = str(link.get("source")), str(link.get("target"))
+        if source in kept and target in kept and source != target:
+            links_out.append({"source": source, "target": target, "relation": str(link.get("relation") or "")[:80]})
+            degree[source] = degree.get(source, 0) + 1
+            degree[target] = degree.get(target, 0) + 1
+    for node in nodes_out:
+        node["degree"] = degree.get(node["id"], 0)
+    return {"nodes": nodes_out, "links": links_out, "node_types": type_counts, "dataset_name": dataset_name}
+
+
+def _active_provider_name() -> str:
+    from src.harness.models import get_active_provider
+
+    return get_active_provider()
 
 
 def _interpret_improve_result(result: Any) -> str:

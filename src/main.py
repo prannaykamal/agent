@@ -1,4 +1,5 @@
 from langchain_core.messages import HumanMessage
+from src.harness.message_text import message_text
 from src.db import init_db
 from src.harness.graph import agent_app
 
@@ -36,7 +37,7 @@ def main():
 
             # Last message is AI response
             latest_response = result["messages"][-1]
-            print(f"\nAssistant > {latest_response.content}\n")
+            print(f"\nAssistant > {message_text(latest_response)}\n")
 
         except (KeyboardInterrupt, EOFError):
             print("\nExiting assistant.")

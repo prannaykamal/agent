@@ -1355,3 +1355,31 @@ table.data tbody tr:hover td,
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 999px; }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* --- Memory Graph ------------------------------------------------------ */
+.graph-controls { flex-wrap: wrap; gap: 12px; align-items: center; }
+.graph-controls input[type="text"], .graph-controls > input { min-width: 200px; }
+.graph-legend { margin-top: 10px; flex-wrap: wrap; gap: 14px; }
+.graph-legend-item { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); }
+.graph-legend-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: none; }
+.graph-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; align-items: start; }
+.graph-canvas { padding: 8px; }
+.graph-canvas svg { width: 100%; height: auto; aspect-ratio: 1000 / 640; display: block; cursor: grab; touch-action: none; user-select: none; }
+.graph-canvas svg:active { cursor: grabbing; }
+.graph-link { stroke: var(--border-strong); }
+.graph-link.active { stroke: var(--accent); }
+.graph-link-label { fill: var(--accent); paint-order: stroke; stroke: var(--bg-elevated); }
+.graph-node { cursor: pointer; }
+.graph-node circle { stroke: var(--bg-elevated); transition: stroke 0.15s; }
+.graph-node circle.selected { stroke: var(--text-primary); }
+.graph-node-label { fill: var(--text-primary); pointer-events: none; paint-order: stroke; stroke: var(--bg-elevated); }
+.graph-node-label.muted { fill: var(--text-secondary); }
+.graph-hint { margin-top: 6px; font-size: 12px; }
+.graph-inline-field { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; color: var(--text-secondary); }
+.graph-inline-field select { width: auto; }
+.graph-details h3 { margin: 6px 0 8px; word-break: break-word; }
+.graph-details h4 { margin: 14px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-secondary); }
+.graph-details-type { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); }
+.graph-connections { list-style: none; margin: 0 0 12px; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.graph-connections li { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+@media (max-width: 900px) { .graph-layout { grid-template-columns: 1fr; } }

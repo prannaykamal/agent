@@ -27,7 +27,8 @@ from src.tools.policy import ToolCallerSource, evaluate_tool_policy
 from src.tools.registry_types import RiskClass
 from src.personal_os.checkpointing import checkpoint
 from src.harness.models import get_primary_llm
-from src.harness.llm_router import resolve_primary_llm
+from src.harness.llm_router import normalize_model_name, normalize_provider, resolve_primary_llm
+from src.harness.message_text import message_text
 from src.memory.jobs import enqueue_post_turn_memory_jobs
 
 logger = logging.getLogger(__name__)
@@ -318,16 +319,23 @@ def node_ingest(state: AgentState) -> dict:
         "loop_events": events
     }
 
+def _primary_selection(state: AgentState) -> tuple:
+    """Provider/model for this turn; missing values follow AI_PROVIDER's profile."""
+    provider = normalize_provider(state.get("provider"))
+    return provider, normalize_model_name(provider, state.get("model_name"), "primary")
+
+
 def node_manage_memory(state: AgentState) -> dict:
     """Node: Reconstructs short-term context from immutable summary blocks and raw turns."""
     messages = list(state.get("messages", []))
     session_id = state.get("session_id", "default_session")
 
+    provider, model_name = _primary_selection(state)
     context = prepare_short_term_context_for_chat(
         session_id=session_id,
         current_messages=messages,
-        provider=state.get("provider", "openai"),
-        model_name=state.get("model_name", "GPT-5.5"),
+        provider=provider,
+        model_name=model_name,
         secondary_provider=state.get("secondary_provider"),
         secondary_model_name=state.get("secondary_model_name"),
     )
@@ -352,8 +360,8 @@ def _previous_assistant_text(messages) -> str:
     for message in reversed(messages):
         if isinstance(message, HumanMessage):
             seen_user = True
-        elif seen_user and isinstance(message, AIMessage) and message.content:
-            return str(message.content)
+        elif seen_user and isinstance(message, AIMessage) and message_text(message):
+            return message_text(message)
     return ""
 
 
@@ -430,7 +438,7 @@ def node_memory_router(state: AgentState) -> dict:
     )
 
     # Skip snippets the current conversation already contains.
-    active_context = "\n".join(str(m.content) for m in messages if not isinstance(m, SystemMessage))
+    active_context = "\n".join(message_text(m) for m in messages if not isinstance(m, SystemMessage))
     fresh = recalled.without_known(active_context)
     block = fresh.to_context_block(config.retrieval_token_budget)
     if not block:
@@ -453,8 +461,7 @@ def node_agent(state: AgentState) -> dict:
 
     messages = list(state.get("messages", []))
     session_id = state.get("session_id", "default_session")
-    provider = state.get("provider", "openai")
-    model_name = state.get("model_name", "GPT-5.5")
+    provider, model_name = _primary_selection(state)
     loop_count = (state.get("loop_count") or 0) + 1
     events = list(state.get("loop_events") or [])
     tools_used = list(state.get("tools_used") or [])
@@ -508,7 +515,7 @@ def node_agent(state: AgentState) -> dict:
             session_id=session_id,
             step_index=loop_count,
             step_type="REASONING",
-            reasoning=str(response.content) if response.content else f"Decided to invoke tool(s): {', '.join([tc['name'] for tc in tool_calls])}"
+            reasoning=message_text(response) if message_text(response) else f"Decided to invoke tool(s): {', '.join([tc['name'] for tc in tool_calls])}"
         )
         events.append(evt_reasoning)
 
@@ -527,13 +534,13 @@ def node_agent(state: AgentState) -> dict:
             session_id=session_id,
             step_index=loop_count,
             step_type="FINAL_RESPONSE",
-            reasoning=str(response.content) if response.content else "[Final Response Generated]"
+            reasoning=message_text(response) or "[Final Response Generated]"
         )
         events.append(evt_final)
 
     # Log raw assistant response turn uncompacted
-    if response and response.content:
-        log_raw_turn(session_id=session_id, sender="assistant", content=str(response.content))
+    if response and message_text(response):
+        log_raw_turn(session_id=session_id, sender="assistant", content=message_text(response))
 
     return {
         "messages": [response],
@@ -991,7 +998,7 @@ _APPROVAL_STALL_MARKERS = (
 def _resume_user_response(messages, tool_output: str) -> str:
     """Prefer a real send/result over the model asking for approval again."""
     llm_text = next(
-        (str(m.content) for m in reversed(messages or []) if isinstance(m, AIMessage) and m.content),
+        (message_text(m) for m in reversed(messages or []) if isinstance(m, AIMessage) and message_text(m)),
         "",
     )
     lowered = llm_text.lower()
@@ -1220,7 +1227,7 @@ def resume_graph_after_approval(request_id: str, decision: str) -> Dict[str, Any
         }
         res = agent_app.invoke(resume_state)
         messages = res.get("messages", [])
-        final_response = next((str(m.content) for m in reversed(messages) if isinstance(m, AIMessage) and m.content), "Execution rejected.")
+        final_response = next((message_text(m) for m in reversed(messages) if isinstance(m, AIMessage) and message_text(m)), "Execution rejected.")
 
         return {
             "request_id": request_id,

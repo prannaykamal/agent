@@ -9,7 +9,20 @@ _ISOLATED_PROVIDER_ENV = (
     "TELEGRAM_TEST_CHAT_ID",
     "WHATSAPP_API_TOKEN",
     "WHATSAPP_PHONE_NUMBER_ID",
+    # The app-wide provider and Jev endpoint come from the local .env; tests pin their own.
+    "AI_PROVIDER",
+    "JEV_ENDPOINT",
+    "JEV_MODEL",
+    "JEV_API_KEY",
 )
+
+
+@pytest.fixture(autouse=True)
+def isolate_default_database(monkeypatch, tmp_path_factory):
+    """Never let a test write to the real .agent/state.db; tests that need a specific DB patch it themselves."""
+    db_file = tmp_path_factory.mktemp("isolated_db") / "state.db"
+    monkeypatch.setattr("src.db.DB_PATH", db_file)
+    yield
 
 
 @pytest.fixture(autouse=True)
