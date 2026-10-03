@@ -5,6 +5,15 @@ from pathlib import Path
 
 from src.config import AGENT_DIR, MEMORY_PATH, SOUL_PATH, SKILL_PATH, DB_PATH
 
+COGNEE_ARCHIVE_PREFIX = "cognee/"
+
+
+def _cognee_dir() -> Path:
+    from src.memory.cognee_memory import resolve_data_dir
+    from src.memory.config import load_memory_config
+
+    return resolve_data_dir(load_memory_config().cognee)
+
 def rotate_backups(output_dir: Path = None, max_backups: int = 5) -> List[str]:
     """
     Prunes old backup zip files in output_dir keeping at most max_backups archives.
@@ -35,7 +44,8 @@ def rotate_backups(output_dir: Path = None, max_backups: int = 5) -> List[str]:
 def export_agent_backup(output_dir: Path = None, max_backups: int = 5) -> dict:
     """
     Creates a compressed zip archive backup of the entire .agent workspace
-    including state.db, SOUL.md, MEMORY.md, and SKILL.md, applying backup rotation policy.
+    including state.db, SOUL.md, legacy MEMORY.md/SKILL.md, and the cognee
+    knowledge-graph stores, applying backup rotation policy.
     """
     if output_dir is None:
         output_dir = AGENT_DIR / "backups"
@@ -58,6 +68,12 @@ def export_agent_backup(output_dir: Path = None, max_backups: int = 5) -> dict:
             if file_path.exists():
                 zf.write(file_path, arcname=arcname)
                 packed.append(arcname)
+        cognee_dir = _cognee_dir()
+        if cognee_dir.is_dir():
+            for file_path in sorted(cognee_dir.rglob("*")):
+                if file_path.is_file():
+                    zf.write(file_path, arcname=COGNEE_ARCHIVE_PREFIX + file_path.relative_to(cognee_dir).as_posix())
+            packed.append(COGNEE_ARCHIVE_PREFIX)
 
     pruned = rotate_backups(output_dir=output_dir, max_backups=max_backups)
 
@@ -99,7 +115,7 @@ def get_available_backups(output_dir: Optional[Path] = None) -> List[dict]:
 
 def restore_agent_backup(zip_path: Path, db_path: Optional[Path] = None) -> dict:
     """
-    Restores state.db, SOUL.md, MEMORY.md, and SKILL.md from specified zip backup archive with safety checks and pre-restore copy.
+    Restores state.db, SOUL.md, legacy MEMORY.md/SKILL.md and the cognee stores from a zip backup with safety checks and pre-restore copy.
     """
     target_path = Path(zip_path).resolve()
     if not target_path.exists() or not target_path.is_file():
@@ -133,8 +149,19 @@ def restore_agent_backup(zip_path: Path, db_path: Optional[Path] = None) -> dict
             pass
 
     restored = []
+    cognee_dir = _cognee_dir().resolve()
+    cognee_restored = False
     with zipfile.ZipFile(target_path, "r") as zf:
         for name in zf.namelist():
+            if name.startswith(COGNEE_ARCHIVE_PREFIX) and not name.endswith("/"):
+                dest = (cognee_dir / name[len(COGNEE_ARCHIVE_PREFIX):]).resolve()
+                # Reject zip-slip paths that would escape the cognee directory.
+                if cognee_dir not in dest.parents:
+                    continue
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(zf.read(name))
+                cognee_restored = True
+                continue
             if name in target_map:
                 dest = target_map[name]
                 dest.parent.mkdir(parents=True, exist_ok=True)
@@ -145,6 +172,9 @@ def restore_agent_backup(zip_path: Path, db_path: Optional[Path] = None) -> dict
                 except OSError as err:
                     print(f"[Backup Restore Warning] File '{name}' write deferred/locked: {err}")
                     restored.append(f"{name} (deferred)")
+
+    if cognee_restored:
+        restored.append(COGNEE_ARCHIVE_PREFIX)
 
     return {
         "status": "RESTORED",

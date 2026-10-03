@@ -12,9 +12,7 @@ const endpoints = {
   jobs: "/api/memory/observability/jobs",
   workers: "/api/memory/observability/workers",
   deadLetters: "/api/memory/observability/dead-letter",
-  semantic: "/api/memory/observability/semantic",
-  procedural: "/api/memory/observability/procedural",
-  skills: "/api/memory/observability/skills",
+  longTerm: "/api/memory/observability/long-term",
 };
 
 function StatusPill({ value }) {
@@ -57,8 +55,9 @@ export default function MemoryObservabilityCockpit() {
   const [traceError, setTraceError] = useState(null);
   const [jobStatus, setJobStatus] = useState("");
   const [includePayload, setIncludePayload] = useState(false);
-  const [consolidating, setConsolidating] = useState(false);
-  const [consolidateNotice, setConsolidateNotice] = useState(null);
+  const [mergeSession, setMergeSession] = useState("default_session");
+  const [merging, setMerging] = useState(false);
+  const [mergeNotice, setMergeNotice] = useState(null);
 
   const loadPanelData = async () => {
     setLoading(true);
@@ -100,35 +99,22 @@ export default function MemoryObservabilityCockpit() {
     }
   };
 
-  const handleTriggerConsolidation = async () => {
-    setConsolidating(true);
-    setConsolidateNotice(null);
+  const handleMergeSession = async () => {
+    if (!mergeSession.trim()) return;
+    setMerging(true);
+    setMergeNotice(null);
     try {
-      const payload = await api.post("/api/memory/observability/semantic/consolidate", {});
-      const inserted = payload.inserted ?? payload.enqueued ?? 0;
-      if (!inserted) {
-        setConsolidateNotice({
-          kind: "info",
-          text: "No pending sessions to consolidate.",
-        });
-      } else {
-        setConsolidateNotice({
-          kind: "ok",
-          text: `Queued consolidation for ${inserted} session${inserted === 1 ? "" : "s"}. The worker will pick it up.`,
-        });
-      }
+      const payload = await api.post(`/api/memory/sessions/${encodeURIComponent(mergeSession.trim())}/merge`, {});
+      setMergeNotice({
+        kind: payload.inserted ? "ok" : "info",
+        text: payload.inserted ? "Merge queued. The worker will merge this session into the main graph." : "A merge for this session is already queued.",
+      });
       await loadPanelData();
-      window.setTimeout(() => {
-        loadPanelData();
-      }, 2000);
     } catch (err) {
       console.error(err);
-      setConsolidateNotice({
-        kind: "error",
-        text: err.message || "Failed to trigger consolidation",
-      });
+      setMergeNotice({ kind: "error", text: err.message || "Failed to queue merge" });
     } finally {
-      setConsolidating(false);
+      setMerging(false);
     }
   };
 
@@ -162,15 +148,22 @@ export default function MemoryObservabilityCockpit() {
   const jobs = data.jobs || {};
   const workers = data.workers || {};
   const deadLetters = data.deadLetters || {};
-  const semantic = data.semantic || {};
-  const procedural = data.procedural || {};
-  const skills = data.skills || {};
+  const longTerm = data.longTerm || health.long_term || {};
+  const pipeline = longTerm.pipeline || {};
+  const pipelineRows = Object.entries(pipeline).map(([jobType, info]) => ({
+    job_type: jobType,
+    queued: info.by_status?.QUEUED ?? 0,
+    running: info.by_status?.RUNNING ?? 0,
+    succeeded: info.by_status?.SUCCEEDED ?? 0,
+    dead_lettered: info.by_status?.DEAD_LETTERED ?? 0,
+    last_succeeded_at: info.last_succeeded_at,
+  }));
 
   return (
     <div className="page">
       <PageHeader
         title="Memory Ops"
-        subtitle="Queues, retrieval, candidates, and skills."
+        subtitle="Queues, workers, cognee pipeline, and retrieval."
         actions={<button className="btn btn-primary" onClick={loadPanelData}>Refresh</button>}
       />
 
@@ -183,9 +176,8 @@ export default function MemoryObservabilityCockpit() {
               <Metric label="Jobs" value={health.queue?.total_jobs} />
               <Metric label="Dead Letters" value={health.queue?.dead_letter_count} />
               <Metric label="Active Workers" value={health.workers?.active_workers ?? health.workers?.active} />
-              <Metric label="Semantic Pending" value={health.semantic?.pending_candidates} />
-              <Metric label="Ready Skills" value={health.procedural?.ready_for_promotion} />
-              <Metric label="Active Versions" value={health.skills?.active_versions} />
+              <Metric label="Session Writes" value={pipeline.memory_session_write?.by_status?.SUCCEEDED} />
+              <Metric label="Merges Pending" value={pipeline.memory_session_merge?.by_status?.QUEUED} />
             </div>
           </Panel>
 
@@ -225,48 +217,43 @@ export default function MemoryObservabilityCockpit() {
             {traceError ? <Notice kind="error">{traceError}</Notice> : null}
             {trace ? (
               <div className="split" style={{ marginTop: 12, gridTemplateColumns: "minmax(220px, 0.8fr) 1fr" }}>
-                <pre className="json-block">{JSON.stringify({ gate: trace.gate, plan: trace.plan, assembly: trace.assembly }, null, 2)}</pre>
+                <pre className="json-block">{JSON.stringify({ gate: trace.gate, search_type: trace.search_type, available: trace.available, error: trace.error, token_count: trace.token_count, prompt_block: trace.prompt_block }, null, 2)}</pre>
                 <SimpleTable
                   rows={(trace.candidates || []).map((candidate) => ({
-                    id: candidate.id,
-                    kind: candidate.memory_kind,
-                    title: candidate.title,
-                    content: candidate.content_preview || candidate.content,
-                    score: candidate.score?.rank_score ?? candidate.score,
-                    strategy: candidate.score?.strategy,
-                    source: candidate.provenance?.source_name,
+                    rank: candidate.rank,
+                    content: candidate.content_preview,
                   }))}
-                  emptyText="No candidates selected."
-                  columns={["id", "kind", "title", "content", "score", "strategy", "source"]}
+                  emptyText="Nothing recalled."
+                  columns={["rank", "content"]}
                 />
               </div>
-            ) : <div className="lede">Run a trace to inspect planner and retrieval decisions.</div>}
+            ) : <div className="lede">Run a trace to see exactly what cognee recalls for a chat turn.</div>}
           </Panel>
 
           <Panel
-            title="Semantic Pipeline"
+            title="Knowledge Graph (cognee)"
             actions={
-              <button
-                className="btn btn-primary btn-sm"
-                onClick={handleTriggerConsolidation}
-                disabled={consolidating}
-              >
-                {consolidating ? "Triggering…" : "Trigger consolidation"}
-              </button>
+              <div className="actions">
+                <input value={mergeSession} onChange={(e) => setMergeSession(e.target.value)} placeholder="Session ID" />
+                <button className="btn btn-primary btn-sm" onClick={handleMergeSession} disabled={merging}>
+                  {merging ? "Queuing…" : "Merge session now"}
+                </button>
+              </div>
             }
           >
-            {consolidateNotice ? <Notice kind={consolidateNotice.kind}>{consolidateNotice.text}</Notice> : null}
-            <SimpleTable rows={semantic.candidates || []} emptyText="No semantic candidates." columns={["id", "status", "category", "fact_preview", "confidence", "session_id", "created_at"]} />
-            <SimpleTable rows={semantic.recent_consolidation_runs || []} emptyText="No semantic consolidation runs." columns={["id", "status", "trigger_type", "promoted_count", "created_at"]} />
-          </Panel>
-
-          <Panel title="Procedural Pipeline">
-            <SimpleTable rows={procedural.candidates || []} emptyText="No procedural candidates." columns={["id", "title", "status", "confidence", "occurrences", "updated_at"]} />
-            <SimpleTable rows={procedural.approvals || []} emptyText="No procedural approvals." columns={["id", "status", "action", "candidate_id", "created_at"]} />
-          </Panel>
-
-          <Panel title="Skills">
-            <SimpleTable rows={skills.active_versions || []} emptyText="No active skill versions." columns={["name", "version", "skill_id", "enabled", "created_at"]} />
+            {mergeNotice ? <Notice kind={mergeNotice.kind}>{mergeNotice.text}</Notice> : null}
+            <div className="actions" style={{ marginBottom: 12 }}>
+              <span>Backend</span>
+              <StatusPill value={longTerm.available ? "AVAILABLE" : "UNAVAILABLE"} />
+              <span className="lede">dataset <code>{longTerm.dataset_name || "-"}</code> · search <code>{longTerm.search_type || "-"}</code></span>
+            </div>
+            <div className="actions" style={{ marginBottom: 12 }}>
+              <span>Jev</span>
+              <StatusPill value={longTerm.jev?.configured ? "CONFIGURED" : "NOT CONFIGURED"} />
+              <span className="lede">model <code>{longTerm.jev?.model || "-"}</code> · tool review {longTerm.jev?.tool_review_enabled ? "on" : "off"}</span>
+            </div>
+            {longTerm.error ? <Notice kind="error">{longTerm.error}</Notice> : null}
+            <SimpleTable rows={pipelineRows} emptyText="No cognee jobs yet." columns={["job_type", "queued", "running", "succeeded", "dead_lettered", "last_succeeded_at"]} />
           </Panel>
         </>
       )}

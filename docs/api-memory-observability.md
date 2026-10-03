@@ -1,6 +1,6 @@
 # Memory Observability API
 
-All endpoints under `/api/memory/observability/*` are additive and read-only. They must not mutate jobs, candidates, facts, episodes, skills, worker state, or retrieval state.
+All endpoints under `/api/memory/observability/*` are additive and read-only. They must not mutate jobs, worker state, or the cognee knowledge graph, and they never call `cognee.remember` or `cognee.improve`.
 
 ## Redaction Rules
 
@@ -32,11 +32,11 @@ Example response:
   "schema": {"required_tables_present": true, "missing_tables": []},
   "queue": {"total_jobs": 0, "dead_letter_count": 0},
   "workers": {"active_workers": 0, "stale_workers": 0},
-  "semantic": {"pending_candidates": 0},
-  "procedural": {"ready_for_promotion": 0},
-  "skills": {"active_versions": 0}
+  "long_term": {"backend": "cognee", "available": true, "dataset_name": "ivo_memory", "pipeline": {}}
 }
 ```
+
+`status` is `DEGRADED` when there are dead letters, stale workers, failed jobs, or cognee is unavailable (disabled, not installed, or failed to initialise).
 
 ## `GET /api/memory/observability/jobs`
 
@@ -68,6 +68,37 @@ Query parameters:
 
 Details are omitted by default. Included details are redacted.
 
+## `GET /api/memory/observability/long-term`
+
+Reports the cognee backend and its job pipeline. Checking availability may import cognee, but never writes or merges memory.
+
+Example response:
+
+```json
+{
+  "backend": "cognee",
+  "enabled": true,
+  "available": true,
+  "error": null,
+  "dataset_name": "ivo_memory",
+  "search_type": "GRAPH_COMPLETION",
+  "storage_enabled": true,
+  "retrieval_enabled": true,
+  "user_id": "default_user",
+  "session_idle_timeout_minutes": 30,
+  "data_dir": ".agent/cognee",
+  "version": "0.3.x",
+  "jev": {"configured": true, "model": "jev-small", "tool_review_enabled": true},
+  "pipeline": {
+    "memory_session_write": {"by_status": {"SUCCEEDED": 12}, "last_succeeded_at": "2026-10-03 09:15:02"},
+    "memory_session_merge": {"by_status": {"SUCCEEDED": 3, "QUEUED": 1}, "last_succeeded_at": "2026-10-03 08:44:40"},
+    "cognee_ingest": {"by_status": {"SUCCEEDED": 1}, "last_succeeded_at": "2026-10-02 18:01:12"}
+  }
+}
+```
+
+`error` is truncated to 240 characters. The Jev endpoint URL and key are never returned, because URLs can embed credentials.
+
 ## `POST /api/memory/observability/retrieval/trace`
 
 Request:
@@ -76,8 +107,7 @@ Request:
 {
   "query": "what do you remember about deployment?",
   "session_id": "default_session",
-  "provider": "openai",
-  "model_name": "gpt-4o-mini",
+  "search_type": null,
   "include_candidates": true,
   "include_prompt_block": false,
   "max_candidates": 20
@@ -86,49 +116,45 @@ Request:
 
 Behavior:
 
-- Requires non-empty `query`.
-- Uses the retrieval gate, planner, sources, and assembler.
+- Requires non-empty `query`. `search_type`, if given, must be `GRAPH_COMPLETION`, `RAG_COMPLETION`, `CHUNKS`, or `SUMMARIES`.
+- Runs the rule gate and the same main-graph recall the chat path uses. It does not call Jev, so it shows what *would* be recalled if Jev asked for retrieval.
 - Does not create chat turns.
-- Does not write memory.
-- Does not call LLMs.
-- Hides prompt block by default.
-- Redacts prompt block when explicitly included.
+- Does not write memory or enqueue jobs.
+- Does not call a completion LLM (cognee is asked for context only). The query is embedded.
+- Hides the prompt block by default and redacts it when explicitly included.
 
-## `GET /api/memory/observability/semantic`
+Example response:
 
-Query parameters:
-
-- `session_id`
-- `status`
-- `limit`
-
-Reads pending fact candidates, dedup events, consolidation runs, and permanent fact counts.
-
-## `POST /api/memory/observability/semantic/consolidate`
-
-Optional JSON body:
-
-- `session_id`
-
-Enqueues a `semantic_consolidation` job with `trigger_type=manual` for the given session, or for every session that has pending candidates or structured episodes. The memory worker processes the job; this endpoint does not run the worker inline.
-
-## `GET /api/memory/observability/procedural`
-
-Query parameters:
-
-- `status`
-- `limit`
-
-Reads skill candidates and procedural approval linkage. It does not create approvals or promote skills.
-
-## `GET /api/memory/observability/skills`
-
-Query parameters:
-
-- `include_archived`
-
-Reads skill versions and usage stats. It does not reload active skills or record usage.
+```json
+{
+  "query": "what do you remember about deployment?",
+  "gate": {"allowed": true},
+  "backend": "cognee",
+  "search_type": "GRAPH_COMPLETION",
+  "available": true,
+  "error": null,
+  "candidate_count": 1,
+  "token_count": 24,
+  "prompt_block": null,
+  "candidates": [{"rank": 1, "content_preview": "User prefers pytest smoke checks before deploys."}]
+}
+```
 
 ## `GET /api/memory/observability/overview`
 
-Combines the main health, queue, worker, semantic, procedural, and skill summaries for frontend Memory Ops.
+Combines the health, queue, worker, and long-term summaries for frontend Memory Ops.
+
+## Related Memory Endpoints (not observability)
+
+These live outside `/observability` because they write or query memory:
+
+| Endpoint | Effect |
+|---|---|
+| `GET /api/memory` | cognee backend status |
+| `GET /api/memory/full?query=` | Backend status, recall results for `query`, and `SOUL.md` |
+| `POST /api/memory/search` | Main-graph recall with optional `search_type`, `top_k` (1–50) |
+| `POST /api/memory/fact` | Queues a `cognee_ingest` job (straight to the main graph) |
+| `POST /api/memory/procedure` | Queues a `cognee_ingest` job (straight to the main graph) |
+| `POST /api/memory/sessions/{session_id}/merge` | Queues a forced `memory_session_merge`, skipping the idle wait |
+
+Removed with the move to cognee: `/api/memory/observability/semantic`, `/api/memory/observability/semantic/consolidate`, `/api/memory/observability/procedural`, `/api/memory/observability/skills`, `/api/skills`, and `/api/memory/cognify`.

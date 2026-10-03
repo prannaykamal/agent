@@ -15,7 +15,7 @@ def test_phase1_api_models_keeps_catalog_and_adds_memory_defaults():
     assert "role_defaults" in data["catalog"]
     assert "memory_defaults" in data
     assert data["memory_defaults"]["short_term"]["conversation_budget_ratio"] == 0.75
-    assert data["memory_defaults"]["procedural"]["promotion_occurrence_threshold"] == 3
+    assert data["memory_defaults"]["cognee"]["dataset_name"] == "ivo_memory"
 
 
 def test_phase1_api_chat_still_accepts_dual_model_selectors():

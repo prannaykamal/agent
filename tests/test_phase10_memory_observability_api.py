@@ -33,7 +33,7 @@ def test_health_endpoint_top_level_keys_and_required_tables(temp_db):
 
     assert resp.status_code == 200
     data = resp.json()
-    assert {"status", "generated_at", "schema", "queue", "workers", "semantic", "procedural", "skills"} <= set(data)
+    assert {"status", "generated_at", "schema", "queue", "workers", "long_term"} <= set(data)
     assert data["schema"]["required_tables_present"] is True
     assert data["schema"]["missing_tables"] == []
 
@@ -43,7 +43,7 @@ def test_health_degraded_when_dead_letters_exist(temp_db):
         temp_db,
         """
         INSERT INTO dead_letter_jobs (id, job_id, job_type, session_id, payload_json, last_error, attempt_count)
-        VALUES ('dlj-1', 'job-1', 'semantic_consolidation', 'sess', '{}', 'failed with secret token abc', 3)
+        VALUES ('dlj-1', 'job-1', 'cognee_cognify', 'sess', '{}', 'failed with secret token abc', 3)
         """,
     )
 
@@ -126,70 +126,69 @@ def test_dead_letter_redaction(temp_db):
     assert details["prompt"]["redacted"] is True
 
 
-def test_semantic_procedural_and_skills_status_counts(temp_db, tmp_path, monkeypatch):
-    _execute(
-        temp_db,
-        """
-        INSERT INTO pending_fact_candidates (id, session_id, fact, category, confidence, explicit, source, status)
-        VALUES ('factcand-1', 'sess', 'User likes compact UI', 'preference', 0.8, 0, 'test', 'PENDING')
-        """,
-    )
-    _execute(
-        temp_db,
-        """
-        INSERT INTO skill_candidates (id, title, description, trigger_description, workflow_json, preferred_tools_json, tags_json, confidence, occurrences, source_episode_ids_json, status)
-        VALUES ('skillcand-1', 'Deploy Staging', 'Private detailed workflow', 'deploy staging', '[]', '["shell"]', '["deploy"]', 0.9, 3, '[]', 'READY_FOR_PROMOTION')
-        """,
-    )
-    _execute(
-        temp_db,
-        """
-        INSERT INTO skill_versions (id, skill_id, version, name, description, file_path, content_hash, frontmatter_json, workflow_json, preferred_tools_json, tags_json, enabled, active, author)
-        VALUES ('skillver-1', 'deploy-staging', 1, 'Deploy Staging', 'Deploys staging', '.agent/skills/generated/deploy-staging/v0001/SKILL.md', 'hash', '{}', '{}', '[]', '[]', 1, 1, 'generated')
-        """,
-    )
-    _execute(
-        temp_db,
-        "INSERT INTO skill_usage_stats (skill_id, active_version_id, times_loaded, times_used) VALUES ('deploy-staging', 'skillver-1', 2, 5)",
+def _jobs(db_path, job_type):
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        return [dict(row) for row in conn.execute("SELECT * FROM memory_jobs WHERE job_type = ?", (job_type,))]
+    finally:
+        conn.close()
+
+
+def test_fact_and_procedure_endpoints_queue_permanent_cognee_ingest(temp_db):
+    fact = client.post("/api/memory/fact", json={"category": "ui", "fact_text": "User likes compact UI"})
+    duplicate = client.post("/api/memory/fact", json={"category": "ui", "fact_text": "User likes compact UI"})
+    procedure = client.post(
+        "/api/memory/procedure",
+        json={"name": "Inbox digest", "description": "Summarize mail", "trigger_keywords": "inbox", "execution_steps": "1. Fetch 2. Summarize"},
     )
 
-    semantic = client.get("/api/memory/observability/semantic").json()
-    procedural = client.get("/api/memory/observability/procedural").json()
-    skills = client.get("/api/memory/observability/skills").json()
-
-    assert semantic["summary"]["pending_candidates"] == 1
-    assert procedural["summary"]["ready_for_promotion"] == 1
-    assert skills["summary"]["active_versions"] == 1
-    assert skills["summary"]["total_times_loaded"] == 2
-    assert skills["summary"]["total_times_used"] == 5
-
-
-def test_skills_endpoint_does_not_reload_or_record_usage(temp_db, monkeypatch):
-    def fail(*args, **kwargs):
-        raise AssertionError("observability must not mutate skill runtime usage")
-
-    monkeypatch.setattr("src.memory.skill_reloader.SkillRuntimeReloader.reload_active_skills", fail)
-    monkeypatch.setattr("src.memory.skill_reloader.SkillRuntimeReloader.record_skill_used", fail)
-    monkeypatch.setattr("src.memory.skill_store.SkillVersionStore.record_used", fail)
-
-    resp = client.get("/api/memory/observability/skills")
-
-    assert resp.status_code == 200
+    assert fact.status_code == duplicate.status_code == procedure.status_code == 200
+    assert fact.json()["status"] == "queued" and fact.json()["inserted"] is True
+    assert duplicate.json()["inserted"] is False
+    documents = [json.loads(job["payload_json"])["documents"][0] for job in _jobs(temp_db, "cognee_ingest")]
+    assert "Fact about the user (ui): User likes compact UI" in documents
+    assert any("Use when: inbox" in doc for doc in documents)
+    # Explicit writes skip the session cache and Jev entirely.
+    assert _jobs(temp_db, "memory_session_write") == []
 
 
-def test_manual_semantic_consolidate_enqueues_job(temp_db):
-    _execute(
-        temp_db,
-        """
-        INSERT INTO pending_fact_candidates (id, session_id, fact, category, confidence, explicit, source, status)
-        VALUES ('factcand-1', 'sess', 'User likes compact UI', 'preference', 0.8, 0, 'test', 'PENDING')
-        """,
-    )
+def test_memory_write_endpoints_validate_input(temp_db):
+    assert client.post("/api/memory/fact", json={"category": "ui", "fact_text": "  "}).status_code == 400
+    assert client.post("/api/memory/procedure", json={"name": "x", "description": "", "execution_steps": " "}).status_code == 400
+    assert client.post("/api/memory/search", json={"query": " "}).status_code == 400
+    assert client.post("/api/memory/search", json={"query": "q", "search_type": "CYPHER"}).status_code == 400
+    assert _jobs(temp_db, "cognee_ingest") == []
 
-    resp = client.post("/api/memory/observability/semantic/consolidate", json={})
 
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["inserted"] >= 1
-    assert data["trigger_type"] == "manual"
-    assert "sess" in data["sessions"]
+def test_search_endpoint_returns_recalled_memories(temp_db, fake_cognee):
+    from src.memory.cognee_memory import get_cognee_memory
+
+    get_cognee_memory().remember_permanent(["Fact about the user (ui): User likes compact layouts"])
+
+    data = client.post("/api/memory/search", json={"query": "compact layouts?", "top_k": 500}).json()
+
+    assert data["available"] is True
+    assert [item["content"] for item in data["memories"]] == ["Fact about the user (ui): User likes compact layouts"]
+    assert fake_cognee.search_calls[-1]["top_k"] == 50
+
+
+def test_merge_endpoint_queues_forced_merge_and_long_term_reports_it(temp_db):
+    first = client.post("/api/memory/sessions/s1/merge").json()
+    long_term = client.get("/api/memory/observability/long-term").json()
+
+    assert first["status"] == "queued" and first["inserted"] is True
+    [job] = _jobs(temp_db, "memory_session_merge")
+    assert json.loads(job["payload_json"])["force"] is True
+    assert long_term["backend"] == "cognee"
+    assert long_term["available"] is False
+    assert long_term["pipeline"]["memory_session_merge"]["by_status"] == {"QUEUED": 1}
+    assert long_term["jev"] == {"configured": False, "model": None, "tool_review_enabled": True}
+    assert client.post("/api/memory/cognify").status_code in (404, 405)
+
+
+def test_removed_store_endpoints_are_gone(temp_db):
+    assert client.get("/api/memory/observability/semantic").status_code == 404
+    assert client.get("/api/memory/observability/procedural").status_code == 404
+    assert client.get("/api/memory/observability/skills").status_code == 404
+    assert client.get("/api/skills").status_code == 404

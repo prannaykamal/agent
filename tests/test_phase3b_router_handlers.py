@@ -4,7 +4,7 @@ import sqlite3
 import pytest
 
 from src.db import init_db
-from src.memory.job_handlers import ALL_MEMORY_JOB_TYPES, build_default_handler_registry
+from src.memory.job_handlers import ALL_MEMORY_JOB_TYPES, NoOpMemoryJobHandler, build_default_handler_registry
 from src.memory.job_router import MemoryJobRouter
 
 
@@ -18,17 +18,10 @@ def temp_db(tmp_path, monkeypatch):
 
 def _counts(db_path):
     tables = [
+        "memory_jobs",
+        "summary_blocks",
         "facts",
         "episodes",
-        "pending_fact_candidates",
-        "structured_episodes",
-        "summary_blocks",
-        "semantic_embeddings",
-        "semantic_dedup_events",
-        "consolidation_runs",
-        "skill_candidates",
-        "skill_versions",
-        "skill_usage_stats",
     ]
     conn = sqlite3.connect(db_path)
     try:
@@ -37,96 +30,51 @@ def _counts(db_path):
         conn.close()
 
 
-def test_every_memory_job_type_has_registered_handler_and_later_phase_jobs_are_noop():
+def test_every_memory_job_type_has_a_real_handler():
     registry = build_default_handler_registry()
 
-    assert set(registry) == set(ALL_MEMORY_JOB_TYPES)
-    for job_type, handler in registry.items():
-        if job_type == "summary_generation":
-            assert handler.__class__.__name__ == "SummaryGenerationJobHandler"
-            continue
-        if job_type == "episode_generation":
-            assert handler.__class__.__name__ == "EpisodeGenerationJobHandler"
-            result = handler.handle(
-                job={"id": f"job-{job_type}", "job_type": job_type},
-                payload={"schema_version": 1},
-            )
-            assert result.success is False
-            assert result.retryable is False
-            assert result.result["processed"] is False
-            continue
-        if job_type == "semantic_consolidation":
-            assert handler.__class__.__name__ == "SemanticConsolidationJobHandler"
-            result = handler.handle(
-                job={"id": f"job-{job_type}", "job_type": job_type},
-                payload={"schema_version": 1},
-            )
-            assert result.success is False
-            assert result.retryable is False
-            assert result.result["processed"] is False
-            continue
-        if job_type == "procedural_candidate_generation":
-            assert handler.__class__.__name__ == "ProceduralCandidateGenerationJobHandler"
-            result = handler.handle(
-                job={"id": f"job-{job_type}", "job_type": job_type},
-                payload={"schema_version": 1},
-            )
-            assert result.success is False
-            assert result.retryable is False
-            assert result.result["processed"] is False
-            continue
-        if job_type == "skill_promotion":
-            assert handler.__class__.__name__ == "SkillPromotionJobHandler"
-            result = handler.handle(
-                job={"id": f"job-{job_type}", "job_type": job_type},
-                payload={"schema_version": 1},
-            )
-            assert result.success is False
-            assert result.retryable is False
-            assert result.result["processed"] is False
-            continue
-        result = handler.handle(
-            job={"id": f"job-{job_type}", "job_type": job_type},
-            payload={"schema_version": 1},
-        )
-        assert result.success is True
-        assert result.result["processed"] is False
-        assert result.result["job_type"] == job_type
+    assert set(registry) == set(ALL_MEMORY_JOB_TYPES) == {"summary_generation", "cognee_ingest", "memory_session_write", "memory_session_merge"}
+    assert registry["summary_generation"].__class__.__name__ == "SummaryGenerationJobHandler"
+    assert registry["cognee_ingest"].__class__.__name__ == "CogneeIngestJobHandler"
+    assert registry["memory_session_write"].__class__.__name__ == "MemorySessionWriteJobHandler"
+    assert registry["memory_session_merge"].__class__.__name__ == "MemorySessionMergeJobHandler"
 
 
-def test_noop_handlers_do_not_call_llms(monkeypatch):
+def test_noop_handler_succeeds_without_processing():
+    handler = NoOpMemoryJobHandler(job_type="future_job")
+
+    result = handler.handle(job={"id": "job-1"}, payload={"schema_version": 1})
+
+    assert result.success is True
+    assert result.result["processed"] is False
+    assert result.result["job_type"] == "future_job"
+
+
+def test_cognee_jobs_without_cognee_do_not_call_llms_or_write_tables(temp_db, monkeypatch):
     def fail(*args, **kwargs):
         raise AssertionError("LLM should not be called")
 
     monkeypatch.setattr("src.harness.models.get_secondary_llm", fail)
-
-    router = MemoryJobRouter()
-    result = router.dispatch(
-        {
-            "id": "job-1",
-            "job_type": "semantic_candidate_extraction",
-            "payload_json": json.dumps({"schema_version": 1}),
-        }
-    )
-
-    assert result.success is True
-    assert result.result["processed"] is False
-
-
-def test_noop_handlers_do_not_write_memory_tables(temp_db):
     before = _counts(temp_db)
     router = MemoryJobRouter()
 
-    result = router.dispatch(
+    ingest = router.dispatch(
         {
             "id": "job-1",
-            "job_type": "episode_generation",
-            "payload_json": json.dumps({"schema_version": 1}),
+            "job_type": "cognee_ingest",
+            "payload_json": json.dumps({"schema_version": 1, "documents": ["fact"]}),
+        }
+    )
+    write = router.dispatch(
+        {
+            "id": "job-2",
+            "job_type": "memory_session_write",
+            "payload_json": json.dumps({"schema_version": 1, "session_id": "s1", "text": "fact"}),
         }
     )
 
-    assert result.success is False
-    assert result.retryable is False
+    assert (ingest.success, ingest.retryable) == (False, False)
+    assert (write.success, write.retryable) == (False, False)
     assert _counts(temp_db) == before
 
 
@@ -151,7 +99,7 @@ def test_invalid_payload_returns_failure():
     result = router.dispatch(
         {
             "id": "job-invalid",
-            "job_type": "semantic_candidate_extraction",
+            "job_type": "cognee_ingest",
             "payload_json": "{not json",
         }
     )
@@ -161,20 +109,7 @@ def test_invalid_payload_returns_failure():
 
 
 def test_missing_schema_version_returns_failure():
-    router = MemoryJobRouter()
-
-    result = router.dispatch(
-        {
-            "id": "job-missing-schema",
-            "job_type": "semantic_candidate_extraction",
-            "payload_json": json.dumps({"source": "test"}),
-        }
-    )
+    result = NoOpMemoryJobHandler(job_type="future_job").handle(job={"id": "job-missing-schema"}, payload={"source": "test"})
 
     assert result.success is False
     assert "schema_version" in result.result["message"]
-
-
-
-
-

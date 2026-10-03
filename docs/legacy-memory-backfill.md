@@ -1,70 +1,57 @@
 # Legacy Memory Backfill
 
-Phase 11 does not run automatic legacy memory backfill. This document defines the safe strategy for a future, separately approved backfill.
+Long-term memory now lives in a cognee knowledge graph (see [Memory Architecture](memory-architecture.md)). Knowledge stored by the earlier semantic, episodic, and procedural stores is not visible to retrieval until it is imported into cognee once.
+
+The importer is `src/memory/cognee_backfill.py`.
 
 ## Principles
 
-- Backfill is opt-in.
+- Backfill is opt-in. It never runs during chat, startup, retrieval, or worker auto-start.
 - Dry-run comes first.
-- Backup is required before mutation.
-- Legacy tables remain readable.
-- Backfill must be idempotent.
-- Backfill must produce an audit report.
-- Backfill must not run during chat, startup, retrieval, or worker auto-start.
+- Legacy rows are read, never modified or deleted.
+- Backfill is idempotent: documents are batched into `cognee_ingest` jobs keyed by content hash, so re-running does not queue duplicates.
+- The backfill only enqueues `cognee_ingest` jobs. The memory worker writes them straight into the main graph with `cognee.remember` (no session cache, no Jev decision).
 
 ## Legacy Sources
 
-Safe to inspect:
+| Table | Imported as | Kind |
+|---|---|---|
+| `facts` | `Fact about the user (<category>): <text>` | `facts` |
+| `structured_episodes` | Title, summary, decisions, and topics | `episodes` |
+| `episodes` | `Past conversation (<timestamp>): <content>` | `episodes` |
+| `skills` | Name, purpose, triggers, and steps | `procedures` |
+| `skill_versions` (active, enabled, not archived) | The generated `SKILL.md` file, or name, description, and workflow if the file is missing | `procedures` |
 
-- `facts`
-- `episodes`
-- `skills`
-- `raw_turns`
-- `pending_facts`
+Not imported: `raw_turns` (short-term history), `pending_facts` and `pending_fact_candidates` (unconfirmed candidates), and `skill_candidates` (unapproved skills).
 
-Unsafe to rewrite in bulk:
+## Running It
 
-- `facts`, unless dedup-aware permanent write APIs are used.
-- `episodes`, because legacy FTS behavior is compatibility-sensitive.
-- User-authored skill files.
+1. Back up first: `POST /api/system/backup` or the Overview page. The backup includes `state.db` and `.agent/cognee`.
+2. Dry run and review the counts:
 
-## Target Stores
+   ```bash
+   python -m src.memory.cognee_backfill --dry-run
+   ```
 
-Potential targets:
+   ```json
+   {
+     "dry_run": true,
+     "documents_by_table": {"facts": 6, "structured_episodes": 0, "episodes": 0, "skills": 0, "skill_versions": 0},
+     "documents_total": 6,
+     "jobs_queued": 0,
+     "jobs_already_present": 0
+   }
+   ```
 
-- `structured_episodes`
-- `summary_blocks`
-- `pending_fact_candidates`
-- `skill_versions`
-- `skill_candidates`
+3. Queue the import:
 
-Any permanent semantic target must pass through `SemanticFactStore.add_explicit_fact()`. Any generated skill target must pass through approval and `SkillVersionStore`.
+   ```bash
+   python -m src.memory.cognee_backfill
+   ```
 
-## Dry-Run Report
-
-A future dry-run should report:
-
-- Source table and row ID.
-- Proposed target table.
-- Proposed action.
-- Confidence.
-- Idempotency key.
-- Reason skipped, if skipped.
-- Estimated affected rows.
-
-## Backup Requirement
-
-Back up both:
-
-- SQLite DB.
-- `.agent/skills`.
-
-Do not proceed if either backup fails.
+4. Make sure the memory worker is running (it starts with the API). Watch `cognee_ingest` in Memory Ops or `GET /api/memory/observability/long-term`.
+5. Verify with a search: `POST /api/memory/search` with a query you expect an imported fact to answer.
 
 ## Reversibility
 
-Backfill should write source metadata so inserted records can be identified. Reversal should prefer restoring from backup over ad hoc deletes.
-
-## Phase 11 Position
-
-Phase 11 may add tests and documentation for backfill readiness. It must not automatically backfill legacy data.
+Imported documents are ordinary cognee data. To undo an import, restore the pre-import backup, which restores `.agent/cognee` along with `state.db`.

@@ -1,6 +1,5 @@
 import pytest
 from src.harness.models import get_primary_llm, get_secondary_llm, get_context_window, get_model_catalog, MODEL_PAIRS
-from src.memory.async_workers import run_secondary_fact_extraction
 from src.db import init_db
 
 @pytest.fixture
@@ -40,11 +39,3 @@ def test_get_primary_and_secondary_llm(monkeypatch):
 
     secondary_llm = get_secondary_llm("openai")
     assert secondary_llm is None
-
-def test_secondary_async_worker(temp_db):
-    run_secondary_fact_extraction(
-        user_input="Remember that I prefer Python 3.11",
-        assistant_output="Understood!",
-        provider="openai",
-        session_id="test_worker_sess"
-    )

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "personal-assistant-agent"
 version = "0.1.0"
-description = "24x7 Personal AI Assistant with LangGraph, SQLite FTS5, Multi-Provider LLMs, and Cockpit UI"
+description = "24x7 Personal AI Assistant with LangGraph, cognee knowledge-graph memory, Multi-Provider LLMs, and Cockpit UI"
 authors = [{ name = "DeepMind Agentic AI Team" }]
 readme = "README.md"
 requires-python = ">=3.10"
@@ -22,6 +22,7 @@ dependencies = [
     "pydantic>=2.8.0",
     "python-dotenv>=1.0.0",
     "duckduckgo-search>=4.0.0",
+    "cognee>=1.6,<2",
     "uv>=0.4.0"
 ]
 

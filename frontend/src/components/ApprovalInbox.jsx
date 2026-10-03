@@ -60,10 +60,6 @@ export default function ApprovalInbox({ onRefresh }) {
 
   const getRequestBadge = (req) => {
     const name = (req.tool_name || "").toLowerCase();
-    const reason = (req.reason || "").toLowerCase();
-    if (name.includes("procedural") || name.includes("skill") || reason.includes("procedural") || reason.includes("skill")) {
-      return "Skill Promotion";
-    }
     if (name.includes("calendar") || name.includes("email") || name.includes("whatsapp") || name.includes("telegram")) {
       return "External Integration";
     }
@@ -84,19 +80,6 @@ export default function ApprovalInbox({ onRefresh }) {
       {actionStatus ? (
         <Notice kind={lastDecisionResult?.error ? "error" : "ok"}>
           <strong>{lastDecisionResult?.error ? "Decision Error" : "Decision Outcome"}:</strong> {actionStatus}
-        </Notice>
-      ) : null}
-
-      {lastDecisionResult?.procedural_skill_approval ? (
-        <Notice>
-          <strong>Procedural Skill Decision Details</strong>
-          <div>
-            Skill: <strong>{lastDecisionResult.procedural_skill_approval.name || "N/A"}</strong>
-            {" · "}Status: <strong>{lastDecisionResult.procedural_skill_approval.status || lastDecisionResult.status}</strong>
-          </div>
-          {lastDecisionResult.procedural_skill_approval.description ? (
-            <div className="lede">{lastDecisionResult.procedural_skill_approval.description}</div>
-          ) : null}
         </Notice>
       ) : null}
 

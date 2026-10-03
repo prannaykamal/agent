@@ -18,7 +18,6 @@ from src.harness.llm_router import LLMRouteResult, LLMSelector
 from src.personal_os.tasks import create_task
 from src.personal_os.scheduling import schedule_job
 from src.hitl.approval_engine import create_approval_request
-from src.memory.semantic import add_semantic_fact
 
 client = TestClient(app)
 
@@ -209,14 +208,12 @@ def test_p2_10_memory_fact_creation_search_ui(temp_db):
         "fact_text": "User prefers dark mode UI and compact density."
     })
     assert add_resp.status_code == 200
+    assert add_resp.json()["status"] == "queued"
 
     full_resp = client.get("/api/memory/full?query=compact")
     assert full_resp.status_code == 200
     data = full_resp.json()
-    assert "facts" in data
-    assert "soul_md" in data
-    assert "skill_md" in data
-    assert "memory_md" in data
+    assert {"backend", "memories", "soul_md"} <= set(data)
 
 
 def test_p2_optional_frontend_browser_smoke():

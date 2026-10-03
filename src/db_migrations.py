@@ -123,11 +123,10 @@ def run_db_migrations(db_path: Path):
                 from src.personal_os.scheduler_store import create_scheduler_schema
                 create_scheduler_schema(conn)
             elif ver == 10:
+                # Formerly rebuilt the semantic entity index; long-term memory now lives in cognee.
                 from src.memory.schema import create_phase_x_memory_schema
-                from src.memory.entity_index import EntityIndexStore
 
                 create_phase_x_memory_schema(conn)
-                EntityIndexStore(db_path=db_path).rebuild(conn=conn)
 
             cursor.execute(
                 "INSERT INTO schema_migrations (version, description, applied_at) VALUES (?, ?, ?)",

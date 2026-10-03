@@ -5,13 +5,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
-from langchain_core.messages import HumanMessage
-
 from src.db import get_connection
-from src.memory.context_assembler import ContextAssemblyOptions, assemble_retrieved_memory_context
 from src.memory.retrieval_gate import should_retrieve_memory
-from src.memory.retrieval_planner import build_retrieval_plan
-from src.memory.retrieval_sources import retrieve_all_sources
 
 SENSITIVE_KEY_PATTERNS = (
     "api_key",
@@ -88,16 +83,6 @@ REQUIRED_MEMORY_TABLES = (
     "dead_letter_jobs",
     "worker_heartbeats",
     "summary_blocks",
-    "structured_episodes",
-    "pending_fact_candidates",
-    "semantic_embeddings",
-    "memory_entities",
-    "semantic_dedup_events",
-    "consolidation_runs",
-    "skill_candidates",
-    "skill_versions",
-    "skill_usage_stats",
-    "procedural_skill_approvals",
 )
 
 
@@ -237,13 +222,11 @@ def get_memory_health_summary(db_path: Optional[Path] = None, *, stale_after_sec
         queue_status = _count_by("memory_jobs", "status", db_path) if "memory_jobs" in tables else {}
         dead_letter_count = _count("dead_letter_jobs", db_path) if "dead_letter_jobs" in tables else 0
         worker_summary = get_worker_observability(db_path=db_path, stale_after_seconds=stale_after_seconds)["summary"] if "worker_heartbeats" in tables else {"total": 0, "active": 0, "stale": 0, "last_heartbeat_at": None}
-        semantic = get_semantic_observability(db_path=db_path, limit=5)["summary"] if "pending_fact_candidates" in tables else {}
-        procedural = get_procedural_observability(db_path=db_path, limit=5)["summary"] if "skill_candidates" in tables else {}
-        skills = get_skill_observability(db_path=db_path)["summary"] if "skill_versions" in tables else {}
+        long_term = get_long_term_memory_observability(db_path=db_path)
         status = "OK"
         if missing:
             status = "ERROR"
-        elif dead_letter_count or worker_summary.get("stale", 0) or queue_status.get("FAILED", 0) or semantic.get("failed", 0) or procedural.get("waiting_for_approval", 0):
+        elif dead_letter_count or worker_summary.get("stale", 0) or queue_status.get("FAILED", 0) or not long_term.get("available"):
             status = "DEGRADED"
         return {
             "status": status,
@@ -265,9 +248,7 @@ def get_memory_health_summary(db_path: Optional[Path] = None, *, stale_after_sec
                 "stale_workers": worker_summary.get("stale", 0),
                 "last_heartbeat_at": worker_summary.get("last_heartbeat_at"),
             },
-            "semantic": semantic,
-            "procedural": procedural,
-            "skills": skills,
+            "long_term": long_term,
         }
     except Exception as exc:
         return {"status": "ERROR", "generated_at": _iso_now(), "error": f"{type(exc).__name__}: {exc}"}
@@ -411,327 +392,99 @@ def get_dead_letter_observability(
     return {"summary": {"total": _count("dead_letter_jobs", db_path), "by_job_type": by_type, "newest_created_at": _latest("dead_letter_jobs", "created_at", db_path)}, "dead_letters": rendered}
 
 
+def get_long_term_memory_observability(db_path: Optional[Path] = None) -> Dict[str, Any]:
+    """Report cognee backend status plus ingest/cognify queue counts. Never triggers cognee work."""
+    from src.memory.cognee_memory import get_cognee_memory
+
+    try:
+        backend = get_cognee_memory().status()
+    except Exception as exc:
+        backend = {"backend": "cognee", "available": False, "error": f"{type(exc).__name__}: {exc}"}
+    backend["error"] = truncate_preview(backend.get("error"), 240) if backend.get("error") else None
+    pipeline: Dict[str, Any] = {}
+    if "memory_jobs" in _table_names(db_path):
+        for job_type in ("memory_session_write", "memory_session_merge", "cognee_ingest"):
+            rows = _rows(
+                "SELECT status, COUNT(*) AS count FROM memory_jobs WHERE job_type = ? GROUP BY status",
+                (job_type,),
+                db_path=db_path,
+            )
+            last = _one(
+                "SELECT MAX(completed_at) AS value FROM memory_jobs WHERE job_type = ? AND status = 'SUCCEEDED'",
+                (job_type,),
+                db_path=db_path,
+            )
+            pipeline[job_type] = {
+                "by_status": {str(row["status"]): int(row["count"]) for row in rows},
+                "last_succeeded_at": (last or {}).get("value"),
+            }
+    from src.memory.jev import get_jev_client
+
+    jev = get_jev_client()
+    # Endpoint URLs can embed credentials, so only report whether Jev is configured and which model.
+    jev_status = {
+        "configured": jev.available,
+        "model": jev.config.model or None,
+        "tool_review_enabled": jev.config.tool_review_enabled,
+    }
+    return {**backend, "jev": jev_status, "pipeline": pipeline}
+
+
 def get_retrieval_trace(
     *,
     query: str,
     session_id: Optional[str] = None,
-    provider: Optional[str] = "openai",
-    model_name: Optional[str] = "gpt-4o-mini",
     include_candidates: bool = True,
     include_prompt_block: bool = False,
     max_candidates: int = 20,
-    db_path: Optional[Path] = None,
+    search_type: Optional[str] = None,
 ) -> Dict[str, Any]:
-    del db_path
+    """Run the same read-only recall the chat path uses and report what it returned."""
+    from src.memory.cognee_memory import get_cognee_memory
+
     clean_query = " ".join(str(query or "").split())
     if not clean_query:
         raise ValueError("query must be non-empty")
     gate_allowed = should_retrieve_memory(clean_query)
-    messages = [HumanMessage(content=clean_query)]
-    plan = build_retrieval_plan(
-        query=clean_query,
-        session_id=session_id,
-        provider=provider,
-        model_name=model_name,
-        messages=messages,
-        gate_allows_retrieval=gate_allowed,
-        include_debug=True,
-    )
+    memory = get_cognee_memory()
     response: Dict[str, Any] = {
         "query": clean_query,
         "session_id": session_id,
-        "gate": {"allowed": gate_allowed, "reason": plan.gate_reason},
-        "plan": {
-            "task_type": plan.task_type,
-            "memory_kinds": list(plan.memory_kinds),
-            "per_source_limit": plan.per_source_limit,
-            "total_token_budget": plan.total_token_budget,
-            "budget_by_kind": dict(plan.budget_by_kind),
-        },
-        "retrieval": {"source_results": [], "candidate_count": 0, "omitted_candidate_ids": []},
-        "assembly": {"included_candidate_ids": [], "omitted_candidate_ids": [], "token_count": 0, "prompt_block": None},
+        "gate": {"allowed": gate_allowed},
+        "backend": "cognee",
+        "search_type": (search_type or memory.config.search_type).upper(),
+        "available": memory.config.enabled,
+        "error": None,
+        "candidate_count": 0,
+        "token_count": 0,
+        "prompt_block": None,
         "candidates": [],
     }
-    if not plan.should_retrieve or plan.retrieval_request is None:
+    if not gate_allowed:
         return response
-    bundle = retrieve_all_sources(plan.retrieval_request)
-    assembled = assemble_retrieved_memory_context(
-        bundle,
-        ContextAssemblyOptions(
-            total_token_budget=plan.total_token_budget,
-            budget_by_kind=plan.budget_by_kind,
-            include_debug=True,
-        ),
+    result = memory.recall(clean_query, search_type=search_type)
+    block = result.to_context_block(memory.config.retrieval_token_budget)
+    response.update(
+        {
+            "search_type": result.search_type,
+            "available": result.available,
+            "error": truncate_preview(result.error, 240) if result.error else None,
+            "candidate_count": len(result.memories),
+            "token_count": max(0, len(block) // 4),
+            "prompt_block": redact_prompt_block(block) if include_prompt_block and block else None,
+        }
     )
-    response["retrieval"] = {
-        "source_results": [
-            {
-                "source_name": result.source_name,
-                "memory_kind": result.memory_kind,
-                "candidate_count": len(result.candidates),
-                "errors": [truncate_preview(error, 240) for error in result.errors],
-            }
-            for result in bundle.source_results
-        ],
-        "candidate_count": len(bundle.candidates),
-        "omitted_candidate_ids": list(bundle.omitted_candidate_ids),
-    }
-    response["assembly"] = {
-        "included_candidate_ids": list(assembled.included_candidate_ids),
-        "omitted_candidate_ids": list(assembled.omitted_candidate_ids),
-        "token_count": assembled.token_count,
-        "prompt_block": redact_prompt_block(assembled.block_text) if include_prompt_block and assembled.block_text else None,
-    }
     if include_candidates:
         capped = min(max(0, int(max_candidates)), 100)
-        response["candidates"] = [retrieval_candidate_preview(candidate) for candidate in bundle.candidates[:capped]]
+        response["candidates"] = [
+            {"rank": index + 1, "content_preview": truncate_preview(item.content, 240)}
+            for index, item in enumerate(result.memories[:capped])
+        ]
     return response
 
 
 def redact_prompt_block(block_text: str) -> Dict[str, Any]:
     return {"preview": truncate_preview(block_text, 1200), "redacted": True}
-
-
-def retrieval_candidate_preview(candidate: Any) -> Dict[str, Any]:
-    return {
-        "id": candidate.id,
-        "memory_kind": candidate.memory_kind,
-        "title": truncate_preview(candidate.title, 120),
-        "content_preview": truncate_preview(candidate.content, 240),
-        "score": {"rank_score": candidate.score.rank_score, "strategy": candidate.score.strategy},
-        "provenance": {
-            "source_name": candidate.provenance.source_name,
-            "table_name": candidate.provenance.table_name,
-            "record_id": candidate.provenance.record_id,
-            "created_at": candidate.provenance.created_at,
-            "fields_matched": list(candidate.provenance.fields_matched),
-        },
-    }
-
-
-def get_semantic_observability(
-    *,
-    db_path: Optional[Path] = None,
-    session_id: Optional[str] = None,
-    status: Optional[str] = None,
-    limit: int = 100,
-) -> Dict[str, Any]:
-    capped_limit = min(max(1, int(limit)), 200)
-    clauses: List[str] = []
-    params: List[Any] = []
-    if session_id:
-        clauses.append("session_id = ?")
-        params.append(session_id)
-    if status:
-        clauses.append("status = ?")
-        params.append(status)
-    where = " WHERE " + " AND ".join(clauses) if clauses else ""
-    candidate_rows = _rows(
-        f"SELECT * FROM pending_fact_candidates{where} ORDER BY created_at DESC, id DESC LIMIT ?",
-        [*params, capped_limit],
-        db_path,
-    )
-    all_status = _rows(f"SELECT status, COUNT(*) AS count FROM pending_fact_candidates{where} GROUP BY status", params, db_path)
-    status_counts = {str(row["status"]).lower(): int(row["count"] or 0) for row in all_status}
-    candidates = [
-        {
-            "id": row.get("id"),
-            "session_id": row.get("session_id"),
-            "status": row.get("status"),
-            "source": row.get("source"),
-            "fact_preview": truncate_preview(row.get("fact") or "", 240),
-            "category": row.get("category"),
-            "confidence": row.get("confidence"),
-            "explicit": bool(row.get("explicit")),
-            "source_job_id": row.get("source_job_id") or (safe_json_loads(row.get("metadata_json"), {}) or {}).get("source_job_id"),
-            "created_at": row.get("created_at"),
-            "updated_at": row.get("updated_at"),
-        }
-        for row in candidate_rows
-    ]
-    runs = _rows("SELECT * FROM consolidation_runs WHERE consolidation_type = 'semantic' ORDER BY created_at DESC, id DESC LIMIT ?", [min(capped_limit, 50)], db_path)
-    dedup_events = _rows("SELECT * FROM semantic_dedup_events ORDER BY created_at DESC, id DESC LIMIT ?", [min(capped_limit, 50)], db_path)
-    recent_runs = []
-    for row in runs:
-        metrics = safe_json_loads(row.get("metrics_json"), {}) or {}
-        recent_runs.append(
-            {
-                "id": row.get("id"),
-                "status": row.get("status"),
-                "trigger_type": row.get("trigger_type"),
-                "source_job_id": row.get("source_job_id"),
-                "candidate_count": metrics.get("candidate_count") or metrics.get("claimed_count"),
-                "promoted_count": metrics.get("promoted_count"),
-                "discarded_count": metrics.get("discarded_count"),
-                "deferred_count": metrics.get("deferred_count"),
-                "created_at": row.get("created_at"),
-                "updated_at": row.get("updated_at"),
-            }
-        )
-    recent_dedup = [
-        {
-            "id": row.get("id"),
-            "action": row.get("action"),
-            "target_fact_id": row.get("target_fact_id"),
-            "candidate_id": row.get("candidate_id"),
-            "created_at": row.get("created_at"),
-        }
-        for row in dedup_events
-    ]
-    return {
-        "summary": {
-            "pending": status_counts.get("pending", 0),
-            "pending_candidates": status_counts.get("pending", 0),
-            "in_consolidation": status_counts.get("in_consolidation", 0),
-            "promoted": status_counts.get("promoted", 0),
-            "discarded": status_counts.get("discarded", 0),
-            "deferred": status_counts.get("deferred", 0),
-            "failed": status_counts.get("failed", 0),
-            "dedup_events": _count("semantic_dedup_events", db_path),
-            "consolidation_runs": _count("consolidation_runs", db_path),
-            "permanent_facts": _count("facts", db_path),
-        },
-        "candidates": candidates,
-        "recent_consolidation_runs": recent_runs,
-        "recent_dedup_events": recent_dedup,
-    }
-
-
-def get_procedural_observability(
-    *,
-    db_path: Optional[Path] = None,
-    status: Optional[str] = None,
-    limit: int = 100,
-) -> Dict[str, Any]:
-    capped_limit = min(max(1, int(limit)), 200)
-    where = " WHERE status = ?" if status else ""
-    params: List[Any] = [status] if status else []
-    rows = _rows(f"SELECT * FROM skill_candidates{where} ORDER BY updated_at DESC, id DESC LIMIT ?", [*params, capped_limit], db_path)
-    status_rows = _rows(f"SELECT status, COUNT(*) AS count FROM skill_candidates{where} GROUP BY status", params, db_path)
-    status_counts = {str(row["status"]).lower(): int(row["count"] or 0) for row in status_rows}
-    candidates = []
-    for row in rows:
-        candidates.append(
-            {
-                "id": row.get("id"),
-                "title": row.get("title"),
-                "description_preview": truncate_preview(row.get("description") or "", 180),
-                "status": row.get("status"),
-                "workflow_category": row.get("workflow_category"),
-                "confidence": row.get("confidence"),
-                "occurrences": row.get("occurrences"),
-                "preferred_tools": safe_json_loads(row.get("preferred_tools_json"), []),
-                "tags": safe_json_loads(row.get("tags_json"), []),
-                "dedup_group_id": row.get("dedup_group_id"),
-                "source_episode_ids": safe_json_loads(row.get("source_episode_ids_json"), []),
-                "created_at": row.get("created_at"),
-                "updated_at": row.get("updated_at"),
-            }
-        )
-    approvals = _rows(
-        """
-        SELECT psa.*, ar.status AS approval_request_status
-        FROM procedural_skill_approvals psa
-        LEFT JOIN approval_requests ar ON ar.id = psa.approval_request_id
-        ORDER BY psa.created_at DESC, psa.id DESC
-        LIMIT ?
-        """,
-        [min(capped_limit, 100)],
-        db_path,
-    )
-    approval_items = [
-        {
-            "id": row.get("id"),
-            "candidate_id": row.get("candidate_id"),
-            "approval_request_id": row.get("approval_request_id"),
-            "approval_request_status": row.get("approval_request_status"),
-            "status": row.get("status"),
-            "action": row.get("action"),
-            "skill_version_id": row.get("skill_version_id"),
-            "created_at": row.get("created_at"),
-            "decided_at": row.get("decided_at"),
-        }
-        for row in approvals
-    ]
-    return {
-        "summary": {
-            "new": status_counts.get("new", 0),
-            "observing": status_counts.get("observing", 0),
-            "ready_for_promotion": status_counts.get("ready_for_promotion", 0),
-            "waiting_for_approval": status_counts.get("waiting_for_approval", 0),
-            "promoted": status_counts.get("promoted", 0),
-            "rejected": status_counts.get("rejected", 0),
-            "approvals_pending": len([item for item in approval_items if item["status"] == "PENDING"]),
-        },
-        "candidates": candidates,
-        "approvals": approval_items,
-    }
-
-
-def get_skill_observability(*, db_path: Optional[Path] = None, include_archived: bool = False) -> Dict[str, Any]:
-    where = "" if include_archived else " WHERE archived_at IS NULL"
-    versions = _rows(f"SELECT * FROM skill_versions{where} ORDER BY active DESC, name ASC, version DESC", db_path=db_path)
-    usage_rows = _rows("SELECT * FROM skill_usage_stats", db_path=db_path)
-    usage_by_skill = {str(row["skill_id"]): row for row in usage_rows}
-    active_versions = []
-    disabled = 0
-    archived = 0
-    for row in versions:
-        if not row.get("enabled"):
-            disabled += 1
-        if row.get("archived_at"):
-            archived += 1
-        if row.get("active") and row.get("enabled"):
-            usage = usage_by_skill.get(str(row.get("skill_id")), {})
-            active_versions.append(
-                {
-                    "id": row.get("id"),
-                    "skill_id": row.get("skill_id"),
-                    "version": row.get("version"),
-                    "name": row.get("name"),
-                    "description": row.get("description"),
-                    "enabled": bool(row.get("enabled")),
-                    "active": bool(row.get("active")),
-                    "author": row.get("author"),
-                    "approval_required": bool(row.get("approval_required")),
-                    "approval_id": row.get("approval_id"),
-                    "candidate_id": row.get("candidate_id"),
-                    "confidence": row.get("confidence"),
-                    "file_path": _safe_skill_path(row.get("file_path")),
-                    "content_hash": row.get("content_hash"),
-                    "created_at": row.get("created_at"),
-                    "approved_at": row.get("approved_at"),
-                    "usage": {
-                        "times_loaded": int(usage.get("times_loaded") or 0),
-                        "times_used": int(usage.get("times_used") or 0),
-                        "last_loaded": usage.get("last_loaded"),
-                        "last_used": usage.get("last_used"),
-                    },
-                }
-            )
-    return {
-        "summary": {
-            "active_versions": len(active_versions),
-            "disabled_versions": disabled,
-            "archived_versions": archived,
-            "total_times_loaded": sum(int(row.get("times_loaded") or 0) for row in usage_rows),
-            "total_times_used": sum(int(row.get("times_used") or 0) for row in usage_rows),
-            "snapshot_loaded_at": None,
-            "snapshot_skill_count": 0,
-        },
-        "active_versions": active_versions,
-        "snapshot": {"loaded_at": None, "skill_count": 0, "last_error": None},
-    }
-
-
-def _safe_skill_path(value: Any) -> Optional[str]:
-    if value is None:
-        return None
-    text = str(value)
-    marker = ".agent"
-    if marker in text:
-        return text[text.index(marker) :]
-    return truncate_preview(text, 180)
 
 
 def get_observability_overview(db_path: Optional[Path] = None) -> Dict[str, Any]:
@@ -740,7 +493,5 @@ def get_observability_overview(db_path: Optional[Path] = None) -> Dict[str, Any]
         "health": health,
         "queue": health.get("queue", {}),
         "workers": health.get("workers", {}),
-        "semantic": health.get("semantic", {}),
-        "procedural": health.get("procedural", {}),
-        "skills": health.get("skills", {}),
+        "long_term": health.get("long_term", {}),
     }

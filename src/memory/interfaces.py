@@ -23,17 +23,7 @@ class ShortTermMemoryManager(Protocol):
         ...
 
 
-class EpisodicMemoryStore(Protocol):
-    def retrieve(self, request: RetrievalRequest) -> List[RetrievedMemory]:
-        ...
-
-
-class SemanticMemoryStore(Protocol):
-    def retrieve(self, request: RetrievalRequest) -> List[RetrievedMemory]:
-        ...
-
-
-class ProceduralMemoryStore(Protocol):
+class LongTermMemoryStore(Protocol):
     def retrieve(self, request: RetrievalRequest) -> List[RetrievedMemory]:
         ...
 

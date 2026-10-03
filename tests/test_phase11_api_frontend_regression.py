@@ -9,24 +9,19 @@ client = TestClient(app)
 def test_api_response_shapes_unchanged(tmp_path, monkeypatch):
     db_file = tmp_path / "phase11_api.db"
     monkeypatch.setattr("src.db.DB_PATH", db_file)
-    monkeypatch.setattr("src.config.MEMORY_PATH", tmp_path / "MEMORY.md")
-    monkeypatch.setattr("src.config.SKILL_PATH", tmp_path / "SKILL.md")
-    monkeypatch.setattr("src.memory.skill_files.SKILL_PATH", tmp_path / "SKILL.md")
     init_db(db_file)
 
     chat = client.post("/api/chat", json={"message": "Hello API shape", "session_id": "phase11-api", "provider": "openai", "model_name": "gpt-4o-mini"})
     memory = client.get("/api/memory")
     full = client.get("/api/memory/full")
-    skills = client.get("/api/skills")
     approvals = client.get("/api/approvals")
     tables = client.get("/api/data/tables")
     models = client.get("/api/models")
 
     assert chat.status_code == 200
     assert {"session_id", "session_title", "response", "retrieval_triggered", "retrieved_memories", "pending_approval_id", "approval_status", "iterations", "tools_used", "loop_events", "loop_trace"} <= set(chat.json())
-    assert set(memory.json()) == {"facts", "total_facts"}
-    assert {"facts", "episodes", "soul_md", "skill_md", "memory_md"} <= set(full.json())
-    assert set(skills.json()) == {"skills", "total_skills"}
+    assert {"backend", "enabled", "available", "error", "dataset_name", "search_type", "storage_enabled", "retrieval_enabled", "session_idle_timeout_minutes"} <= set(memory.json())
+    assert {"backend", "query", "memories", "error", "soul_md"} <= set(full.json())
     assert set(approvals.json()) == {"approval_requests"}
     assert {"tables"} <= set(tables.json())
     assert {"catalog", "memory_defaults"} <= set(models.json())

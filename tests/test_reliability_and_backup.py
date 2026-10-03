@@ -36,15 +36,12 @@ def test_ensure_system_initialized(temp_db, tmp_path, monkeypatch):
     test_agent_dir = tmp_path / ".test_agent"
     monkeypatch.setattr("src.startup.AGENT_DIR", test_agent_dir)
     monkeypatch.setattr("src.startup.SOUL_PATH", test_agent_dir / "SOUL.md")
-    monkeypatch.setattr("src.startup.MEMORY_PATH", test_agent_dir / "MEMORY.md")
-    monkeypatch.setattr("src.startup.SKILL_PATH", test_agent_dir / "SKILL.md")
     monkeypatch.setattr("src.startup.DB_PATH", test_agent_dir / "state.db")
 
     res = ensure_system_initialized()
     assert res["status"] == "INITIALIZED"
     assert (test_agent_dir / "SOUL.md").exists()
-    assert (test_agent_dir / "MEMORY.md").exists()
-    assert (test_agent_dir / "SKILL.md").exists()
+    assert (test_agent_dir / "cognee").is_dir()
 
 def test_background_worker_scheduled_jobs(temp_db):
     conn = get_connection()

@@ -64,16 +64,6 @@ def process_one_memory_job(
                 metadata=_worker_metadata(repository, worker_id),
                 now=now,
             )
-            try:
-                from src.memory.consolidation_scheduler import maybe_enqueue_idle_semantic_consolidation
-
-                maybe_enqueue_idle_semantic_consolidation(
-                    db_path=db_path,
-                    now=now,
-                    worker_id=worker_id,
-                )
-            except Exception:
-                pass
             return MemoryWorkerStepResult(
                 worker_id=worker_id,
                 job_id=None,

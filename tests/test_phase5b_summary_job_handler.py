@@ -98,12 +98,13 @@ def _count(db_path, table):
         conn.close()
 
 
-def test_default_registry_uses_real_summary_and_episode_handlers():
+def test_default_registry_uses_real_summary_and_cognee_handlers():
     registry = build_default_handler_registry()
 
     assert isinstance(registry["summary_generation"], SummaryGenerationJobHandler)
-    assert registry["semantic_candidate_extraction"].__class__.__name__ == "SemanticCandidateExtractionJobHandler"
-    assert registry["episode_generation"].__class__.__name__ == "EpisodeGenerationJobHandler"
+    assert registry["cognee_ingest"].__class__.__name__ == "CogneeIngestJobHandler"
+    assert registry["memory_session_write"].__class__.__name__ == "MemorySessionWriteJobHandler"
+    assert registry["memory_session_merge"].__class__.__name__ == "MemorySessionMergeJobHandler"
 
 
 def test_summary_handler_appends_exactly_one_block(temp_db, monkeypatch):

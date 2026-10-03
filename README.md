@@ -1,6 +1,6 @@
 ## Ivo
 
-An autonomous, multi-provider AI Assistant and Agent Cockpit built with **LangGraph**, **LangChain**, **FastAPI**, **React**, and **SQLite FTS5**.
+An autonomous, multi-provider AI Assistant and Agent Cockpit built with **LangGraph**, **LangChain**, **FastAPI**, **React**, **SQLite**, and a **cognee** knowledge graph for long-term memory.
 
 
 ---
@@ -8,12 +8,9 @@ An autonomous, multi-provider AI Assistant and Agent Cockpit built with **LangGr
 ## ðŸŒŸ Key Features
 
 - **Multi-Provider LLM Integration**: Dynamically switch between **OpenAI** (`gpt-4o`, `gpt-4o-mini`), **Anthropic** (`claude-3-5-sonnet`, `claude-3-5-haiku`), **Google Gemini** (`gemini-1.5-pro`, `gemini-1.5-flash`), and **xAI Grok** (`grok-2`).
-- **Tiered LLM Architecture**: Primary LLM for planning & tool execution + Secondary cheaper LLM for background summaries, fact extraction, and memory consolidation.
+- **Tiered LLM Architecture**: Primary LLM for planning & tool execution + Secondary cheaper LLM for background conversation summaries.
 - **Short-Term Memory Budgeting & Compaction**: Enforces strict 25% context budget reservations for System Prompt (`SOUL.md`), instructions, and retrieval context with automatic 75% budget compaction rules.
-- **Long-Term Memory Systems**:
-  - **Semantic Memory**: FTS5 Top-K keyword search & auto-synced `.agent/MEMORY.md`.
-  - **Episodic Memory**: FTS5 session history & Secondary LLM structured JSON summaries.
-  - **Procedural Memory**: Interactive skills manager & auto-synced `.agent/SKILL.md`.
+- **Long-Term Memory (cognee + Jev)**: One cognee knowledge graph holds everything the assistant knows long-term. Jev, a small routing model on any OpenAI-compatible endpoint, decides per message whether to store it and whether to recall memory. Worth-storing turns go to a per-conversation cognee session that merges into the main graph once the conversation is idle. Jev can also send unexpected medium-risk tool calls to human approval. Everything degrades safely: if Jev or cognee is unavailable, chat keeps working.
 - **Human-In-The-Loop (HITL) Tool Safety**: Centralized policy and approval engine for high-risk real tool operations such as provider-managed sends, calendar writes, scheduler-triggered writes, and sensitive Personal OS actions.
 - **Native Personal OS Tools & MCP Gateway**: 22 native Personal OS system tools + Live MCP Stdio/SSE protocol transport adapters.
 - **Glassmorphism Web Cockpit**: Interactive React + Vite control panel with dark mode visuals and live telemetry tabs (Overview, Loop Timeline, Data Inspector, Memory, Tools, Scheduled Jobs, Tasks).
@@ -81,7 +78,7 @@ For complete system architecture diagrams, 21-table database schema specificatio
 
 ## ðŸ§ª Running Automated Tests
 
-Run the complete verified test suite (**181 tests passed/skipped, 100% success rate** covering multi-provider models, REST API endpoints, memory systems, Personal OS tools, MCP gateway, HITL approvals, database migrations, background worker, system backup/restore, provider capability matrix, product polish, and documentation):
+Run the complete test suite (covering multi-provider models, REST API endpoints, short-term and cognee long-term memory, Personal OS tools, MCP gateway, HITL approvals, database migrations, background worker, system backup/restore, provider capability matrix, product polish, and documentation). Tests use an in-memory fake of cognee and never call the real service:
 
 
 ```bash
@@ -93,12 +90,12 @@ python -m pytest tests/
 
 ## Memory Architecture Runbooks
 
-- **[Memory Architecture](docs/memory-architecture.md)**: final primary/secondary LLM split, durable memory jobs, summaries, structured episodes, semantic consolidation, procedural skills, retrieval, observability, table ownership, and legacy compatibility.
-- **[Operator Runbook](docs/operator-runbook.md)**: backend/frontend startup, explicit worker operation, health checks, retrieval trace, semantic/procedural review, approval workflows, backup/restore, and incident recovery.
+- **[Memory Architecture](docs/memory-architecture.md)**: LLM role split, durable memory jobs, short-term summaries, Jev routing, cognee session storage and idle merge, retrieval, tool review, configuration, observability, and legacy compatibility.
+- **[Operator Runbook](docs/operator-runbook.md)**: install and configuration, backend/frontend startup, worker operation, health checks, memory search and retrieval trace, teaching facts and procedures, backup/restore, and incident recovery.
 - **[Developer Testing Guide](docs/developer-testing.md)**: focused regression commands, fixture guidance, deterministic worker testing, fake LLM guidance, and static architecture scans.
 - **[Memory Observability API](docs/api-memory-observability.md)**: read-only observability endpoints, request parameters, example responses, redaction rules, and privacy boundaries.
-- **[Memory Failure Recovery](docs/memory-failure-recovery.md)**: queue, worker, secondary LLM, consolidation, approval, skill reload, retrieval, and DB recovery playbooks.
-- **[Legacy Memory Backfill](docs/legacy-memory-backfill.md)**: documentation-only dry-run strategy for future optional legacy data backfill.
+- **[Memory Failure Recovery](docs/memory-failure-recovery.md)**: queue, worker, cognee availability, provider outage, embedding mismatch, missing recall, secondary LLM, and DB recovery playbooks.
+- **[Legacy Memory Backfill](docs/legacy-memory-backfill.md)**: one-time import of pre-cognee facts, episodes, and skills into cognee with `python -m src.memory.cognee_backfill`.
 
 ## Tools Architecture Runbooks
 

@@ -7,7 +7,8 @@ from fastapi.testclient import TestClient
 
 from src.api.server import app
 from src.db import init_db
-from src.memory.job_handlers import JobHandlerResult
+from src.memory.job_handlers import JobHandlerResult, NoOpMemoryJobHandler
+from src.memory.job_router import MemoryJobRouter
 from src.memory.job_repository import MemoryJobRepository
 from src.memory.jobs import MemoryJobSpec, make_memory_job_id
 from src.memory.worker import process_one_memory_job
@@ -34,13 +35,16 @@ def _ts(value):
 def _spec(name, max_attempts=3):
     key = f"phase3b-worker:{name}"
     return MemoryJobSpec(
-        job_type="semantic_candidate_extraction",
+        job_type="noop_test",
         payload={"schema_version": 1, "name": name},
         idempotency_key=key,
-        job_id=make_memory_job_id("semantic_candidate_extraction", key),
+        job_id=make_memory_job_id("noop_test", key),
         session_id="phase3b-worker",
         available_at=_ts(NOW),
     )
+
+
+NOOP_ROUTER = MemoryJobRouter(handlers={"noop_test": NoOpMemoryJobHandler(job_type="noop_test")})
 
 
 def _job(db_path, job_id):
@@ -98,7 +102,7 @@ def test_process_one_memory_job_succeeds_with_noop_handler(temp_db):
     repo = MemoryJobRepository(db_path=temp_db)
     enqueued = repo.enqueue(_spec("success"))
 
-    result = process_one_memory_job(worker_id="worker-1", db_path=temp_db, now=NOW)
+    result = process_one_memory_job(worker_id="worker-1", router=NOOP_ROUTER, db_path=temp_db, now=NOW)
     row = _job(temp_db, enqueued.job_id)
 
     assert result.status == "SUCCEEDED"
@@ -157,7 +161,7 @@ def test_unknown_job_type_retries_then_dead_letters(temp_db):
 
 
 def test_invalid_payload_retries_then_dead_letters(temp_db):
-    _insert_raw_job(temp_db, "invalid-job", "semantic_candidate_extraction", "{not json", max_attempts=1)
+    _insert_raw_job(temp_db, "invalid-job", "cognee_ingest", "{not json", max_attempts=1)
 
     result = process_one_memory_job(worker_id="worker-1", db_path=temp_db, now=NOW)
     row = _job(temp_db, "invalid-job")
@@ -190,24 +194,17 @@ def test_noop_worker_does_not_write_memory_behavior_tables(temp_db):
     untouched = [
         "facts",
         "episodes",
-        "pending_fact_candidates",
-        "structured_episodes",
         "summary_blocks",
-        "semantic_embeddings",
-        "semantic_dedup_events",
-        "consolidation_runs",
-        "skill_candidates",
-        "skill_versions",
-        "skill_usage_stats",
     ]
     before = {table: _count(temp_db, table) for table in untouched}
 
-    process_one_memory_job(worker_id="worker-1", db_path=temp_db, now=NOW)
+    process_one_memory_job(worker_id="worker-1", router=NOOP_ROUTER, db_path=temp_db, now=NOW)
 
     assert {table: _count(temp_db, table) for table in untouched} == before
 
 
-def test_chat_still_works_when_worker_is_not_running(temp_db):
+def test_chat_still_works_when_worker_is_not_running(temp_db, fake_cognee, fake_jev):
+    fake_jev.memory = {"should_store": True, "should_retrieve": False}
     response = client.post(
         "/api/chat",
         json={
@@ -220,5 +217,7 @@ def test_chat_still_works_when_worker_is_not_running(temp_db):
 
     assert response.status_code == 200
     assert "response" in response.json()
+    # The session write is queued for the worker, not executed inline.
     assert _count(temp_db, "memory_jobs") >= 1
+    assert fake_cognee.remember_calls == []
     assert _count(temp_db, "worker_heartbeats") == 0

@@ -25,9 +25,6 @@ def temp_startup(tmp_path, monkeypatch):
     monkeypatch.setattr("src.startup.AGENT_DIR", agent_dir)
     monkeypatch.setattr("src.startup.DB_PATH", db_file)
     monkeypatch.setattr("src.startup.SOUL_PATH", soul)
-    monkeypatch.setattr("src.startup.MEMORY_PATH", memory)
-    monkeypatch.setattr("src.startup.SKILL_PATH", skill)
-    monkeypatch.setattr("src.memory.skill_files.SKILL_PATH", skill)
     monkeypatch.setattr("src.db.DB_PATH", db_file)
     return agent_dir, db_file, soul, memory, skill
 
@@ -40,7 +37,7 @@ def _tables(db_path):
         conn.close()
 
 
-def test_fresh_startup_creates_schema_skill_dirs_and_files(temp_startup):
+def test_fresh_startup_creates_schema_cognee_dir_and_soul(temp_startup):
     agent_dir, db_file, soul, memory, skill = temp_startup
 
     result = ensure_system_initialized()
@@ -48,11 +45,14 @@ def test_fresh_startup_creates_schema_skill_dirs_and_files(temp_startup):
     assert result["status"] == "INITIALIZED"
     assert db_file.exists()
     assert soul.exists()
-    assert memory.exists()
-    assert skill.exists()
-    assert (agent_dir / "skills" / "generated").exists()
-    assert (agent_dir / "skills" / "user").exists()
-    assert {"memory_jobs", "structured_episodes", "pending_fact_candidates", "skill_versions"} <= _tables(db_file)
+    assert (agent_dir / "cognee").is_dir()
+    assert result["cognee_dir"] == str(agent_dir / "cognee")
+    # Legacy memory mirrors and skill directories are no longer generated.
+    assert not memory.exists()
+    assert not skill.exists()
+    assert not (agent_dir / "skills").exists()
+    # Legacy tables still exist so old data can be imported into cognee.
+    assert {"memory_jobs", "summary_blocks", "facts", "structured_episodes", "skill_versions"} <= _tables(db_file)
 
 
 def test_startup_is_idempotent_and_preserves_existing_legacy_rows_and_skill_md(temp_startup):

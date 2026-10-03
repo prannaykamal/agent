@@ -2,7 +2,7 @@ import sqlite3
 
 import pytest
 
-from src.db import add_episode, add_fact, get_connection, init_db
+from src.db import get_connection, init_db
 from src.db_migrations import check_db_version, run_db_migrations
 from src.memory.schema import PHASE_X_MEMORY_TABLES
 
@@ -86,11 +86,16 @@ def test_phase2_migration_is_idempotent(temp_db):
 
 
 def test_legacy_memory_tables_remain_readable(temp_db):
-    add_fact("preference", "User prefers concise reports.", db_path=temp_db)
-    add_episode("session-1", "User asked for Phase 2 schema foundations.", db_path=temp_db)
-
     conn = get_connection(temp_db)
     try:
+        conn.execute(
+            "INSERT INTO facts (category, fact_text, source, confidence, created_at) VALUES (?, ?, ?, ?, datetime('now'))",
+            ("preference", "User prefers concise reports.", "user", "1.0"),
+        )
+        conn.execute(
+            "INSERT INTO episodes (session_id, timestamp, content, tool_calls, outcome) VALUES (?, datetime('now'), ?, '', '')",
+            ("session-1", "User asked for Phase 2 schema foundations."),
+        )
         conn.execute(
             "INSERT INTO raw_turns (id, session_id, sender, content, tokens) VALUES (?, ?, ?, ?, ?)",
             ("turn-1", "session-1", "user", "hello", 1),

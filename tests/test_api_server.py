@@ -51,20 +51,19 @@ def test_api_memory_and_full(temp_db):
     # Add fact
     add_resp = client.post("/api/memory/fact", json={"category": "user_pref", "fact_text": "Prefers FastAPI"})
     assert add_resp.status_code == 200
+    assert add_resp.json()["status"] == "queued"
 
-    # Get memory
+    # Get memory backend status
     get_resp = client.get("/api/memory")
     assert get_resp.status_code == 200
-    data = get_resp.json()
-    assert len(data["facts"]) >= 1
+    assert get_resp.json()["backend"] == "cognee"
 
     # Get full memory
     full_resp = client.get("/api/memory/full?query=FastAPI")
     assert full_resp.status_code == 200
     full_data = full_resp.json()
-    assert "facts" in full_data
+    assert "memories" in full_data
     assert "soul_md" in full_data
-    assert "skill_md" in full_data
 
 def test_api_tools_catalog(temp_db):
     resp = client.get("/api/tools")
