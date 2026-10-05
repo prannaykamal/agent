@@ -25,7 +25,7 @@ def temp_db(tmp_path, monkeypatch):
     init_db(db_file)
     return {"db": db_file, "mem": mem_file}
 
-def test_e2e_conversation_is_remembered_through_cognee(temp_db, fake_cognee, fake_jev, monkeypatch):
+def test_e2e_conversation_is_remembered_through_cognee(temp_db, fake_cognee, fake_jev, stub_primary_llm, monkeypatch):
     db_path = temp_db["db"]
     memory = get_cognee_memory()
     memory.remember_permanent(["Fact about the user (user_preference): User prefers dark mode UI and Python"])

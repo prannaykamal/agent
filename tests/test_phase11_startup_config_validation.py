@@ -51,8 +51,9 @@ def test_fresh_startup_creates_schema_cognee_dir_and_soul(temp_startup):
     assert not memory.exists()
     assert not skill.exists()
     assert not (agent_dir / "skills").exists()
-    # Legacy tables still exist so old data can be imported into cognee.
-    assert {"memory_jobs", "summary_blocks", "facts", "structured_episodes", "skill_versions"} <= _tables(db_file)
+    # Long-term memory lives in cognee; the legacy memory tables are not created.
+    assert {"memory_jobs", "summary_blocks"} <= _tables(db_file)
+    assert not {"facts", "structured_episodes", "skill_versions"} & _tables(db_file)
 
 
 def test_startup_is_idempotent_and_preserves_existing_legacy_rows_and_skill_md(temp_startup):
@@ -62,6 +63,7 @@ def test_startup_is_idempotent_and_preserves_existing_legacy_rows_and_skill_md(t
     init_db(db_file)
     conn = sqlite3.connect(db_file)
     try:
+        conn.execute("CREATE VIRTUAL TABLE facts USING fts5(category UNINDEXED, fact_text, source UNINDEXED, confidence UNINDEXED, created_at UNINDEXED)")
         conn.execute("INSERT INTO facts (category, fact_text, source, confidence) VALUES ('profile', 'legacy row', 'test', 1.0)")
         conn.commit()
     finally:

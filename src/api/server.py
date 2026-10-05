@@ -159,15 +159,12 @@ class RetrievalTraceRequest(BaseModel):
     max_candidates: int = 20
 
 ALLOWED_DATA_TABLES = [
-    "episodes", "facts", "skills", "checkpoints", "approval_requests",
+    "checkpoints", "approval_requests",
     "sub_agents", "tasks", "scheduled_jobs", "resource_locks", "events_log",
-    "context_blocks", "raw_turns", "pending_facts", "loop_events",
+    "context_blocks", "raw_turns", "loop_events",
     "calendar_events", "emails", "whatsapp_messages", "telegram_messages",
     "audit_logs", "tool_calls", "tool_results",
     "memory_jobs", "dead_letter_jobs", "worker_heartbeats", "summary_blocks",
-    "structured_episodes", "pending_fact_candidates", "semantic_embeddings",
-    "memory_entities", "semantic_dedup_events", "consolidation_runs", "skill_candidates",
-    "skill_versions", "skill_usage_stats", "procedural_skill_approvals",
     "tool_schedules", "tool_schedule_runs"
 ]
 
@@ -193,7 +190,7 @@ def api_health():
     return {
         "status": "online",
         "heartbeat": hb,
-        "backend": "LangGraph + SQLite FTS5",
+        "backend": "LangGraph + SQLite + cognee",
         "llm_available": is_valid_key(os.getenv("OPENAI_API_KEY"))
             or is_valid_key(os.getenv("ANTHROPIC_API_KEY"))
             or is_valid_key(os.getenv("GOOGLE_API_KEY"))

@@ -86,12 +86,12 @@ def test_p7_1_api_contract_every_frontend_fetch(temp_db):
     assert r11.status_code == 200
     assert "tasks" in r11.json()
 
-    # 10. GET /api/data/tables & GET /api/data/table/episodes
+    # 10. GET /api/data/tables & GET /api/data/table/raw_turns
     r12 = client.get("/api/data/tables")
     assert r12.status_code == 200
     assert "tables" in r12.json()
 
-    r13 = client.get("/api/data/table/episodes")
+    r13 = client.get("/api/data/table/raw_turns")
     assert r13.status_code == 200
     assert "rows" in r13.json()
 
@@ -236,11 +236,11 @@ def test_p7_7_backup_and_restore(temp_db, tmp_path):
     assert r_info["status"] == "RESTORED"
 
 def test_p7_8_data_inspector_all_allowed_tables(temp_db):
-    """P7 Item 8: Data inspector test for all 18 allowed SQLite tables."""
+    """P7 Item 8: Data inspector test for the allowed core SQLite tables."""
     allowed_tables = [
-        "episodes", "facts", "skills", "checkpoints", "approval_requests",
+        "checkpoints", "approval_requests",
         "sub_agents", "tasks", "scheduled_jobs", "resource_locks", "events_log",
-        "context_blocks", "raw_turns", "pending_facts", "loop_events",
+        "context_blocks", "raw_turns", "loop_events",
         "calendar_events", "emails", "whatsapp_messages", "telegram_messages"
     ]
 
@@ -267,7 +267,10 @@ def test_p7_9_memory_retrieval_through_api_chat(temp_db, fake_cognee, fake_jev):
     assert data.get("retrieval_triggered") is True
     assert len(data.get("retrieved_memories", [])) >= 1
 
-@pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not configured")
+@pytest.mark.skipif(
+    os.getenv("RUN_LIVE_PROVIDER_TESTS") != "1" or not os.getenv("OPENAI_API_KEY"),
+    reason="live provider call; set RUN_LIVE_PROVIDER_TESTS=1 and OPENAI_API_KEY to run",
+)
 def test_p7_10_real_provider_openai():
     """P7 Item 10: Real OpenAI provider test gated behind environment variables."""
     llm, _ = get_primary_llm(provider="openai", model_name="gpt-4o-mini")
@@ -281,7 +284,10 @@ def test_p7_10_real_provider_openai():
             raise
         assert "OK" in res.content
 
-@pytest.mark.skipif(not os.getenv("ANTHROPIC_API_KEY"), reason="ANTHROPIC_API_KEY not configured")
+@pytest.mark.skipif(
+    os.getenv("RUN_LIVE_PROVIDER_TESTS") != "1" or not os.getenv("ANTHROPIC_API_KEY"),
+    reason="live provider call; set RUN_LIVE_PROVIDER_TESTS=1 and ANTHROPIC_API_KEY to run",
+)
 def test_p7_10_real_provider_anthropic():
     """P7 Item 10: Real Anthropic provider test gated behind environment variables."""
     llm, _ = get_primary_llm(provider="anthropic", model_name="claude-3-5-sonnet-20241022")

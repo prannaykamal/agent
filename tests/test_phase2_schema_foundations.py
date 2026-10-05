@@ -4,7 +4,7 @@ import pytest
 
 from src.db import get_connection, init_db
 from src.db_migrations import check_db_version, run_db_migrations
-from src.memory.schema import PHASE_X_MEMORY_TABLES
+from src.memory.schema import MEMORY_TABLES
 
 
 def _table_names(conn):
@@ -33,7 +33,7 @@ def temp_db(tmp_path, monkeypatch):
 def test_empty_db_initialization_creates_phase2_tables(temp_db):
     conn = sqlite3.connect(temp_db)
     try:
-        assert set(PHASE_X_MEMORY_TABLES).issubset(_table_names(conn))
+        assert set(MEMORY_TABLES).issubset(_table_names(conn))
         assert check_db_version(temp_db) >= 8
     finally:
         conn.close()
@@ -65,7 +65,7 @@ def test_existing_db_migrates_to_version_8(tmp_path):
     conn = sqlite3.connect(db_file)
     try:
         assert check_db_version(db_file) >= 8
-        assert set(PHASE_X_MEMORY_TABLES).issubset(_table_names(conn))
+        assert set(MEMORY_TABLES).issubset(_table_names(conn))
     finally:
         conn.close()
 
@@ -80,44 +80,47 @@ def test_phase2_migration_is_idempotent(temp_db):
             "SELECT COUNT(*) FROM schema_migrations WHERE version = 8"
         ).fetchone()[0]
         assert count == 1
-        assert set(PHASE_X_MEMORY_TABLES).issubset(_table_names(conn))
+        assert set(MEMORY_TABLES).issubset(_table_names(conn))
     finally:
         conn.close()
 
 
-def test_legacy_memory_tables_remain_readable(temp_db):
-    conn = get_connection(temp_db)
-    try:
-        conn.execute(
-            "INSERT INTO facts (category, fact_text, source, confidence, created_at) VALUES (?, ?, ?, ?, datetime('now'))",
-            ("preference", "User prefers concise reports.", "user", "1.0"),
-        )
-        conn.execute(
-            "INSERT INTO episodes (session_id, timestamp, content, tool_calls, outcome) VALUES (?, datetime('now'), ?, '', '')",
-            ("session-1", "User asked for Phase 2 schema foundations."),
-        )
-        conn.execute(
-            "INSERT INTO raw_turns (id, session_id, sender, content, tokens) VALUES (?, ?, ?, ?, ?)",
-            ("turn-1", "session-1", "user", "hello", 1),
-        )
-        conn.execute(
-            """
-            INSERT INTO pending_facts (id, session_id, category, fact_text, source, confidence, explicit)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            ("pf-1", "session-1", "preference", "likes additive migrations", "test", 0.8, 1),
-        )
-        conn.execute(
-            "INSERT INTO skills (name, description, trigger_keywords, execution_steps) VALUES (?, ?, ?, ?)",
-            ("legacy-skill", "legacy skill remains readable", "legacy", "do legacy thing"),
-        )
-        conn.commit()
+LEGACY_MEMORY_TABLES = {
+    "episodes", "facts", "skills", "pending_facts",
+    "structured_episodes", "pending_fact_candidates", "semantic_embeddings",
+    "memory_entities", "semantic_dedup_events", "consolidation_runs",
+    "skill_candidates", "skill_versions", "skill_usage_stats", "procedural_skill_approvals",
+}
 
+
+def test_fresh_db_does_not_create_legacy_memory_tables(temp_db):
+    conn = sqlite3.connect(temp_db)
+    try:
+        assert LEGACY_MEMORY_TABLES.isdisjoint(_table_names(conn))
+    finally:
+        conn.close()
+
+
+def test_existing_legacy_memory_rows_survive_migrations(tmp_path):
+    db_file = tmp_path / "legacy.db"
+    conn = sqlite3.connect(db_file)
+    try:
+        conn.execute("CREATE VIRTUAL TABLE facts USING fts5(category UNINDEXED, fact_text, source UNINDEXED, confidence UNINDEXED, created_at UNINDEXED)")
+        conn.execute("CREATE TABLE skills (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, description TEXT, trigger_keywords TEXT, execution_steps TEXT)")
+        conn.execute("INSERT INTO facts (category, fact_text, source, confidence, created_at) VALUES ('preference', 'User prefers concise reports.', 'user', '1.0', datetime('now'))")
+        conn.execute("INSERT INTO skills (name, description, trigger_keywords, execution_steps) VALUES ('legacy-skill', 'desc', 'legacy', 'steps')")
+        conn.commit()
+    finally:
+        conn.close()
+
+    run_db_migrations(db_file)
+    run_db_migrations(db_file)
+
+    conn = sqlite3.connect(db_file)
+    try:
         assert conn.execute("SELECT COUNT(*) FROM facts").fetchone()[0] == 1
-        assert conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0] == 1
-        assert conn.execute("SELECT COUNT(*) FROM raw_turns").fetchone()[0] == 1
-        assert conn.execute("SELECT COUNT(*) FROM pending_facts").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM skills").fetchone()[0] == 1
+        assert set(MEMORY_TABLES).issubset(_table_names(conn))
     finally:
         conn.close()
 
@@ -129,17 +132,8 @@ def test_key_columns_exist(temp_db):
         assert {"id", "job_type", "status", "idempotency_key", "payload_json", "attempt_count", "max_attempts"}.issubset(memory_jobs)
         assert memory_jobs["payload_json"].upper() == "TEXT"
 
-        structured_episodes = _columns(conn, "structured_episodes")
-        assert {"id", "session_id", "title", "summary", "participants_json", "importance", "action"}.issubset(structured_episodes)
-        assert structured_episodes["participants_json"].upper() == "TEXT"
-
-        fact_candidates = _columns(conn, "pending_fact_candidates")
-        assert {"id", "fact", "confidence", "explicit", "status", "metadata_json"}.issubset(fact_candidates)
-        assert fact_candidates["metadata_json"].upper() == "TEXT"
-
-        skill_versions = _columns(conn, "skill_versions")
-        assert {"id", "skill_id", "version", "file_path", "content_hash", "frontmatter_json", "active"}.issubset(skill_versions)
-        assert skill_versions["frontmatter_json"].upper() == "TEXT"
+        summary_blocks = _columns(conn, "summary_blocks")
+        assert {"id", "session_id", "sequence_number", "summary", "covered_message_ids_json", "token_count"}.issubset(summary_blocks)
     finally:
         conn.close()
 
@@ -152,11 +146,6 @@ def test_key_indexes_exist(temp_db):
             "idx_memory_jobs_status_available_priority",
         }.issubset(_indexes(conn, "memory_jobs"))
         assert "idx_summary_blocks_session_sequence_unique" in _indexes(conn, "summary_blocks")
-        assert {
-            "idx_skill_versions_skill_version_unique",
-            "idx_skill_versions_one_active_per_skill",
-        }.issubset(_indexes(conn, "skill_versions"))
-        assert "idx_semantic_embeddings_owner_model_unique" in _indexes(conn, "semantic_embeddings")
     finally:
         conn.close()
 
@@ -172,62 +161,8 @@ def test_invalid_check_constraints_fail(temp_db):
 
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(
-                """
-                INSERT INTO structured_episodes (
-                    id, session_id, title, summary, participants_json, goals_json,
-                    decisions_json, artifacts_json, topics_json, importance,
-                    start_message_id, end_message_id, source, action
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    "episode-bad-importance",
-                    "session-1",
-                    "Title",
-                    "Summary",
-                    "[]",
-                    "[]",
-                    "[]",
-                    "[]",
-                    "[]",
-                    1.5,
-                    "m1",
-                    "m2",
-                    "test",
-                    "CREATE",
-                ),
-            )
-
-        with pytest.raises(sqlite3.IntegrityError):
-            conn.execute(
-                """
-                INSERT INTO pending_fact_candidates (
-                    id, session_id, fact, category, confidence, explicit, source, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                ("fact-bad-bool", "session-1", "fact", "preference", 0.5, 2, "test", "PENDING"),
-            )
-
-        with pytest.raises(sqlite3.IntegrityError):
-            conn.execute(
-                "INSERT INTO semantic_dedup_events (id, new_fact_text, action) VALUES (?, ?, ?)",
-                ("dedup-bad-action", "fact", "IGNORE"),
-            )
-
-        with pytest.raises(sqlite3.IntegrityError):
-            conn.execute(
-                """
-                INSERT INTO skill_versions (
-                    id, skill_id, version, name, description, file_path, content_hash,
-                    frontmatter_json, author, active
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                ("sv-bad-version", "skill-1", 0, "Skill", "Desc", "skills/a.md", "hash", "{}", "test", 0),
-            )
-
-        with pytest.raises(sqlite3.IntegrityError):
-            conn.execute(
-                "INSERT INTO skill_usage_stats (skill_id, times_used) VALUES (?, ?)",
-                ("skill-bad-usage", -1),
+                "INSERT INTO summary_blocks (id, session_id, sequence_number, summary, covered_message_ids_json, token_count) VALUES (?, ?, ?, ?, ?, ?)",
+                ("sb-bad-seq", "session-1", 0, "summary", "[]", 1),
             )
     finally:
         conn.close()
@@ -244,43 +179,6 @@ def test_duplicate_memory_job_idempotency_key_fails(temp_db):
             conn.execute(
                 "INSERT INTO memory_jobs (id, job_type, idempotency_key) VALUES (?, ?, ?)",
                 ("job-2", "summary", "idem-1"),
-            )
-    finally:
-        conn.close()
-
-
-def test_duplicate_skill_id_version_fails(temp_db):
-    conn = sqlite3.connect(temp_db)
-    try:
-        row = (
-            "sv-1",
-            "skill-1",
-            1,
-            "Skill",
-            "Desc",
-            "skills/a.md",
-            "hash-a",
-            "{}",
-            "test",
-        )
-        conn.execute(
-            """
-            INSERT INTO skill_versions (
-                id, skill_id, version, name, description, file_path, content_hash,
-                frontmatter_json, author
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            row,
-        )
-        with pytest.raises(sqlite3.IntegrityError):
-            conn.execute(
-                """
-                INSERT INTO skill_versions (
-                    id, skill_id, version, name, description, file_path, content_hash,
-                    frontmatter_json, author
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                ("sv-2", "skill-1", 1, "Skill", "Desc", "skills/b.md", "hash-b", "{}", "test"),
             )
     finally:
         conn.close()

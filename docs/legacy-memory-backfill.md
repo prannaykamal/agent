@@ -14,6 +14,8 @@ The importer is `src/memory/cognee_backfill.py`.
 
 ## Legacy Sources
 
+These tables exist only in databases created before cognee; new databases do not create them. The importer skips any table that is missing.
+
 | Table | Imported as | Kind |
 |---|---|---|
 | `facts` | `Fact about the user (<category>): <text>` | `facts` |

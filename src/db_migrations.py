@@ -44,16 +44,16 @@ def run_db_migrations(db_path: Path):
     current_version = row[0] if (row and row[0] is not None) else 0
 
     migrations = [
-        (1, "Initial schema: episodes, facts, skills, checkpoints, approval_requests"),
+        (1, "Initial schema: checkpoints, approval_requests"),
         (2, "Add Personal OS tables: tasks, scheduled_jobs, resource_locks, events_log, context_blocks"),
         (3, "Add loop_events step logger table"),
         (4, "Add real tool tables: calendar_events, emails, whatsapp_messages, telegram_messages"),
         (5, "Add session-based query indexes and formal tool_calls / tool_results tracking tables"),
         (6, "Add audit_logs table for medium/high risk operation security tracking"),
         (7, "Add idempotency_key and execution_status columns to approval_requests table"),
-        (8, "Add Phase X memory architecture schema foundations"),
+        (8, "Add memory runtime tables: memory_jobs, dead_letter_jobs, worker_heartbeats, summary_blocks"),
         (9, "Add durable cron scheduler tables"),
-        (10, "Add memory_entities index and backfill from facts"),
+        (10, "Re-ensure memory runtime tables (formerly memory_entities backfill)"),
     ]
 
     for ver, desc in migrations:
@@ -117,16 +117,16 @@ def run_db_migrations(db_path: Path):
                     pass
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_approval_idempotency ON approval_requests(idempotency_key);")
             elif ver == 8:
-                from src.memory.schema import create_phase_x_memory_schema
-                create_phase_x_memory_schema(conn)
+                from src.memory.schema import create_memory_schema
+                create_memory_schema(conn)
             elif ver == 9:
                 from src.personal_os.scheduler_store import create_scheduler_schema
                 create_scheduler_schema(conn)
             elif ver == 10:
                 # Formerly rebuilt the semantic entity index; long-term memory now lives in cognee.
-                from src.memory.schema import create_phase_x_memory_schema
+                from src.memory.schema import create_memory_schema
 
-                create_phase_x_memory_schema(conn)
+                create_memory_schema(conn)
 
             cursor.execute(
                 "INSERT INTO schema_migrations (version, description, applied_at) VALUES (?, ?, ?)",

@@ -192,9 +192,8 @@ def test_noop_worker_does_not_write_memory_behavior_tables(temp_db):
     repo = MemoryJobRepository(db_path=temp_db)
     repo.enqueue(_spec("no-memory-writes"))
     untouched = [
-        "facts",
-        "episodes",
         "summary_blocks",
+        "dead_letter_jobs",
     ]
     before = {table: _count(temp_db, table) for table in untouched}
 
@@ -203,7 +202,7 @@ def test_noop_worker_does_not_write_memory_behavior_tables(temp_db):
     assert {table: _count(temp_db, table) for table in untouched} == before
 
 
-def test_chat_still_works_when_worker_is_not_running(temp_db, fake_cognee, fake_jev):
+def test_chat_still_works_when_worker_is_not_running(temp_db, fake_cognee, fake_jev, stub_primary_llm):
     fake_jev.memory = {"should_store": True, "should_retrieve": False}
     response = client.post(
         "/api/chat",

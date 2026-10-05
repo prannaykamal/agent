@@ -28,39 +28,9 @@ def _create_tables(conn: sqlite3.Connection, db_path: Optional[Path] = None) -> 
 
     cursor = conn.cursor()
 
-    # 1. Episodic Memory (FTS5 Table)
-    cursor.execute("""
-        CREATE VIRTUAL TABLE IF NOT EXISTS episodes USING fts5(
-            session_id UNINDEXED,
-            timestamp UNINDEXED,
-            content,
-            tool_calls,
-            outcome
-        );
-    """)
-
-    # 2. Semantic Memory / Facts (FTS5 Table)
-    cursor.execute("""
-        CREATE VIRTUAL TABLE IF NOT EXISTS facts USING fts5(
-            category UNINDEXED,
-            fact_text,
-            source UNINDEXED,
-            confidence UNINDEXED,
-            created_at UNINDEXED
-        );
-    """)
-
-    # 3. Procedural Memory / Skills (Standard Table)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS skills (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT UNIQUE NOT NULL,
-            description TEXT,
-            trigger_keywords TEXT,
-            execution_steps TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-    """)
+    # Long-term memory lives in cognee. The pre-cognee episodes/facts/skills/
+    # pending_facts tables are not created; existing databases keep their rows
+    # for `python -m src.memory.cognee_backfill`.
 
     # 4. State Checkpoints (Standard Table for HITL & Resumability)
     cursor.execute("""
@@ -164,20 +134,6 @@ def _create_tables(conn: sqlite3.Connection, db_path: Optional[Path] = None) -> 
             sender TEXT NOT NULL,
             content TEXT NOT NULL,
             tokens INTEGER DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-    """)
-
-    # 13. Pending Facts Queue Table (Confidence Gate <= 0.90)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS pending_facts (
-            id TEXT PRIMARY KEY,
-            session_id TEXT NOT NULL,
-            category TEXT NOT NULL,
-            fact_text TEXT NOT NULL,
-            source TEXT,
-            confidence REAL DEFAULT 0.8,
-            explicit INTEGER DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
@@ -315,7 +271,7 @@ def _create_tables(conn: sqlite3.Connection, db_path: Optional[Path] = None) -> 
 
 
 def init_db(db_path: Optional[Path] = None) -> None:
-    """Initializes SQLite database tables including FTS5 search structures."""
+    """Initializes SQLite database tables and applies schema migrations."""
     conn = get_connection(db_path)
     conn.close()
 
@@ -354,5 +310,5 @@ def check_tool_call_consistency(db_path: Optional[Path] = None) -> dict:
 
 if __name__ == "__main__":
     init_db()
-    print("Database initialized successfully with FTS5 tables.")
+    print("Database initialized successfully.")
 

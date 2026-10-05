@@ -14,7 +14,7 @@ from src.memory.soul_loader import load_soul_prompt
 from src.memory.short_term import estimate_tokens, log_raw_turn, get_raw_turns
 from src.memory.summary_blocks import prepare_short_term_context_for_chat
 
-from src.memory.cognee_memory import get_cognee_memory
+from src.memory.cognee_memory import RecallResult, RecalledMemory, get_cognee_memory
 from src.memory.events import log_memory_event
 from src.memory.jev import get_jev_client
 
@@ -25,11 +25,11 @@ from src.tools.removed_tools import get_removed_tool_blocked_message, is_removed
 from src.tools.invocation import invoke_registered_tool
 from src.tools.policy import ToolCallerSource, evaluate_tool_policy
 from src.tools.registry_types import RiskClass
-from src.personal_os.checkpointing import checkpoint
+from src.personal_os.checkpointing import restore_checkpoint_state, save_checkpoint
 from src.harness.models import get_primary_llm
 from src.harness.llm_router import normalize_model_name, normalize_provider, resolve_primary_llm
 from src.harness.message_text import message_text
-from src.memory.jobs import enqueue_post_turn_memory_jobs
+from src.memory.jobs import enqueue_post_turn_memory_jobs, extract_latest_turn, is_turn_eligible_for_memory_enqueue
 
 logger = logging.getLogger(__name__)
 
@@ -239,7 +239,7 @@ def _log_removed_tool_block(session_id: str, tool_name: str, tool_args: Any, det
             details=details[:500],
         )
     except Exception:
-        pass
+        logger.warning("Failed to write removed-tool audit event", exc_info=True)
 
 def log_loop_event(session_id: str, step_index: int, step_type: str, reasoning: str = "", tool_name: str = "", tool_args: Any = None, tool_result: str = "") -> Dict[str, Any]:
     """Logs a loop step event into SQLite loop_events, tool_calls, and tool_results tables."""
@@ -283,7 +283,8 @@ def log_loop_event(session_id: str, step_index: int, step_type: str, reasoning: 
 
         publish({"type": "step", **event}, session_id=session_id)
     except Exception:
-        pass
+        # The live stream is best-effort; the event is already persisted above.
+        logger.debug("Loop event publish failed", exc_info=True)
     return event
 
 
@@ -369,11 +370,83 @@ def _error_category(error: Optional[str]) -> Optional[str]:
     return error.split(":", 1)[0] if error else None
 
 
-def node_memory_router(state: AgentState) -> dict:
-    """Node: asks Jev whether to store/retrieve, and injects main-graph memory only when retrieval is needed.
+# Per-turn state that must survive a HITL pause. It is saved in the approval's
+# checkpoint and restored on resume.
+# - memory_state: retrieval routing, so Jev's retrieval call and the cognee recall
+#   are not repeated, plus the original request text, so the post-answer storage
+#   decision and the stored turn use it rather than a chat approval reply ("yes").
+#   The storage decision itself is not saved: Jev makes it once, after the final
+#   answer, in node_consolidate of the resumed run.
+# - model_selection: the provider/model the user chose for the turn.
+_TURN_MEMORY_STATE_KEYS = (
+    "user_id",
+    "memory_retrieval_decision",
+    "retrieval_triggered",
+    "retrieved_memories",
+    "memory_turn_user_text",
+)
+_MODEL_SELECTION_KEYS = ("provider", "model_name", "secondary_provider", "secondary_model_name")
 
-    Short-term context (trimming + summaries) is handled earlier by manage_memory
-    and is never replaced by cognee.
+
+def _pick(source: Dict[str, Any], keys) -> Dict[str, Any]:
+    return {key: source.get(key) for key in keys if source.get(key) is not None}
+
+
+def _paused_turn_state(state: Dict[str, Any]) -> Dict[str, Any]:
+    memory_state = _pick(state, _TURN_MEMORY_STATE_KEYS)
+    memory_state.setdefault("memory_turn_user_text", _last_user_text(state.get("messages") or []) or None)
+    return {
+        "memory_state": {key: value for key, value in memory_state.items() if value is not None},
+        "model_selection": _pick(state, _MODEL_SELECTION_KEYS),
+    }
+
+
+def _restore_paused_turn_state(approval: Dict[str, Any]) -> Dict[str, Any]:
+    """State saved when the approval's turn paused; empty for older checkpoints."""
+    try:
+        restored = restore_checkpoint_state(str((approval or {}).get("checkpoint_id") or ""))
+    except Exception:
+        logger.exception("Could not restore HITL checkpoint")
+        return {}
+    saved = (restored or {}).get("state") or {}
+    memory_state = saved.get("memory_state")
+    model_selection = saved.get("model_selection")
+    return {
+        **(_pick(memory_state, _TURN_MEMORY_STATE_KEYS) if isinstance(memory_state, dict) else {}),
+        **(_pick(model_selection, _MODEL_SELECTION_KEYS) if isinstance(model_selection, dict) else {}),
+    }
+
+
+def _resumed_memory_route(state: AgentState, messages: List[BaseMessage]) -> dict:
+    """Approval resume: reuse the paused turn's routing and recall without calling Jev or cognee."""
+    retrieved = [item for item in state.get("retrieved_memories") or [] if isinstance(item, dict) and item.get("content")]
+    result = {
+        "messages": _replace_messages(messages),
+        "retrieval_triggered": bool(state.get("retrieval_triggered")),
+        "retrieved_memories": retrieved,
+        "memory_storage_decision": None,
+        "memory_retrieval_decision": state.get("memory_retrieval_decision"),
+    }
+    if not retrieved:
+        return result
+    recalled = RecallResult(
+        memories=[RecalledMemory(content=str(item["content"]), source=str(item.get("source") or "cognee")) for item in retrieved],
+        search_type="checkpoint",
+        available=True,
+    )
+    block = recalled.to_context_block(get_cognee_memory().config.retrieval_token_budget)
+    if block:
+        messages.append(SystemMessage(content=block))
+        result["messages"] = _replace_messages(messages)
+    return result
+
+
+def node_memory_router(state: AgentState) -> dict:
+    """Node: asks Jev whether long-term memory could help, and injects main-graph memory when it could.
+
+    Only retrieval is decided here. Whether to store the turn is decided after
+    the answer, in node_consolidate. Short-term context (trimming + summaries)
+    is handled earlier by manage_memory and is never replaced by cognee.
     """
     messages = list(state.get("messages", []))
     session_id = state.get("session_id", "default_session")
@@ -387,30 +460,30 @@ def node_memory_router(state: AgentState) -> dict:
     }
 
     # Approval resumes replay a turn that was already routed; no new user query, no Jev call.
-    if state.get("approval_status") in ("APPROVED", "REJECTED") or not last_user_msg:
+    if state.get("approval_status") in ("APPROVED", "REJECTED"):
+        return _resumed_memory_route(state, messages)
+    if not last_user_msg:
         return result
 
     memory = get_cognee_memory()
     config = memory.config
-    if not config.enabled or not (config.storage_enabled or config.retrieval_enabled):
+    if not (config.enabled and config.retrieval_enabled):
         return result
 
     user_id = state.get("user_id") or config.user_id
     query = str(last_user_msg)
-    decision = get_jev_client().decide_memory(query, _previous_assistant_text(messages))
-    should_store = decision.should_store and config.storage_enabled
-    should_retrieve = decision.should_retrieve and config.retrieval_enabled
-    common = {
-        "user_id": user_id,
-        "session_id": session_id,
-        "source": decision.source,
-        "latency_ms": decision.latency_ms,
-        "error_category": decision.error_category,
-    }
-    log_memory_event("memory.store.decision", decision=should_store, **common)
-    log_memory_event("memory.retrieve.decision", decision=should_retrieve, **common)
-    result["memory_storage_decision"] = {**decision.to_state(), "should_store": should_store}
-    result["memory_retrieval_decision"] = {**decision.to_state(), "should_retrieve": should_retrieve}
+    decision = get_jev_client().decide_retrieval(query, _previous_assistant_text(messages))
+    should_retrieve = decision.should_retrieve
+    log_memory_event(
+        "memory.retrieve.decision",
+        decision=should_retrieve,
+        user_id=user_id,
+        session_id=session_id,
+        source=decision.source,
+        latency_ms=decision.latency_ms,
+        error_category=decision.error_category,
+    )
+    result["memory_retrieval_decision"] = decision.to_state()
     if not should_retrieve:
         return result
 
@@ -672,6 +745,7 @@ def _pause_for_high_risk_tool(
     last_user_text: str = "",
     sibling_calls: Optional[List[Any]] = None,
     messages: Optional[List[Any]] = None,
+    turn_state: Optional[Dict[str, Any]] = None,
 ) -> dict:
     call = _bind_email_send_call(call, messages or [], session_id)
     detected_tool = _tool_call_name(call)
@@ -681,8 +755,7 @@ def _pause_for_high_risk_tool(
     if not batch:
         batch = [_normalize_tool_call(call)]
 
-    chk_res = checkpoint.invoke({"task_id": session_id})
-    checkpoint_id = chk_res.split("ID '")[1].split("' for task")[0] if "ID '" in chk_res else ""
+    checkpoint_id = save_checkpoint(session_id, dict(turn_state or {}))
     saved_args = dict(tool_args or {"input": last_user_text})
     saved_args["_tool_call_id"] = tool_call_id
     if len(batch) > 1:
@@ -753,6 +826,7 @@ def node_hitl_check(state: AgentState) -> dict:
             last_user_text,
             sibling_calls=batch,
             messages=messages,
+            turn_state=_paused_turn_state(state),
         )
 
     return {"pending_approval_id": None, "approval_status": "NONE"}
@@ -829,6 +903,7 @@ def node_tools(state: AgentState) -> dict:
                 events,
                 last_user_text,
                 messages=messages,
+                turn_state=_paused_turn_state(state),
             )
             held = f"Not executed: '{tname}' is waiting for human approval. {escalation}"
             events.append(
@@ -873,6 +948,7 @@ def node_tools(state: AgentState) -> dict:
                 last_user_text,
                 sibling_calls=_same_tool_high_risk_batch(tool_calls, tname),
                 messages=messages,
+                turn_state=_paused_turn_state(state),
             )
 
         attempted_nonblocked_tool = policy_decision and not policy_decision.blocked and not policy_decision.requires_approval
@@ -890,7 +966,7 @@ def node_tools(state: AgentState) -> dict:
                     details=result_str[:200]
                 )
             except Exception:
-                pass
+                logger.warning("Failed to write tool audit event for '%s'", tname, exc_info=True)
 
         # Store in formal tool_calls and tool_results tracking tables
         try:
@@ -908,7 +984,7 @@ def node_tools(state: AgentState) -> dict:
             conn.commit()
             conn.close()
         except Exception:
-            pass
+            logger.warning("Failed to record tool call/result for '%s'", tname, exc_info=True)
 
         evt_exec = log_loop_event(
             session_id=session_id,
@@ -944,16 +1020,47 @@ def node_tools(state: AgentState) -> dict:
         result["loop_events"] = hitl_pause.get("loop_events") or events
     return result
 
+def _post_turn_storage_decision(state: AgentState) -> Optional[Dict[str, Any]]:
+    """Ask Jev whether the completed turn (user message + final answer) is worth storing.
+
+    No call for turns that cannot be stored anyway (HITL-paused, rejected,
+    incomplete) or when cognee storage is disabled.
+    """
+    if not is_turn_eligible_for_memory_enqueue(state):
+        return None
+    config = get_cognee_memory().config
+    if not (config.enabled and config.storage_enabled):
+        return None
+    user_text, assistant_text = extract_latest_turn(state)
+    decision = get_jev_client().decide_storage(user_text or "", assistant_text or "")
+    log_memory_event(
+        "memory.store.decision",
+        decision=decision.should_store,
+        user_id=state.get("user_id") or config.user_id,
+        session_id=state.get("session_id", "default_session"),
+        source=decision.source,
+        latency_ms=decision.latency_ms,
+        error_category=decision.error_category,
+    )
+    return decision.to_state()
+
+
 def node_consolidate(state: AgentState) -> dict:
-    """Node: Enqueues durable memory jobs after completed turns without executing them."""
+    """Node: decides storage for the finished turn, then enqueues durable memory jobs without executing them."""
     if state.get("approval_status") in ("PENDING", "REJECTED"):
         return {"memory_job_ids": []}
 
     try:
-        results = enqueue_post_turn_memory_jobs(state)
-        return {"memory_job_ids": [result.job_id for result in results]}
+        storage_decision = _post_turn_storage_decision(state)
     except Exception:
-        return {"memory_job_ids": []}
+        logger.exception("Post-turn storage decision failed")
+        storage_decision = None
+    try:
+        results = enqueue_post_turn_memory_jobs({**state, "memory_storage_decision": storage_decision})
+        job_ids = [result.job_id for result in results]
+    except Exception:
+        job_ids = []
+    return {"memory_job_ids": job_ids, "memory_storage_decision": storage_decision}
 
 def should_continue(state: AgentState) -> str:
     """Conditional Edge: Determines whether to loop tool execution, pause for HITL, or end turn."""
@@ -1047,6 +1154,7 @@ def resume_graph_after_approval(request_id: str, decision: str) -> Dict[str, Any
         try:
             processed = process_approval_decision(request_id, "REJECTED")
         except Exception:
+            logger.exception("Could not mark blocked approval %s as REJECTED", request_id)
             processed = existing_request or {"tool_name": existing_tool_name, "session_id": "default_session"}
         session_id = processed.get("session_id", "default_session")
         raw_args = processed.get("tool_args_json", "{}")
@@ -1091,6 +1199,7 @@ def resume_graph_after_approval(request_id: str, decision: str) -> Dict[str, Any
             try:
                 processed = process_approval_decision(request_id, "REJECTED")
             except Exception:
+                logger.exception("Could not mark blocked approval %s as REJECTED", request_id)
                 processed = existing_request or {"tool_name": existing_tool_name, "session_id": "default_session"}
             _log_removed_tool_block(processed.get("session_id", "default_session"), existing_tool_name, policy_args, blocked_message)
             log_loop_event(
@@ -1123,6 +1232,7 @@ def resume_graph_after_approval(request_id: str, decision: str) -> Dict[str, Any
 
     batch_calls = _parse_approved_tool_batch(tool_name, tool_args)
     tool_args = batch_calls[0]["args"] if batch_calls else {}
+    paused_turn_state = _restore_paused_turn_state(existing_request)
 
     # Load existing turns to preserve full conversation context
     past_turns = get_raw_turns(session_id=session_id)
@@ -1182,6 +1292,7 @@ def resume_graph_after_approval(request_id: str, decision: str) -> Dict[str, Any
         ]
 
         resume_state = {
+            **paused_turn_state,
             "messages": resume_messages,
             "session_id": session_id,
             "approval_status": "APPROVED",
@@ -1217,6 +1328,7 @@ def resume_graph_after_approval(request_id: str, decision: str) -> Dict[str, Any
             for item in batch_calls
         ]
         resume_state = {
+            **paused_turn_state,
             "messages": history_messages + [
                 AIMessage(content="", tool_calls=[{"name": item["name"], "args": item["args"], "id": item["id"]} for item in batch_calls]),
                 *rejection_msgs,

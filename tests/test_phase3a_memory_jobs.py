@@ -29,7 +29,7 @@ def _cognee_enabled(fake_cognee):
     return fake_cognee
 
 
-def _state(user_text="Remember that I prefer concise plans.", assistant_text="Got it.", should_store=True):
+def _state(user_text="Remember that I prefer concise plans.", assistant_text="Got it.", should_store=True, memory=None):
     return {
         "messages": [HumanMessage(content=user_text), AIMessage(content=assistant_text)],
         "session_id": "phase3a-session",
@@ -42,7 +42,11 @@ def _state(user_text="Remember that I prefer concise plans.", assistant_text="Go
         "loop_count": 1,
         "approval_status": "NONE",
         "token_count": 17,
-        "memory_storage_decision": {"should_store": should_store, "source": "jev"},
+        "memory_storage_decision": {
+            "should_store": should_store,
+            "memory": (memory if memory is not None else f"The user said: {user_text}") if should_store else "",
+            "source": "jev",
+        },
     }
 
 
@@ -65,12 +69,14 @@ def test_job_id_and_idempotency_key_are_deterministic():
     assert spec_one.idempotency_key.startswith("memq:v1:memory_session_write:")
     assert spec_one.job_id.startswith("memjob_memory_session_write_")
 
-    changed = build_post_turn_memory_job_specs(_state(assistant_text="Different answer."))[0]
+    # The key follows the stored memory text, not the assistant's wording.
+    assert build_post_turn_memory_job_specs(_state(assistant_text="Different answer."))[0].idempotency_key == spec_one.idempotency_key
+    changed = build_post_turn_memory_job_specs(_state(memory="The user prefers detailed plans."))[0]
     assert changed.idempotency_key != spec_one.idempotency_key
 
 
 def test_post_turn_emits_one_session_write_when_jev_says_store():
-    specs = build_post_turn_memory_job_specs(_state(user_text="I prefer tea."))
+    specs = build_post_turn_memory_job_specs(_state(user_text="I prefer tea.", memory="The user prefers tea."))
 
     assert [spec.job_type for spec in specs] == ["memory_session_write"]
     payload = specs[0].payload
@@ -78,7 +84,8 @@ def test_post_turn_emits_one_session_write_when_jev_says_store():
     assert payload["source"] == "graph.post_turn"
     assert payload["session_id"] == "phase3a-session"
     assert payload["user_id"] == "default_user"
-    assert payload["text"] == "User: I prefer tea.\nAssistant: Got it."
+    # Only Jev's distilled memory is stored, never the transcript.
+    assert payload["text"] == "The user prefers tea."
 
 
 def test_post_turn_emits_nothing_when_jev_says_do_not_store():
@@ -86,13 +93,30 @@ def test_post_turn_emits_nothing_when_jev_says_do_not_store():
     assert build_post_turn_memory_job_specs({**_state(), "memory_storage_decision": None}) == []
 
 
-def test_post_turn_document_mentions_tools_used():
-    state = _state(user_text="Add a task to renew my passport.")
-    state["tools_used"] = ["create_task"]
+def test_assistant_suggestions_never_reach_the_stored_text():
+    state = _state(
+        user_text="I love to eat pizza.",
+        assistant_text="Try Jamie's Pizzeria or PizzaExpress at Elante Mall!",
+        memory="The user loves pizza.",
+    )
 
     [spec] = build_post_turn_memory_job_specs(state)
 
-    assert "Tools used to complete the request: create_task." in spec.payload["text"]
+    assert spec.payload["text"] == "The user loves pizza."
+    assert "Elante" not in spec.payload["text"] and "Assistant:" not in spec.payload["text"]
+
+
+def test_should_store_without_memory_text_stores_nothing():
+    assert build_post_turn_memory_job_specs(_state(memory="  ")) == []
+
+
+def test_offline_fallback_replies_are_never_stored():
+    offline = _state(
+        user_text="I love to eat pizza.",
+        assistant_text="[Gemini/gemini-3.8-flash Primary LLM (Offline)]: Processed request -> 'I love to eat pizza.'\n\nModel call failed: 429",
+    )
+
+    assert build_post_turn_memory_job_specs(offline) == []
 
 
 def test_hitl_pause_and_rejected_turns_are_not_ingested():

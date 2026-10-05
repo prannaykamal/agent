@@ -93,8 +93,10 @@ def test_unknown_provider_falls_back_to_openai_selector():
         config=_test_config(),
     )
 
+    from src.harness.llm_router import MODEL_PAIRS
+
     assert budget.provider == "openai"
-    assert budget.model_name == "gpt-4o"
+    assert budget.model_name == MODEL_PAIRS["openai"]["primary"]
     assert budget.context_window == 128000
 
 

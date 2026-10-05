@@ -1,3 +1,4 @@
+import logging
 import uuid
 import json
 import re
@@ -5,6 +6,8 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 from src.db import get_connection
 from src.tools.removed_tools import is_removed_tool_name, get_removed_tool_blocked_message
+
+logger = logging.getLogger(__name__)
 
 _AFFIRM_PHRASES = {
     "yes", "y", "yeah", "yep", "ok", "okay", "sure", "go ahead",
@@ -85,7 +88,7 @@ def create_approval_request(
                 row_dict["request_id"] = row_dict["id"]
                 return row_dict
         except Exception:
-            pass
+            logger.warning("Idempotency lookup for approval request failed", exc_info=True)
 
     request_id = f"req_{uuid.uuid4().hex[:8]}"
     args_json = json.dumps(tool_args)
@@ -124,7 +127,7 @@ def create_approval_request(
             db_path=db_path
         )
     except Exception:
-        pass
+        logger.warning("Failed to write HITL audit event", exc_info=True)
 
     return {
         "request_id": request_id,
@@ -238,7 +241,7 @@ def process_approval_decision(
                 db_path=db_path,
             )
         except Exception:
-            pass
+            logger.warning("Failed to write HITL audit event", exc_info=True)
         raise ValueError(blocked_message)
 
     if existing_status in ("APPROVED", "REJECTED", "EXECUTED"):
@@ -256,7 +259,7 @@ def process_approval_decision(
                 db_path=db_path
             )
         except Exception:
-            pass
+            logger.warning("Failed to write HITL audit event", exc_info=True)
 
         raise ValueError(f"Approval request '{request_id}' has already been processed with status '{existing_status}'. Duplicate execution blocked.")
 
@@ -306,7 +309,7 @@ def process_approval_decision(
                 db_path=db_path
             )
     except Exception:
-        pass
+        logger.warning("Failed to write HITL audit event", exc_info=True)
 
     return dict(updated_row)
 

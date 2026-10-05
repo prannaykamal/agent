@@ -50,6 +50,28 @@ Query parameters:
 
 Payloads are omitted by default. When included, payloads are redacted.
 
+## `GET /api/memory/observability/jobs/{job_id}`
+
+One job's status, for a client waiting on a specific job (the Chat page's **Save to memory now** button uses it). Returns `404` for an unknown id.
+
+```json
+{
+  "id": "memjob_memory_session_merge_…",
+  "job_type": "memory_session_merge",
+  "status": "SUCCEEDED",
+  "session_id": "Weekend Plans",
+  "attempt_count": 1,
+  "max_attempts": 3,
+  "last_error": null,
+  "result": {"processed": true, "merged": true, "outcome": "completed", "merged_write_count": 2},
+  "created_at": "2026-10-04 09:30:00",
+  "updated_at": "2026-10-04 09:30:07",
+  "completed_at": "2026-10-04 09:30:07"
+}
+```
+
+`result` contains only an allowlist of fields (`processed`, `merged`, `outcome`, `skipped`, `deferred`, `merged_write_count`, `documents_added`, `message`). Payloads are never returned, and `last_error` is truncated to 240 characters.
+
 ## `GET /api/memory/observability/workers`
 
 Query parameters:
@@ -156,5 +178,6 @@ These live outside `/observability` because they write or query memory:
 | `POST /api/memory/fact` | Queues a `cognee_ingest` job (straight to the main graph) |
 | `POST /api/memory/procedure` | Queues a `cognee_ingest` job (straight to the main graph) |
 | `POST /api/memory/sessions/{session_id}/merge` | Queues a forced `memory_session_merge`, skipping the idle wait |
+| `GET /api/memory/graph?max_nodes=300&include_documents=false` | Read-only main-graph snapshot for the Memory Graph tab: `{available, error, dataset_name, nodes, links, node_types}`; `max_nodes` is clamped to 10–1000 |
 
 Removed with the move to cognee: `/api/memory/observability/semantic`, `/api/memory/observability/semantic/consolidate`, `/api/memory/observability/procedural`, `/api/memory/observability/skills`, `/api/skills`, and `/api/memory/cognify`.

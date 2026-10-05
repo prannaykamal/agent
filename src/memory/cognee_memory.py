@@ -29,6 +29,7 @@ import inspect
 import logging
 import os
 import re
+import shutil
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -188,6 +189,33 @@ def cognee_model_settings(provider: Optional[str] = None) -> Dict[str, Dict[str,
     }
 
 
+def _require_edges_in_graph_extraction_schema() -> None:
+    """Make graph extraction ask the LLM for edges, not just nodes.
+
+    cognee's ``KnowledgeGraph`` declares ``nodes``/``edges`` with
+    ``default_factory=list``, so its JSON schema marks neither as required.
+    Providers with native structured output (Gemini receives it as
+    ``response_json_schema``) then treat ``edges`` as optional, and smaller
+    models such as gemini-3.5-flash-lite omit it entirely: every merged graph had
+    entities but no relationships. Marking both required in the generated schema
+    fixes that; parsing and validation of responses are unchanged.
+    """
+    try:
+        from cognee.shared.data_models import KnowledgeGraph  # noqa: PLC0415
+    except Exception:
+        logger.debug("cognee KnowledgeGraph unavailable; leaving extraction schema as is", exc_info=True)
+        return
+    if KnowledgeGraph.model_json_schema().get("required") and {"nodes", "edges"} <= set(KnowledgeGraph.model_json_schema()["required"]):
+        return
+
+    def _require(schema: Dict[str, Any]) -> None:
+        required = list(schema.get("required") or [])
+        schema["required"] = required + [field for field in ("nodes", "edges") if field not in required]
+
+    KnowledgeGraph.model_config["json_schema_extra"] = _require
+    KnowledgeGraph.model_rebuild(force=True)
+
+
 class _LoopThread:
     """One long-lived event loop so cognee's async engines stay bound to a single loop."""
 
@@ -318,6 +346,7 @@ class CogneeMemory:
             except Exception as exc:
                 self._init_error = f"cognee model configuration failed: {type(exc).__name__}: {exc}"
                 raise CogneeUnavailableError(self._init_error) from exc
+            _require_edges_in_graph_extraction_schema()
             self._cognee = cognee
             return cognee
 
@@ -491,7 +520,15 @@ class CogneeMemory:
         except Exception as exc:
             # A dataset nothing has been merged into yet is an empty graph, not an error.
             message = f"{type(exc).__name__}: {exc}".lower()
-            if type(exc).__name__ in {"NoDataError", "DatasetNotFoundError"} or "not found" in message or "no data" in message:
+            if (
+                type(exc).__name__ in {"NoDataError", "DatasetNotFoundError", "DatabaseNotCreatedError"}
+                or "not found" in message
+                or "no data" in message
+                # A fresh or reset store: nothing created yet, or (with access control on)
+                # a dataset that does not exist yet.
+                or "has not been created" in message
+                or "a dataset must be provided" in message
+            ):
                 return empty
             raise
         return _compact_graph(payload or {}, include_documents=include_documents, dataset_name=empty["dataset_name"])
@@ -499,14 +536,26 @@ class CogneeMemory:
     # -- maintenance -----------------------------------------------------
 
     def forget_all(self, timeout: Optional[float] = 300) -> None:
-        """Delete all cognee data and graph state for this deployment."""
+        """Delete all cognee data, graph, and session state for this deployment.
+
+        Run with the API and memory worker stopped. cognee's own forget/prune
+        leave the session vector index (``SessionQAVector``) behind when backend
+        access control is on, so the local store directories are removed as
+        well; cognee recreates them empty on next use.
+        """
         cognee = self._module()
-        forget = getattr(cognee, "forget", None)
-        if forget is not None:
-            self._run(forget(everything=True), timeout)
-            return
-        self._run(cognee.prune.prune_data(), timeout)
-        self._run(cognee.prune.prune_system(metadata=True), timeout)
+        try:
+            forget = getattr(cognee, "forget", None)
+            if forget is not None:
+                self._run(forget(everything=True), timeout)
+            else:
+                self._run(cognee.prune.prune_data(), timeout)
+                self._run(cognee.prune.prune_system(metadata=True), timeout)
+        except Exception:
+            logger.warning("cognee forget failed; removing the store directories anyway", exc_info=True)
+        data_dir = resolve_data_dir(self.config)
+        for store in ("system", "data"):
+            shutil.rmtree(data_dir / store, ignore_errors=True)
 
 
 # Pipeline bookkeeping cognee keeps in the graph: useful for debugging, noise in a knowledge view.

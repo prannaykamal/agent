@@ -43,10 +43,21 @@ Expected behavior:
 
 Recovery:
 
-1. Fix `LLM_API_KEY`, `EMBEDDING_API_KEY`, or the provider settings (they default to `OPENAI_API_KEY`).
+1. Fix the key for the active `AI_PROVIDER` (`GOOGLE_API_KEY` for gemini, `OPENAI_API_KEY` for openai); cognee uses that provider's models and key.
 2. Restart the API.
 3. Force-merge sessions whose merges dead-lettered: `POST /api/memory/sessions/<session_id>/merge`.
 4. Check `/api/memory/observability/long-term` for new `SUCCEEDED` merges.
+
+## Chat Model Overloaded Or Out Of Quota (Gemini Free Tier)
+
+Expected behavior:
+
+- The turn completes with an offline message that includes the provider error, for example `503 UNAVAILABLE` or `RESOURCE_EXHAUSTED`. Memory routing and stored memory are unaffected.
+
+Recovery:
+
+1. Resend the message after a short wait; `503` is usually transient.
+2. `RESOURCE_EXHAUSTED` means a rate or daily quota was hit. Wait for the quota to reset, use a lighter model (`PRIMARY_MODEL=gemini-3.5-flash`), or switch to a paid tier.
 
 ## Jev Unavailable Or Misbehaving
 

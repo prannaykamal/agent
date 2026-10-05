@@ -2,7 +2,9 @@
 
 import json
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
+from contextlib import contextmanager
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, SystemMessage
@@ -10,9 +12,18 @@ from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, Syst
 from src.db import init_db
 from src.harness.graph import build_agent_graph, node_consolidate, node_memory_router, node_tools
 from src.memory.cognee_memory import RETRIEVED_MEMORY_HEADER, get_cognee_memory, session_key
+from src.memory.config import JevConfig
+from src.memory.jev import JevClient, get_jev_client, set_jev_client
 from src.memory.worker import process_one_memory_job
 
-NOW = datetime(2026, 10, 4, 12, 0, 0)
+# Jobs are enqueued with SQLite's real datetime('now'), and the worker only claims
+# jobs whose available_at <= its clock. Anchor the test clock a day ahead of real
+# time so every enqueued job is claimable regardless of when the suite runs.
+NOW = (datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=1)).replace(minute=0, second=0, microsecond=0)
+
+
+def _sql_ts(value):
+    return value.strftime("%Y-%m-%d %H:%M:%S")
 
 
 @pytest.fixture
@@ -56,7 +67,7 @@ def _turn(db_path, session_id, at, sender="user", content="hi"):
         conn.close()
 
 
-def _completed_state(session_id, user_text, assistant_text, *, should_store, tools_used=()):
+def _completed_state(session_id, user_text, assistant_text, *, tools_used=()):
     return {
         "messages": [HumanMessage(content=user_text), AIMessage(content=assistant_text)],
         "session_id": session_id,
@@ -65,7 +76,6 @@ def _completed_state(session_id, user_text, assistant_text, *, should_store, too
         "model_name": "gpt-4o-mini",
         "tools_used": list(tools_used),
         "loop_count": 1,
-        "memory_storage_decision": {"should_store": should_store, "source": "jev"},
     }
 
 
@@ -80,9 +90,23 @@ def _work(db_path, clock, steps=5):
     return results
 
 
+@contextmanager
+def _jev_storing(memory):
+    """Jev answers should_store=true with ``memory`` as the distilled text, whatever the test's Jev is."""
+    previous = get_jev_client()
+    answer = json.dumps({"should_store": True, "memory": memory})
+    set_jev_client(JevClient(config=JevConfig(endpoint="http://jev.test/v1", model="jev-test"), completion_fn=lambda messages: answer))
+    try:
+        yield
+    finally:
+        set_jev_client(previous)
+
+
 def _store_turn(db_path, clock, session_id, user_text, assistant_text="Noted."):
+    """Store a turn whose distilled memory is the user's own statement."""
     _turn(db_path, session_id, clock["now"], "user", user_text)
-    node_consolidate(_completed_state(session_id, user_text, assistant_text, should_store=True))
+    with _jev_storing(user_text):
+        node_consolidate(_completed_state(session_id, user_text, assistant_text))
     return _work(db_path, clock)
 
 
@@ -104,13 +128,10 @@ def _memory_blocks(messages):
 
 def test_should_store_false_adds_nothing_to_session_memory(temp_db, fake_cognee, fake_jev, clock):
     fake_jev.memory = {"should_store": False, "should_retrieve": False}
-    routed = _route("What is the capital of France?")
 
-    state = {**_completed_state("s1", "What is the capital of France?", "Paris.", should_store=False), **routed}
-    state["messages"] = [HumanMessage(content="What is the capital of France?"), AIMessage(content="Paris.")]
-    result = node_consolidate(state)
+    result = node_consolidate(_completed_state("s1", "What is the capital of France?", "Paris."))
 
-    assert routed["memory_storage_decision"]["should_store"] is False
+    assert result["memory_storage_decision"]["should_store"] is False
     assert result["memory_job_ids"] == []
     assert _jobs(temp_db, "memory_session_write") == []
     assert fake_cognee.sessions == {}
@@ -118,20 +139,19 @@ def test_should_store_false_adds_nothing_to_session_memory(temp_db, fake_cognee,
 
 def test_should_store_true_writes_turn_to_the_session_graph(temp_db, fake_cognee, fake_jev, clock):
     fake_jev.memory = {"should_store": True, "should_retrieve": False}
-    routed = _route("Remember that I prefer short responses.")
-    assert routed["memory_storage_decision"]["should_store"] is True
 
     steps = _store_turn(temp_db, clock, "s1", "Remember that I prefer short responses.", "Got it, short responses.")
 
     key = session_key("default_user", "s1")
     assert [step.job_type for step in steps] == ["memory_session_write"]
-    assert fake_cognee.sessions[key] == ["User: Remember that I prefer short responses.\nAssistant: Got it, short responses."]
+    # Only the distilled memory is written, never the "User: ... Assistant: ..." transcript.
+    assert fake_cognee.sessions[key] == ["Remember that I prefer short responses."]
     assert fake_cognee.remember_calls[-1] == {"dataset_name": "ivo_memory", "session_id": key, "self_improvement": False}
     # Nothing reaches the main graph until the session is idle.
     assert fake_cognee.graph == {}
     [merge] = _jobs(temp_db, "memory_session_merge")
     assert merge["status"] == "QUEUED"
-    assert merge["available_at"] == "2026-10-04 12:30:00"
+    assert merge["available_at"] == _sql_ts(NOW + timedelta(minutes=30))
 
 
 def test_multiple_queries_share_one_session_graph(temp_db, fake_cognee, clock):
@@ -167,7 +187,7 @@ def test_active_conversation_defers_the_merge(temp_db, fake_cognee, clock):
     assert fake_cognee.improve_calls == []
     merges = _jobs(temp_db, "memory_session_merge")
     assert json.loads(merges[0]["result_json"])["deferred"] is True
-    assert merges[-1]["status"] == "QUEUED" and merges[-1]["available_at"] == "2026-10-04 12:50:00"
+    assert merges[-1]["status"] == "QUEUED" and merges[-1]["available_at"] == _sql_ts(NOW + timedelta(minutes=50))
 
     clock["now"] = NOW + timedelta(minutes=51)
     _work(temp_db, clock)
@@ -270,16 +290,42 @@ def test_sessions_are_never_searched_before_merge(temp_db, fake_cognee, fake_jev
 
 def test_trivial_messages_skip_jev_entirely(temp_db, fake_cognee, fake_jev):
     for text in ["hello", "thanks", "17 * 23"]:
-        result = _route(text)
-        assert result["memory_storage_decision"]["source"] == "rule"
+        assert _route(text)["memory_retrieval_decision"]["source"] == "rule"
+        assert node_consolidate(_completed_state("s1", text, "Hi!"))["memory_storage_decision"]["source"] == "rule"
     assert fake_jev.calls == []
+
+
+def test_retrieval_and_storage_are_separate_jev_calls(temp_db, fake_cognee, fake_jev):
+    fake_jev.memory = {"should_store": True, "should_retrieve": True}
+
+    routed = _route("I moved to Berlin last month.")
+    assert routed["memory_storage_decision"] is None
+    assert routed["memory_retrieval_decision"]["should_retrieve"] is True
+    assert [call["kind"] for call in fake_jev.calls] == ["retrieve"]
+    assert "Assistant reply" not in fake_jev.calls[0]["user"]
+
+    stored = node_consolidate(_completed_state("s1", "I moved to Berlin last month.", "Noted, Berlin it is."))
+    assert stored["memory_storage_decision"]["should_store"] is True
+    assert [call["kind"] for call in fake_jev.calls] == ["retrieve", "store"]
+    assert "Assistant reply: Noted, Berlin it is." in fake_jev.calls[1]["user"]
+
+
+def test_retrieval_prompt_favors_recall_and_storage_prompt_sees_the_answer():
+    from src.memory.jev import RETRIEVAL_DECISION_PROMPT, STORAGE_DECISION_PROMPT
+
+    assert "When unsure, answer true" in RETRIEVAL_DECISION_PROMPT
+    assert '"What is the capital of France?" -> {"should_retrieve": false}' in RETRIEVAL_DECISION_PROMPT
+    assert '"Any ideas for the weekend?" -> {"should_retrieve": true}' in RETRIEVAL_DECISION_PROMPT
+    assert "should_store" not in RETRIEVAL_DECISION_PROMPT
+    assert "should_retrieve" not in STORAGE_DECISION_PROMPT
+    assert "assistant's final reply" in STORAGE_DECISION_PROMPT
 
 
 def test_approval_resume_does_not_call_jev_again(temp_db, fake_cognee, fake_jev):
     result = node_memory_router({"messages": [HumanMessage(content="Book it")], "session_id": "s1", "approval_status": "APPROVED"})
 
     assert fake_jev.calls == []
-    assert result["memory_storage_decision"] is None
+    assert result["memory_retrieval_decision"] is None
 
 
 def test_disabled_flags_skip_jev_and_cognee(temp_db, fake_cognee, fake_jev, monkeypatch):
@@ -294,17 +340,30 @@ def test_disabled_flags_skip_jev_and_cognee(temp_db, fake_cognee, fake_jev, monk
     assert result["retrieval_triggered"] is False
 
 
-def test_storage_flag_off_blocks_session_writes_even_if_jev_says_store(temp_db, fake_cognee, fake_jev, monkeypatch):
+def test_storage_flag_off_skips_the_storage_call_and_session_writes(temp_db, fake_cognee, fake_jev, monkeypatch):
     from dataclasses import replace
 
     memory = get_cognee_memory()
     monkeypatch.setattr(memory, "config", replace(memory.config, storage_enabled=False))
     fake_jev.memory = {"should_store": True, "should_retrieve": False}
 
-    routed = _route("Remember that I prefer short responses.")
+    result = node_consolidate(_completed_state("s1", "Remember that I prefer short responses.", "Got it."))
 
-    assert routed["memory_storage_decision"]["should_store"] is False
-    assert node_consolidate({**_completed_state("s1", "x", "y", should_store=True), "memory_storage_decision": routed["memory_storage_decision"]})["memory_job_ids"] == []
+    assert result["memory_job_ids"] == []
+    assert result["memory_storage_decision"] is None
+    assert fake_jev.calls == []
+
+
+def test_retrieval_flag_off_skips_the_retrieval_call(temp_db, fake_cognee, fake_jev, monkeypatch):
+    from dataclasses import replace
+
+    memory = get_cognee_memory()
+    monkeypatch.setattr(memory, "config", replace(memory.config, retrieval_enabled=False))
+
+    result = _route("What email provider do I normally use?")
+
+    assert result["memory_retrieval_decision"] is None
+    assert fake_jev.calls == [] and fake_cognee.search_calls == []
 
 
 # --- Context management stays in charge ---------------------------------------
@@ -418,22 +477,26 @@ def test_escalated_call_runs_after_human_approval(temp_db, fake_jev, monkeypatch
 def test_jev_failure_falls_back_to_retrieve_without_storing(temp_db, fake_cognee, fake_jev):
     fake_jev.fail = True
 
-    result = _route("What email provider do I normally use?")
+    retrieval = _route("What email provider do I normally use?")["memory_retrieval_decision"]
+    storage = node_consolidate(_completed_state("s1", "My email provider is Fastmail.", "Noted."))["memory_storage_decision"]
 
-    decision = result["memory_storage_decision"]
-    assert decision["source"] == "fallback" and decision["error_category"] == "TimeoutError"
-    assert decision["should_store"] is False
-    assert result["memory_retrieval_decision"]["should_retrieve"] is True
+    assert retrieval["source"] == "fallback" and retrieval["error_category"] == "TimeoutError"
+    assert retrieval["should_retrieve"] is True
+    assert storage["source"] == "fallback" and storage["error_category"] == "TimeoutError"
+    assert storage["should_store"] is False
 
 
-@pytest.mark.parametrize("raw", ["not json", '{"should_store": "yes", "should_retrieve": true}', "[true, false]"])
+@pytest.mark.parametrize("raw", ["not json", '{"should_store": "yes", "should_retrieve": "yes"}', "[true, false]"])
 def test_malformed_jev_output_is_rejected_safely(temp_db, fake_cognee, fake_jev, raw):
     fake_jev.raw = raw
 
-    decision = _route("What email provider do I normally use?")["memory_storage_decision"]
+    retrieval = _route("What email provider do I normally use?")["memory_retrieval_decision"]
+    result = node_consolidate(_completed_state("s1", "My email provider is Fastmail.", "Noted."))
 
-    assert decision["source"] == "fallback"
-    assert decision["should_store"] is False
+    assert retrieval["source"] == "fallback" and retrieval["should_retrieve"] is True
+    assert result["memory_storage_decision"]["source"] == "fallback"
+    assert result["memory_storage_decision"]["should_store"] is False
+    assert result["memory_job_ids"] == []
 
 
 def test_cognee_retrieval_failure_does_not_break_the_turn(temp_db, fake_cognee, fake_jev, monkeypatch):
@@ -507,11 +570,11 @@ def test_concurrent_sessions_stay_isolated(temp_db, fake_cognee, clock):
     _work(temp_db, clock)
 
     alpha, beta = session_key("default_user", "alpha"), session_key("default_user", "beta")
-    assert fake_cognee.sessions[alpha] == ["User: Alpha project uses Rust.\nAssistant: Noted."]
-    assert fake_cognee.sessions[beta] == ["User: Beta project uses Go.\nAssistant: Noted."]
+    assert fake_cognee.sessions[alpha] == ["Alpha project uses Rust."]
+    assert fake_cognee.sessions[beta] == ["Beta project uses Go."]
     # Only the idle session merged; the still-active one was deferred.
     assert fake_cognee.improve_calls == [{"dataset": "ivo_memory", "session_ids": [alpha]}]
-    assert fake_cognee.graph["ivo_memory"] == ["User: Alpha project uses Rust.\nAssistant: Noted."]
+    assert fake_cognee.graph["ivo_memory"] == ["Alpha project uses Rust."]
 
 
 def test_session_keys_are_scoped_by_user_and_collision_safe():

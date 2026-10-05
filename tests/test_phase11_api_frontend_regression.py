@@ -34,8 +34,9 @@ def test_data_table_endpoint_shape_includes_phase_tables(tmp_path, monkeypatch):
 
     tables = client.get("/api/data/tables").json()["tables"]
     assert "memory_jobs" in tables
-    assert "structured_episodes" in tables
-    assert "skill_versions" in tables
+    assert "summary_blocks" in tables
+    assert "structured_episodes" not in tables
+    assert "skill_versions" not in tables
 
     table = client.get("/api/data/table/memory_jobs")
     assert table.status_code == 200

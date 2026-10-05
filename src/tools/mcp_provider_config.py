@@ -1,4 +1,5 @@
 import json
+import re
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
@@ -218,6 +219,30 @@ def collect_mcp_secret_values(value: Any, *, key: str = "") -> Tuple[str, ...]:
     return tuple(deduped)
 
 
+# Credential-shaped substrings that may appear in provider errors even when the
+# value is not one of the configured secrets. Only the value is replaced, so the
+# rest of the error stays readable for the operator.
+_CREDENTIAL_PATTERNS = (
+    (re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}"), r"\1 [REDACTED]"),
+    (
+        re.compile(
+            r"(?i)\b(authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret"
+            r"|token|secret|password|passwd)(\"?\s*[:=]\s*\"?)(?!\[REDACTED\])[^\s\"',;&}]+"
+        ),
+        r"\1\2[REDACTED]",
+    ),
+    (re.compile(r"(?i)(://)[^/\s:@]+:[^/\s@]+@"), r"\1[REDACTED]@"),
+    (re.compile(r"\b(?:sk|pk|rk)-[A-Za-z0-9_-]{16,}|\bya29\.[A-Za-z0-9._-]{10,}|\bgh[pousr]_[A-Za-z0-9]{20,}|\bxox[abpr]-[A-Za-z0-9-]{10,}"), "[REDACTED]"),
+    (re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"), "[REDACTED]"),
+)
+
+
+def _scrub_credential_patterns(text: str) -> str:
+    for pattern, replacement in _CREDENTIAL_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text
+
+
 def redact_observability_text(
     value: Optional[str],
     *,
@@ -230,6 +255,7 @@ def redact_observability_text(
     for secret_value in sorted(set(extra_values), key=len, reverse=True):
         if _is_redaction_candidate(secret_value):
             text = text.replace(str(secret_value), "[REDACTED]")
+    text = _scrub_credential_patterns(text)
     if len(text) > limit:
         return text[:limit] + "..."
     return text

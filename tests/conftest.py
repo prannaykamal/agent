@@ -16,6 +16,46 @@ _ISOLATED_PROVIDER_ENV = (
     "JEV_API_KEY",
 )
 
+# Real LLM keys and LangSmith tracing from .env would make chat-path tests call paid
+# providers (slow, flaky, billed). Stripped unless RUN_LIVE_PROVIDER_TESTS=1.
+_LIVE_LLM_ENV = (
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "GOOGLE_API_KEY",
+    "XAI_API_KEY",
+    "LANGCHAIN_API_KEY",
+)
+
+
+@pytest.fixture(autouse=True)
+def isolate_live_llm_env(monkeypatch):
+    import os
+
+    if os.getenv("RUN_LIVE_PROVIDER_TESTS") == "1":
+        yield
+        return
+    for key in _LIVE_LLM_ENV:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("LANGCHAIN_TRACING_V2", "false")
+    yield
+
+
+@pytest.fixture(autouse=True)
+def isolate_agent_workspace(monkeypatch, tmp_path_factory):
+    """Never let a test read or write the real .agent workspace.
+
+    Backup/restore, startup, and cognee resolve SOUL.md, MEMORY.md, SKILL.md,
+    .agent/backups, and the cognee store from src.config at call time; point them
+    all at a throwaway directory. Tests that need specific paths patch them again.
+    """
+    agent_dir = tmp_path_factory.mktemp("isolated_agent")
+    monkeypatch.setattr("src.config.AGENT_DIR", agent_dir)
+    monkeypatch.setattr("src.config.SOUL_PATH", agent_dir / "SOUL.md")
+    monkeypatch.setattr("src.config.MEMORY_PATH", agent_dir / "MEMORY.md")
+    monkeypatch.setattr("src.config.SKILL_PATH", agent_dir / "SKILL.md")
+    monkeypatch.delenv("MEMORY_COGNEE_DATA_DIR", raising=False)
+    yield
+
 
 @pytest.fixture(autouse=True)
 def isolate_default_database(monkeypatch, tmp_path_factory):
@@ -123,7 +163,12 @@ class FakeCogneeModule:
 
 
 class FakeJev:
-    """Controllable Jev: set .memory / .tool to the JSON the model should return, or .fail to raise."""
+    """Controllable Jev: set .memory / .tool to the JSON the model should return, or .fail to raise.
+
+    ``.memory`` answers both memory calls (retrieval before the answer, storage after it);
+    each call reads only its own key. For storage, set ``"memory"`` to the distilled text
+    Jev should return; by default it is the user's message. ``calls`` records kind "retrieve", "store", or "tool".
+    """
 
     def __init__(self):
         self.memory = {"should_store": False, "should_retrieve": False}
@@ -136,13 +181,27 @@ class FakeJev:
         import json
 
         prompt = messages[0]["content"]
-        kind = "tool" if "tool calls" in prompt else "memory"
+        if "tool calls" in prompt:
+            kind = "tool"
+        elif "memory curator" in prompt:
+            kind = "store"
+        else:
+            kind = "retrieve"
         self.calls.append({"kind": kind, "user": messages[-1]["content"]})
         if self.fail:
             raise TimeoutError("jev endpoint timed out")
         if self.raw is not None:
             return self.raw
-        return json.dumps(self.tool if kind == "tool" else self.memory)
+        if kind == "tool":
+            return json.dumps(self.tool)
+        if kind == "store":
+            answer = dict(self.memory)
+            if answer.get("should_store") and "memory" not in answer:
+                # Default distilled memory: the user's own message, never the assistant reply.
+                user_line = messages[-1]["content"].split("\n", 1)[0]
+                answer["memory"] = user_line.removeprefix("User message: ").strip()
+            return json.dumps(answer)
+        return json.dumps(self.memory)
 
 
 @pytest.fixture(autouse=True)
@@ -183,3 +242,35 @@ def fake_jev():
     fake = FakeJev()
     set_jev_client(JevClient(config=JevConfig(endpoint="http://jev.test/v1", model="jev-test"), completion_fn=fake))
     return fake
+
+
+@pytest.fixture
+def stub_primary_llm(monkeypatch):
+    """A primary LLM that always answers ``.reply`` (no tool calls).
+
+    The suite runs without real keys, so an unstubbed graph turn gets the offline
+    fallback reply, which is never stored in memory. Use this when a test needs a
+    normal completed turn.
+    """
+    from typing import Any, List, Optional
+
+    from langchain_core.language_models.chat_models import BaseChatModel
+    from langchain_core.messages import AIMessage
+    from langchain_core.outputs import ChatGeneration, ChatResult
+
+    class _StubLLM(BaseChatModel):
+        reply: str = "Noted."
+
+        def _generate(self, messages: List[Any], stop: Optional[List[str]] = None, run_manager: Any = None, **kwargs: Any) -> ChatResult:
+            return ChatResult(generations=[ChatGeneration(message=AIMessage(content=self.reply))])
+
+        def bind_tools(self, tools: Any, **kwargs: Any) -> Any:
+            return self
+
+        @property
+        def _llm_type(self) -> str:
+            return "stub_primary"
+
+    llm = _StubLLM()
+    monkeypatch.setattr("src.harness.graph.get_primary_llm", lambda **kwargs: (llm, 128000))
+    return llm

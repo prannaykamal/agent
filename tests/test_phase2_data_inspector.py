@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 
 from src.api.server import app
 from src.db import init_db
-from src.memory.schema import PHASE_X_MEMORY_TABLES
+from src.memory.schema import MEMORY_TABLES
 
 
 client = TestClient(app)
@@ -22,11 +22,11 @@ def test_data_inspector_lists_phase2_tables(temp_db):
 
     assert response.status_code == 200
     tables = set(response.json()["tables"])
-    assert set(PHASE_X_MEMORY_TABLES).issubset(tables)
+    assert set(MEMORY_TABLES).issubset(tables)
 
 
 def test_data_inspector_reads_phase2_tables(temp_db):
-    for table_name in PHASE_X_MEMORY_TABLES:
+    for table_name in MEMORY_TABLES:
         response = client.get(f"/api/data/table/{table_name}")
 
         assert response.status_code == 200

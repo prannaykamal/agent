@@ -36,14 +36,19 @@ def test_t6_discovery_failure_is_redacted_and_non_fatal(tmp_path):
     statuses = get_mcp_provider_statuses(
         config_path=config_file,
         refresh=True,
-        client_factory=lambda _provider: FakeMCPClient(RuntimeError("authorization token should not leak")),
+        client_factory=lambda _provider: FakeMCPClient(
+            RuntimeError("401 from server: Authorization: Bearer ya29.leakedAccessToken123 rejected, refresh_token=1//leakedRefresh456")
+        ),
     )
     gmail = {status["provider_id"]: status for status in statuses}["gmail"]
 
     assert gmail["availability_status"] == "unavailable"
     assert gmail["discovery_status"] == MCPDiscoveryStatus.FAILED.value
-    assert gmail["last_error"] == "[REDACTED]"
-    assert "should not leak" not in str(gmail)
+    # Credentials are scrubbed; the rest of the error stays readable for the operator.
+    assert "leakedAccessToken123" not in str(gmail)
+    assert "leakedRefresh456" not in str(gmail)
+    assert gmail["last_error"].startswith("401 from server")
+    assert "[REDACTED]" in gmail["last_error"]
 
 
 def test_t6_unsupported_transport_is_unavailable_without_startup_failure(tmp_path):
