@@ -63,8 +63,7 @@ def test_background_worker_scheduled_jobs(temp_db):
 
 def test_export_agent_backup(temp_db, tmp_path, monkeypatch):
     out_dir = tmp_path / "backups"
-    monkeypatch.setattr("src.personal_os.backup.DB_PATH", temp_db)
-    
+    # Backups read src.db.DB_PATH at call time, which temp_db already points here.
     res = export_agent_backup(out_dir)
     assert res["status"] == "SUCCESS"
     assert Path(res["backup_path"]).exists()

@@ -6,10 +6,12 @@
 python -m pytest -q
 ```
 
-The chat-path tests run the real graph, so with real keys in `.env` they contact providers and LangSmith. To keep the suite fully offline, blank the keys for the run:
+The suite runs offline by default: `tests/conftest.py` strips LLM API keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `XAI_API_KEY`), `LANGCHAIN_API_KEY`, the Jev endpoint, and messaging-provider tokens for every test and turns LangSmith tracing off, so keys in your local `.env` are never used. Chat-path tests that do not stub the LLM get the offline fallback reply.
+
+The real-provider smoke tests in `tests/test_p7_product_readiness.py` make paid API calls. They, and any test that should see your real keys, run only when you opt in:
 
 ```bash
-OPENAI_API_KEY= ANTHROPIC_API_KEY= GOOGLE_API_KEY= XAI_API_KEY= LANGCHAIN_API_KEY= LANGCHAIN_TRACING_V2=false python -m pytest -q
+RUN_LIVE_PROVIDER_TESTS=1 python -m pytest tests/test_p7_product_readiness.py -k real_provider -q
 ```
 
 ## Phase 11 Focused Suite
@@ -60,7 +62,7 @@ Use `monkeypatch` to patch:
 - `src.db.DB_PATH`
 - LLM router resolution helpers.
 
-Do not use the real user `.agent` directory in tests.
+Do not use the real user `.agent` directory in tests. `tests/conftest.py` enforces the database part: the autouse `isolate_default_database` fixture points `src.db.DB_PATH` at a fresh temporary database for every test, so a test that forgets to patch it writes to a throwaway file instead of `.agent/state.db`. Tests that need a specific database still patch it themselves. The same conftest also clears `AI_PROVIDER` and the `JEV_*` settings, so a local `.env` cannot change test behaviour; tests that need a provider set it with `monkeypatch.setenv`.
 
 ## cognee In Tests
 
@@ -77,6 +79,11 @@ Seed knowledge through the real adapter so the loop thread and kwarg filtering a
 ```python
 get_cognee_memory().remember_permanent(["Fact about the user (profile): prefers pytest"])
 ```
+
+## Provider Switch And Gemini Content
+
+- `tests/test_ai_provider_switch.py` covers `AI_PROVIDER` defaults, explicit overrides, model/provider pairing, chat API defaults, retired Gemini names, and Jev key selection.
+- `tests/test_message_text.py` covers plain-text extraction from Gemini-style content blocks, including the chat API response and stored chat turns.
 
 ## Fake LLM Guidance
 

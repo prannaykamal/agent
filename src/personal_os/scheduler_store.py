@@ -407,9 +407,16 @@ class ToolScheduleRepository:
         conn.close()
         return self.get_schedule(schedule.id)
 
-    def mirror_legacy_scheduled_job(self, schedule: ToolScheduleRecord) -> None:
+    def mirror_legacy_scheduled_job(self, schedule: ToolScheduleRecord, legacy_task_payload: Optional[str] = None) -> None:
+        """Mirror a schedule into the legacy scheduled_jobs table.
+
+        ``legacy_task_payload`` is the caller's original payload text; it is kept
+        out of ``target_payload`` because that dict is passed to the tool as arguments.
+        """
         legacy_value = schedule.run_at or schedule.cron_expression or schedule.next_run_at or ""
-        legacy_payload = schedule.target_payload.get("legacy_task_payload") if isinstance(schedule.target_payload, dict) else None
+        legacy_payload = legacy_task_payload
+        if legacy_payload is None and isinstance(schedule.target_payload, dict):
+            legacy_payload = schedule.target_payload.get("legacy_task_payload")
         if legacy_payload is None:
             legacy_payload = json.dumps(schedule.target_payload)
         conn = get_connection(self.db_path)

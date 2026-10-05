@@ -167,16 +167,9 @@ def test_summary_handler_does_not_write_unrelated_memory_tables(temp_db, monkeyp
     _insert_turn(temp_db, "t2", "assistant", "B")
     monkeypatch.setattr("src.memory.job_handlers._resolve_secondary_route", lambda payload: _route(FakeLLM()))
     unrelated = [
-        "facts",
-        "episodes",
-        "pending_fact_candidates",
-        "structured_episodes",
-        "semantic_embeddings",
-        "semantic_dedup_events",
-        "consolidation_runs",
-        "skill_candidates",
-        "skill_versions",
-        "skill_usage_stats",
+        "dead_letter_jobs",
+        "checkpoints",
+        "approval_requests",
     ]
     before = {table: _count(temp_db, table) for table in unrelated}
 

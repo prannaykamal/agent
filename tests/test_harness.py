@@ -14,7 +14,7 @@ def temp_db(tmp_path):
     init_db(db_file)
     return db_file
 
-def test_db_initialization_keeps_legacy_tables_for_backfill(temp_db):
+def test_db_initialization_skips_legacy_memory_tables(temp_db):
     # Verify tables created
     conn = sqlite3.connect(str(temp_db))
     cursor = conn.cursor()
@@ -22,9 +22,9 @@ def test_db_initialization_keeps_legacy_tables_for_backfill(temp_db):
     tables = [row[0] for row in cursor.fetchall()]
     conn.close()
 
-    assert "episodes" in tables
-    assert "facts" in tables
-    assert "skills" in tables
+    assert "episodes" not in tables
+    assert "facts" not in tables
+    assert "skills" not in tables
     assert "checkpoints" in tables
 
 def test_soul_loader(tmp_path):

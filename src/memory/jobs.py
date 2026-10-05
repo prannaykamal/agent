@@ -30,6 +30,9 @@ PHASE_5B_CREATED_BY = "phase_5b_summary_enqueue"
 COGNEE_CREATED_BY = "cognee_memory_enqueue"
 
 _HITL_PAUSE_PREFIX = "[HUMAN APPROVAL REQUIRED"
+# The fallback reply src.harness.graph._offline_ai_message produces when the primary
+# LLM call fails ("[Gemini/<model> Primary LLM (Offline)]: ..."). Never memory.
+OFFLINE_REPLY_MARKER = "Primary LLM (Offline)]:"
 _SUMMARY_JOB_TYPE: MemoryJobType = "summary_generation"
 _COGNEE_INGEST_JOB_TYPE: MemoryJobType = "cognee_ingest"
 _SESSION_WRITE_JOB_TYPE: MemoryJobType = "memory_session_write"
@@ -207,7 +210,9 @@ def enqueue_summary_generation_job(
 
 def extract_latest_turn(state: AgentState) -> Tuple[Optional[str], Optional[str]]:
     messages = list(state.get("messages") or [])
-    user_text = next(
+    # A HITL resume carries the paused turn's request; the latest human message may
+    # only be the chat approval reply ("yes").
+    user_text = str(state.get("memory_turn_user_text") or "").strip() or next(
         (str(message.content) for message in reversed(messages) if isinstance(message, HumanMessage) and str(message.content).strip()),
         None,
     )
@@ -222,6 +227,11 @@ def _is_hitl_pause(assistant_text: Optional[str]) -> bool:
     return bool(assistant_text and assistant_text.strip().startswith(_HITL_PAUSE_PREFIX))
 
 
+def _is_offline_reply(assistant_text: Optional[str]) -> bool:
+    first_line = (assistant_text or "").strip().split("\n", 1)[0]
+    return first_line.startswith("[") and OFFLINE_REPLY_MARKER in first_line
+
+
 def is_turn_eligible_for_memory_enqueue(state: AgentState) -> bool:
     approval_status = (state.get("approval_status") or "").upper()
     if approval_status in {"PENDING", "REJECTED"}:
@@ -231,6 +241,8 @@ def is_turn_eligible_for_memory_enqueue(state: AgentState) -> bool:
     if not user_text or not assistant_text:
         return False
     if _is_hitl_pause(assistant_text):
+        return False
+    if _is_offline_reply(assistant_text):
         return False
 
     return True
@@ -307,20 +319,6 @@ def _utc_naive(value: Optional[datetime] = None) -> datetime:
     if current.tzinfo is not None:
         current = current.astimezone(timezone.utc).replace(tzinfo=None)
     return current
-
-
-def render_turn_document(payload: Mapping[str, Any]) -> str:
-    """Render one conversation turn as the text stored in the cognee session."""
-    turn = payload.get("turn") or {}
-    metadata = payload.get("trigger_metadata") or {}
-    lines = [
-        f"User: {str(turn.get('user_text') or '').strip()}",
-        f"Assistant: {str(turn.get('assistant_text') or '').strip()}",
-    ]
-    tools = [str(tool) for tool in metadata.get("tools_used") or []]
-    if tools:
-        lines.append(f"Tools used to complete the request: {', '.join(tools)}.")
-    return "\n".join(lines)
 
 
 def build_memory_session_write_job_spec(*, user_id: str, session_id: str, text: str) -> MemoryJobSpec:
@@ -424,9 +422,10 @@ def enqueue_cognee_ingest(
 
 
 def build_post_turn_memory_job_specs(state: AgentState) -> List[MemoryJobSpec]:
-    """Queue a cognee session write only for turns Jev judged worth storing."""
+    """Queue a cognee session write of Jev's distilled memory text, never the raw transcript."""
     decision = state.get("memory_storage_decision") or {}
-    if not decision.get("should_store"):
+    memory_text = str(decision.get("memory") or "").strip()
+    if not decision.get("should_store") or not memory_text:
         return []
     from src.memory.cognee_memory import get_cognee_memory
 
@@ -440,7 +439,7 @@ def build_post_turn_memory_job_specs(state: AgentState) -> List[MemoryJobSpec]:
         build_memory_session_write_job_spec(
             user_id=str(state.get("user_id") or config.user_id),
             session_id=str(base_payload["session_id"]),
-            text=render_turn_document(base_payload),
+            text=memory_text,
         )
     ]
 

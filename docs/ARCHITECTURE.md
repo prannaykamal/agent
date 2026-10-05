@@ -74,7 +74,7 @@ Ivo uses an integrated SQLite database (`.agent/state.db`) managed via versioned
 
 ### Core Tables
 
-Long-term knowledge is no longer stored in SQLite; it lives in cognee's stores under `.agent/cognee`. Tables 1–3 are legacy: nothing writes to them, and they are kept so `python -m src.memory.cognee_backfill` can import their contents into cognee.
+Long-term knowledge is no longer stored in SQLite; it lives in cognee's stores under `.agent/cognee`. Tables 1–3 are legacy: they are no longer created or exposed in the Data Inspector, and exist only in databases from before cognee. Their rows are left in place so `python -m src.memory.cognee_backfill` can import them into cognee.
 
 1. **`episodes`** (legacy FTS5 Virtual Table):
    - Historical conversation turns from before cognee.
@@ -89,7 +89,7 @@ Long-term knowledge is no longer stored in SQLite; it lives in cognee's stores u
    - Fields: `name`, `description`, `trigger_keywords`, `execution_steps`, `created_at`.
 
 4. **`checkpoints`**:
-   - Stores LangGraph state checkpoints for session pause, HITL resumption, and context recovery.
+   - Stores state checkpoints for session pause, HITL resumption, and context recovery. A HITL pause saves the turn's memory routing (Jev decisions, recalled memories) under `memory_state`, and the resume restores it.
    - Fields: `id`, `session_id`, `checkpoint_data`, `created_at`.
 
 5. **`approval_requests`**:

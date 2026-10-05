@@ -20,8 +20,6 @@ def _counts(db_path):
     tables = [
         "memory_jobs",
         "summary_blocks",
-        "facts",
-        "episodes",
     ]
     conn = sqlite3.connect(db_path)
     try:

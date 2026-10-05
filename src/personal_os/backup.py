@@ -3,7 +3,27 @@ import zipfile
 import datetime
 from pathlib import Path
 
-from src.config import AGENT_DIR, MEMORY_PATH, SOUL_PATH, SKILL_PATH, DB_PATH
+import src.config as _config
+import src.db as _db
+
+
+# Paths are read at call time, not bound at import, so the database the app is
+# actually using (src.db.DB_PATH) and any re-pointed workspace (tests, tools) are
+# respected. Import-time copies made test runs back up and restore the real .agent.
+def _agent_dir() -> Path:
+    return Path(_config.AGENT_DIR)
+
+
+def _db_path() -> Path:
+    return Path(_db.DB_PATH)
+
+
+def _workspace_files() -> dict:
+    return {
+        "SOUL.md": Path(_config.SOUL_PATH),
+        "MEMORY.md": Path(_config.MEMORY_PATH),
+        "SKILL.md": Path(_config.SKILL_PATH),
+    }
 
 COGNEE_ARCHIVE_PREFIX = "cognee/"
 
@@ -20,7 +40,7 @@ def rotate_backups(output_dir: Path = None, max_backups: int = 5) -> List[str]:
     Returns list of deleted archive filenames.
     """
     if output_dir is None:
-        output_dir = AGENT_DIR / "backups"
+        output_dir = _agent_dir() / "backups"
     
     if not output_dir.exists():
         return []
@@ -48,7 +68,7 @@ def export_agent_backup(output_dir: Path = None, max_backups: int = 5) -> dict:
     knowledge-graph stores, applying backup rotation policy.
     """
     if output_dir is None:
-        output_dir = AGENT_DIR / "backups"
+        output_dir = _agent_dir() / "backups"
     
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -56,10 +76,8 @@ def export_agent_backup(output_dir: Path = None, max_backups: int = 5) -> dict:
     zip_path = output_dir / f"agent_backup_{timestamp}.zip"
 
     files_to_pack = [
-        ("state.db", DB_PATH),
-        ("SOUL.md", SOUL_PATH),
-        ("MEMORY.md", MEMORY_PATH),
-        ("SKILL.md", SKILL_PATH),
+        ("state.db", _db_path()),
+        *_workspace_files().items(),
     ]
 
     packed = []
@@ -90,7 +108,7 @@ def export_agent_backup(output_dir: Path = None, max_backups: int = 5) -> dict:
 def get_available_backups(output_dir: Optional[Path] = None) -> List[dict]:
     """Returns list of available backup zip archives in output_dir."""
     if output_dir is None:
-        output_dir = AGENT_DIR / "backups"
+        output_dir = _agent_dir() / "backups"
 
     if not output_dir.exists():
         return []
@@ -124,14 +142,9 @@ def restore_agent_backup(zip_path: Path, db_path: Optional[Path] = None) -> dict
     if not zipfile.is_zipfile(target_path):
         raise ValueError(f"Backup file '{target_path.name}' is not a valid zip archive.")
 
-    target_db = db_path or DB_PATH
+    target_db = db_path or _db_path()
 
-    target_map = {
-        "state.db": target_db,
-        "SOUL.md": SOUL_PATH,
-        "MEMORY.md": MEMORY_PATH,
-        "SKILL.md": SKILL_PATH
-    }
+    target_map = {"state.db": target_db, **_workspace_files()}
 
     # Verify SQLite DB header inside zip file if state.db present
     with zipfile.ZipFile(target_path, "r") as zf:

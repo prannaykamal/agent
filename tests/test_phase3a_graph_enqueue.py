@@ -38,7 +38,14 @@ def _cognee_enabled(fake_cognee):
     return fake_cognee
 
 
-def _completed_state(approval_status="NONE", should_store=True):
+@pytest.fixture(autouse=True)
+def _jev_says_store(fake_jev):
+    # node_consolidate asks Jev about storage after the answer; default to "worth storing".
+    fake_jev.memory = {"should_store": True, "should_retrieve": False}
+    return fake_jev
+
+
+def _completed_state(approval_status="NONE"):
     return {
         "messages": [
             HumanMessage(content="Remember that I prefer careful migrations."),
@@ -58,7 +65,6 @@ def _completed_state(approval_status="NONE", should_store=True):
         "tools_used": [],
         "loop_count": 1,
         "loop_events": [],
-        "memory_storage_decision": {"should_store": should_store, "source": "jev"},
     }
 
 
@@ -77,7 +83,7 @@ def test_node_consolidate_enqueues_session_write_job(temp_db):
     assert result["memory_job_ids"][0] == jobs[0]["id"]
 
 
-def test_successful_graph_turn_stores_only_when_jev_says_so(temp_db, fake_jev):
+def test_successful_graph_turn_stores_only_when_jev_says_so(temp_db, fake_jev, stub_primary_llm):
     state = {
         "messages": [HumanMessage(content="Remember that I prefer careful migrations.")],
         "session_id": "phase3a-agent",
@@ -104,11 +110,57 @@ def test_successful_graph_turn_stores_only_when_jev_says_so(temp_db, fake_jev):
     assert all(job["status"] == "QUEUED" for job in jobs)
 
 
-def test_turn_not_worth_storing_enqueues_no_job(temp_db):
-    result = node_consolidate(_completed_state(should_store=False))
+def test_turn_not_worth_storing_enqueues_no_job(temp_db, fake_jev):
+    fake_jev.memory = {"should_store": False, "should_retrieve": False}
 
-    assert result == {"memory_job_ids": []}
+    result = node_consolidate(_completed_state())
+
+    assert result["memory_job_ids"] == []
+    assert result["memory_storage_decision"]["should_store"] is False
     assert _count_rows(temp_db, "memory_jobs") == 0
+
+
+def test_storage_decision_sees_the_final_answer(temp_db, fake_jev):
+    result = node_consolidate(_completed_state())
+
+    [call] = [c for c in fake_jev.calls if c["kind"] == "store"]
+    assert "User message: Remember that I prefer careful migrations." in call["user"]
+    assert "Assistant reply: I will keep migrations careful and additive." in call["user"]
+    decision = result["memory_storage_decision"]
+    assert (decision["should_store"], decision["source"], decision["error_category"]) == (True, "jev", None)
+    assert decision["memory"] == "Remember that I prefer careful migrations."
+
+
+def test_only_the_distilled_memory_is_queued(temp_db, fake_jev):
+    fake_jev.memory = {"should_store": True, "memory": "The user prefers careful, additive migrations."}
+
+    node_consolidate(_completed_state())
+
+    [job] = _memory_jobs(temp_db)
+    import json
+
+    assert json.loads(job["payload_json"])["text"] == "The user prefers careful, additive migrations."
+
+
+def test_offline_fallback_reply_skips_storage_and_jev(temp_db, fake_jev):
+    from src.harness.graph import _offline_ai_message
+
+    state = _completed_state()
+    offline = _offline_ai_message(state["messages"], "gemini", "gemini-test", "Model call failed: 429 RESOURCE_EXHAUSTED")
+    state["messages"] = [state["messages"][0], offline]
+
+    result = node_consolidate(state)
+
+    assert result["memory_job_ids"] == [] and result["memory_storage_decision"] is None
+    assert fake_jev.calls == []
+    assert _count_rows(temp_db, "memory_jobs") == 0
+
+
+def test_paused_and_rejected_turns_do_not_ask_jev_about_storage(temp_db, fake_jev):
+    node_consolidate(_completed_state(approval_status="PENDING"))
+    node_consolidate(_completed_state(approval_status="REJECTED"))
+
+    assert fake_jev.calls == []
 
 
 def test_hitl_pending_enqueues_no_job(temp_db):
@@ -161,17 +213,14 @@ def test_enqueue_failure_does_not_break_consolidate_response(temp_db, monkeypatc
 
     result = node_consolidate(_completed_state())
 
-    assert result == {"memory_job_ids": []}
+    assert result["memory_job_ids"] == []
 
 
 def test_phase3a_consolidation_only_writes_to_memory_jobs(temp_db):
     untouched_tables = [
         "dead_letter_jobs",
         "worker_heartbeats",
-        "pending_fact_candidates",
-        "structured_episodes",
-        "facts",
-        "episodes",
+        "summary_blocks",
     ]
     before = {table: _count_rows(temp_db, table) for table in untouched_tables}
 

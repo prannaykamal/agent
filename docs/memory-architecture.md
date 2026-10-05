@@ -18,6 +18,24 @@ Long-term memory used to be three separate stores (semantic facts, structured ep
 - **cognee** (`src/memory/cognee_memory.py`): the single long-term memory backend. No other module imports cognee.
 - **Secondary LLM**: still used only by the `summary_generation` worker job for short-term summaries.
 
+## Model Provider (`AI_PROVIDER`)
+
+One setting picks the provider for the whole app: `AI_PROVIDER=openai` (default) or `AI_PROVIDER=gemini`. Each provider has a profile in `PROVIDER_PROFILES` (`src/harness/models.py`):
+
+| | `openai` | `gemini` |
+|---|---|---|
+| Primary (chat) | `GPT-5.5` | `gemini-3.8-flash` |
+| Secondary (summaries) | `gpt-4o-mini` | `gemini-3.5-flash-lite` |
+| cognee graph extraction | `openai/gpt-4o-mini` | `gemini/gemini-3.5-flash-lite` |
+| cognee embeddings | `openai/text-embedding-3-small` (1536) | `gemini/gemini-embedding-001` (3072) |
+| Key | `OPENAI_API_KEY` | `GOOGLE_API_KEY` |
+
+- The chat page starts on the active provider's models; per-chat choices in the model selector still win.
+- `PRIMARY_PROVIDER`/`PRIMARY_MODEL` and `SECONDARY_PROVIDER`/`SECONDARY_MODEL` override the profile. A `*_MODEL` that belongs to a different provider (for example a leftover `PRIMARY_MODEL=GPT-5.5` with `AI_PROVIDER=gemini`) is ignored unless the matching `*_PROVIDER` is also set, so a model is never sent to the wrong API.
+- cognee's models are applied with `cognee.config.set_llm_config` / `set_embedding_config` after import, because cognee 1.x reads the project `.env` itself and would otherwise let a stale `EMBEDDING_MODEL` win.
+- Switching embedding providers makes previously stored vectors incompatible. Change `AI_PROVIDER` before storing memory, or reset long-term memory and re-import after switching.
+- Gemini 3 returns chat replies as content blocks that carry encrypted thought signatures. The message object is kept intact in graph state (Gemini needs the signatures on follow-up tool calls), and `src/harness/message_text.py` extracts plain text for everything shown to the user, stored as a chat turn, or written to memory.
+
 ## Turn Flow
 
 ```text
@@ -27,40 +45,56 @@ ingest ─────────── log raw turn
    │
 manage_memory ──── existing trimming + summary blocks (short-term context)
    │
-memory_router ──── Jev: {should_store, should_retrieve}   (one call for both)
+memory_router ──── Jev call 1: {should_retrieve}   (before the answer, high recall)
    │                 └─ should_retrieve → cognee recall over the MAIN graph
    │                                       → "[Retrieved Long-Term Memory]" block
 agent ──────────── primary LLM
    │
 hitl_check / tools ── policy + HITL (Jev may escalate medium-risk calls, never de-escalate)
    │
-consolidate ────── should_store → queue memory_session_write
+consolidate ────── Jev call 2: {should_store}   (after the answer: user message + final reply)
+                     └─ should_store → queue memory_session_write of Jev's distilled "memory" text
 ```
 
-### Jev memory decision
+### Jev memory decisions
 
-`node_memory_router` calls `JevClient.decide_memory(query, previous_assistant_reply)` once per user message. The single call returns both decisions:
+Jev makes two separate calls per completed turn, each with its own prompt and one-key JSON answer.
+
+**Retrieval** (`JevClient.decide_retrieval(query, previous_assistant_reply)`, in `node_memory_router`, before the primary agent runs):
 
 ```json
-{"should_store": true, "should_retrieve": false}
+{"should_retrieve": true}
 ```
 
-- Greetings, acknowledgements, and bare arithmetic are answered by rule (`src/memory/retrieval_gate.py`) with no model call: store = false, retrieve = false.
-- Approval resumes re-run the graph without a new user message, so Jev is not called again.
-- `MEMORY_STORAGE_ENABLED=false` or `MEMORY_RETRIEVAL_ENABLED=false` override Jev's answer. With both off, or `COGNEE_ENABLED=false`, Jev is not called at all.
-- Output is validated with a strict schema (`StrictBool`); fenced JSON is accepted, anything else is rejected.
-- **Fallback** when Jev is not configured, times out, errors, or returns invalid output: `should_store = false` (never store unvetted content) and `should_retrieve = true` (retrieval is read-only, so failing open preserves the old behaviour).
+The prompt is tuned for high recall: answer true whenever long-term memory about the user could help answer, personalize, or disambiguate the reply, and true when unsure. Only messages that clearly cannot depend on the user (general knowledge, definitions, arithmetic, unrelated world facts) are false. An unneeded search costs little; a missed memory gives a wrong or generic answer.
 
-Both decisions are kept in graph state (`memory_storage_decision`, `memory_retrieval_decision`), separate from tool execution state.
+**Storage** (`JevClient.decide_storage(user_message, assistant_reply)`, in `node_consolidate`, after the primary agent's final answer):
+
+```json
+{"should_store": true, "memory": "The user's name is Khusham. Khusham's friend Prannay lives in Chandigarh."}
+```
+
+Only the `memory` text is stored, never the "User: … Assistant: …" transcript. Jev writes one to three third-person sentences about the user: what they stated about themselves, or what the assistant confirmed it completed for them. The assistant's suggestions, recommendations, and general information (places, products, restaurants, facts about a city) are left out unless the user chose one or an action completed with it. So "I love to eat pizza" followed by a list of pizzerias stores "The user loves pizza.", not the pizzerias, which would otherwise become graph entities that look like facts about the user. `should_store = true` with empty `memory` is rejected as invalid output.
+
+- Greetings, acknowledgements, and bare arithmetic are answered by rule (`src/memory/retrieval_gate.py`) with no model call: retrieve = false, store = false.
+- A turn whose reply is the offline fallback (`[<Provider>/<model> Primary LLM (Offline)]: …`, produced when the model call fails) is never stored and Jev is not asked.
+- The storage call is skipped for turns that cannot be stored: HITL-paused, rejected, or without a final reply.
+- `MEMORY_RETRIEVAL_ENABLED=false` skips the retrieval call; `MEMORY_STORAGE_ENABLED=false` skips the storage call. With `COGNEE_ENABLED=false`, Jev is not called for memory at all.
+- Output is validated with a strict schema (`StrictBool`); fenced JSON is accepted, anything else is rejected.
+- **Fallback** when Jev is not configured, times out, errors, or returns invalid output: `should_retrieve = true` (retrieval is read-only, so failing open is safe) and `should_store = false` (never store unvetted content).
+
+Both decisions are kept in graph state (`memory_retrieval_decision`, `memory_storage_decision`), separate from tool execution state.
+
+When a turn pauses for HITL approval, its retrieval routing (`user_id`, `memory_retrieval_decision`, `retrieval_triggered`, `retrieved_memories`) and the original request text (`memory_turn_user_text`) are saved under `memory_state` in the approval's `checkpoints` row, with the turn's provider/model selection under `model_selection`. The saved request text is what the storage decision and the stored turn use, so approving by replying "yes" in chat stores the original request, not "yes". Approving or rejecting restores it into the resumed run: the retrieval call and the cognee recall are not repeated, and recalled memories are re-injected into the resumed prompt. The paused run has no final answer, so it makes no storage call; the approved run makes the single storage call on its final reply. Rejected turns are never stored and make no storage call.
 
 ## Storage: Session Graph, Then Main Graph
 
 ```text
 should_store = true
    │
-consolidate ── queue memory_session_write  (only for completed, non-HITL-paused turns)
+consolidate ── queue memory_session_write  (only for completed turns; approved HITL turns on resume)
    │
-worker ─────── cognee.remember(turn, session_id=<user>__<session>, self_improvement=False)
+worker ─────── cognee.remember(memory, session_id=<user>__<session>, self_improvement=False)
    │           queue memory_session_merge due at now + SESSION_IDLE_TIMEOUT
    │
    … conversation continues …
@@ -137,9 +171,10 @@ Unchanged. `src/memory/token_budget.py`, `src/memory/summary_blocks.py`, and `sr
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `JEV_ENDPOINT` | (empty) | OpenAI-compatible base URL, e.g. `http://localhost:8001/v1` |
+| `AI_PROVIDER` | `openai` | `openai` or `gemini`; see Model Provider above |
+| `JEV_ENDPOINT` | (empty) | OpenAI-compatible base URL, e.g. `https://generativelanguage.googleapis.com/v1beta/openai` for Gemini |
 | `JEV_MODEL` | (empty) | Model name at that endpoint |
-| `JEV_API_KEY` | (empty) | Bearer key, read at call time and never exposed by the API |
+| `JEV_API_KEY` | (empty) | Bearer key, read at call time and never exposed by the API. When empty, Google's endpoint uses `GOOGLE_API_KEY` and OpenAI's uses `OPENAI_API_KEY` |
 | `JEV_TIMEOUT_SECONDS` | `5` | Per-decision timeout |
 | `TOOL_JEV_ENABLED` | `true` | Jev review of medium-risk tool calls |
 | `COGNEE_ENABLED` | `true` | Long-term memory on/off |
@@ -154,7 +189,17 @@ Unchanged. `src/memory/token_budget.py`, `src/memory/summary_blocks.py`, and `sr
 | `MEMORY_COGNEE_RECALL_TIMEOUT_SECONDS` | `8` | Recall timeout |
 | `MEMORY_COGNEE_RETRIEVAL_TOKEN_BUDGET` | `1500` | Token cap for the injected block |
 
-cognee's own LLM and embedding settings (`LLM_*`, `EMBEDDING_*`) are read by cognee; `LLM_API_KEY` and `EMBEDDING_API_KEY` default to `OPENAI_API_KEY`. cognee 1.x also reads the project `.env` directly, and its values take precedence over process environment variables.
+cognee's LLM and embedding models and keys come from the `AI_PROVIDER` profile and are applied through `cognee.config`, so `LLM_*` / `EMBEDDING_*` values in `.env` do not override them. cognee 1.x still reads the project `.env` for its other settings.
+
+## Saving A Chat Early
+
+The **Save to memory now** button in the Chat header merges the current chat's session into the main graph immediately instead of waiting for `SESSION_IDLE_TIMEOUT`. It queues a forced `memory_session_merge` (`POST /api/memory/sessions/{session_id}/merge`), then polls `GET /api/memory/observability/jobs/{job_id}` and reports one of: saved, nothing new to save (Jev has not marked anything in the chat as worth storing since the last merge), failed with the redacted error, or still running. A forced merge with nothing new is a no-op, so pressing it twice is safe.
+
+## Viewing The Graph
+
+The **Memory Graph** tab draws the main graph from `GET /api/memory/graph` (read-only; session caches are never included). `CogneeMemory.graph_snapshot()` calls cognee's `visualize_graph_json` with `include_session_events=False` and a node cap (`max_nodes`, 10–1000, default 300), then compacts it to `id`, `name`, `type`, a 400-character `detail`, and `degree` per node and `source`, `target`, `relation` per link. An empty or not-yet-created dataset returns an empty graph.
+
+The view shows everything by default, with cognee's bookkeeping nodes (`TextDocument`, `DocumentChunk`, `TextSummary`, `NodeSet`, …) muted and a toggle to hide them. In cognee 1.6, extracted entities usually connect through the chunk they came from (`contains`) and their type (`is_a`) rather than directly to each other, so hiding bookkeeping nodes can leave entities unconnected.
 
 ## Observability
 
@@ -188,12 +233,11 @@ Long-term knowledge lives in cognee's stores under `.agent/cognee`, not in SQLit
 
 ## Legacy Compatibility
 
-The pre-cognee tables (`facts`, `episodes`, `structured_episodes`, `pending_fact_candidates`, `semantic_embeddings`, `semantic_dedup_events`, `consolidation_runs`, `memory_entities`, `skills`, `skill_candidates`, `skill_versions`, `skill_usage_stats`, `procedural_skill_approvals`) are still created by schema migrations and readable in the Data Inspector. Nothing writes to them. `python -m src.memory.cognee_backfill` imports them once into the main graph; see [Legacy Memory Backfill](legacy-memory-backfill.md).
+The pre-cognee tables (`facts`, `episodes`, `pending_facts`, `structured_episodes`, `pending_fact_candidates`, `semantic_embeddings`, `semantic_dedup_events`, `consolidation_runs`, `memory_entities`, `skills`, `skill_candidates`, `skill_versions`, `skill_usage_stats`, `procedural_skill_approvals`) are no longer created by schema setup or migrations and are not exposed in the Data Inspector. Databases from before cognee keep them untouched, and nothing writes to them. `python -m src.memory.cognee_backfill` imports them once into the main graph; see [Legacy Memory Backfill](legacy-memory-backfill.md).
 
 ## Known Limitations
 
 - **Session writes need embeddings.** cognee 1.6 saves a session entry and then embeds it for session recall. If the embedding provider is down, that step fails open only after a minute or two of retries, so each session write can occupy the single memory worker that long. The write timeout is 300 seconds so the fail-open completes; a write cut off later than that is retried and can duplicate the session entry.
 - **Merges need cognee's LLM.** `improve()` extracts graph knowledge with cognee's configured LLM (`LLM_API_KEY` etc.). Without one, merges retry and then dead-letter; force-merge after fixing the provider.
-- **Storage decisions are not carried across HITL resumes.** A turn paused for approval is not stored when it resumes, because the resumed run has no new user message for Jev to judge.
 - **Single-user identity.** Memory is scoped by `MEMORY_USER_ID`; the chat API has no per-request user, so all sessions in one deployment share that user's main graph.
 - **The retrieval trace bypasses Jev.** It shows what recall would return, not whether Jev would have asked for it.

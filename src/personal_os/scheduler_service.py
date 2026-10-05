@@ -9,26 +9,32 @@ from src.personal_os.cron_parser import ensure_aware_utc, next_cron_run_at
 from src.personal_os.scheduler_policy import approval_policy_for_target
 from src.personal_os.scheduler_store import ToolScheduleRecord, ToolScheduleRepository, ToolScheduleWrite
 
-_KNOWN_SCHEDULE_TOOLS = {
+# Personal OS tools a plain-text schedule payload may name directly. External
+# provider tools are looked up in the tool registry, so this module stays free of
+# provider-specific names.
+_PERSONAL_OS_SCHEDULE_TOOLS = {
     "heartbeat",
     "create_task",
     "update_task",
     "list_tasks",
     "publish_event",
     "checkpoint",
-    "email_send",
-    "email_draft",
-    "email_read",
-    "email_search",
-    "calendar_create_event",
-    "calendar_inspect_availability",
-    "calendar_update_event",
-    "calendar_delete_event",
-    "whatsapp_send",
-    "telegram_send",
-    "search_web",
     "spawn_agent",
 }
+
+
+def _is_known_schedule_tool(name: str) -> bool:
+    if name in _PERSONAL_OS_SCHEDULE_TOOLS:
+        return True
+    from src.tools.registry import get_mcp_gateway_tool_metadata
+    from src.tools.removed_tools import is_removed_tool_name
+
+    if is_removed_tool_name(name):
+        return False
+    try:
+        return any(item.legacy_name == name for item in get_mcp_gateway_tool_metadata())
+    except Exception:
+        return False
 
 
 def resolve_schedule_target(task_payload: str) -> Tuple[str, Dict[str, Any]]:
@@ -53,7 +59,7 @@ def resolve_schedule_target(task_payload: str) -> Tuple[str, Dict[str, Any]]:
             }
             return tool, leftover
     first = text.split()[0]
-    if first in _KNOWN_SCHEDULE_TOOLS:
+    if _is_known_schedule_tool(first):
         return first, {}
     return "create_task", {
         "title": text[:120],
@@ -92,6 +98,7 @@ def create_tool_schedule(
     db_path: Optional[Path] = None,
     now: Any = None,
     mirror_legacy: bool = False,
+    legacy_task_payload: Optional[str] = None,
 ) -> ScheduleCreationResult:
     approval_policy = approval_policy_for_target(target_tool_id)
     write = ToolScheduleWrite(
@@ -109,7 +116,7 @@ def create_tool_schedule(
     repo = ToolScheduleRepository(db_path)
     schedule = repo.create_schedule(write, now=now)
     if mirror_legacy:
-        repo.mirror_legacy_scheduled_job(schedule)
+        repo.mirror_legacy_scheduled_job(schedule, legacy_task_payload=legacy_task_payload)
     return ScheduleCreationResult(schedule=schedule, legacy_mirrored=mirror_legacy)
 
 
@@ -127,6 +134,7 @@ def create_legacy_compatible_schedule(cron_or_timestamp: str, task_payload: str,
             db_path=db_path,
             now=now,
             mirror_legacy=True,
+            legacy_task_payload=task_payload,
         )
     return create_tool_schedule(
         schedule_type="one_time",
@@ -138,6 +146,7 @@ def create_legacy_compatible_schedule(cron_or_timestamp: str, task_payload: str,
         db_path=db_path,
         now=now,
         mirror_legacy=True,
+        legacy_task_payload=task_payload,
     )
 
 

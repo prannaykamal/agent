@@ -23,6 +23,9 @@ class AgentState(TypedDict):
     user_id: Optional[str]
     memory_storage_decision: Optional[Dict[str, Any]]
     memory_retrieval_decision: Optional[Dict[str, Any]]
+    # Set only on HITL resumes: the paused turn's original request, used for the
+    # storage decision and the stored turn instead of a chat approval reply.
+    memory_turn_user_text: Optional[str]
     loop_count: Optional[int]
     tools_used: Optional[List[str]]
     loop_events: Optional[List[Dict[str, Any]]]

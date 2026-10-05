@@ -250,6 +250,9 @@ def test_backfill_imports_legacy_tables_idempotently(temp_db):
 
     conn = sqlite3.connect(temp_db)
     try:
+        # Legacy tables exist only in pre-cognee databases; recreate them as such a database had them.
+        conn.execute("CREATE VIRTUAL TABLE facts USING fts5(category UNINDEXED, fact_text, source UNINDEXED, confidence UNINDEXED, created_at UNINDEXED)")
+        conn.execute("CREATE TABLE skills (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, description TEXT, trigger_keywords TEXT, execution_steps TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
         conn.execute("INSERT INTO facts (category, fact_text, source, confidence, created_at) VALUES ('pref', 'Likes tea', 'user', '1', datetime('now'))")
         conn.execute("INSERT INTO skills (name, description, trigger_keywords, execution_steps) VALUES ('digest', 'Inbox digest', 'inbox', 'fetch; summarize')")
         conn.commit()
@@ -276,9 +279,9 @@ def test_backup_round_trips_cognee_dir_and_blocks_zip_slip(tmp_path, monkeypatch
     monkeypatch.setattr(backup, "_cognee_dir", lambda: cognee_dir)
     db_file = tmp_path / "state.db"
     init_db(db_file)
-    monkeypatch.setattr(backup, "DB_PATH", db_file)
+    monkeypatch.setattr("src.db.DB_PATH", db_file)
     for name in ("SOUL_PATH", "MEMORY_PATH", "SKILL_PATH"):
-        monkeypatch.setattr(backup, name, tmp_path / f"{name}.md")
+        monkeypatch.setattr(f"src.config.{name}", tmp_path / f"{name}.md")
 
     exported = backup.export_agent_backup(output_dir=tmp_path / "backups")
     assert "cognee/" in exported["packed_files"]
@@ -344,6 +347,37 @@ def test_graph_snapshot_treats_missing_dataset_as_empty(fake_cognee):
     assert get_cognee_memory().graph_snapshot()["nodes"] == []
 
 
+@pytest.mark.parametrize(
+    "error_name, message",
+    [
+        ("CogneeValidationError", "A dataset must be provided when backend access control is enabled. (Status code: 422)"),
+        ("DatabaseNotCreatedError", "The database has not been created yet. Please call `await setup()` first."),
+    ],
+)
+def test_graph_snapshot_of_a_fresh_or_reset_store_is_empty_not_an_error(fake_cognee, error_name, message):
+    async def visualize_graph_json(**kwargs):
+        raise type(error_name, (Exception,), {})(message)
+
+    fake_cognee.visualize_graph_json = visualize_graph_json
+
+    assert get_cognee_memory().graph_snapshot()["nodes"] == []
+
+
+def test_forget_all_removes_the_local_stores_including_session_vectors(fake_cognee, tmp_path):
+    from src.memory.cognee_memory import resolve_data_dir
+
+    data_dir = resolve_data_dir(get_cognee_memory().config)
+    leftover = data_dir / "system" / "databases" / "cognee.lancedb" / "SessionQAVector_text.lance"
+    leftover.mkdir(parents=True)
+    (leftover / "rows.lance").write_text("old transcript")
+    (data_dir / "data").mkdir(parents=True, exist_ok=True)
+
+    get_cognee_memory().forget_all()
+
+    assert not (data_dir / "system").exists() and not (data_dir / "data").exists()
+    assert fake_cognee.graph == {} and fake_cognee.sessions == {}
+
+
 def test_graph_endpoint_bounds_max_nodes_and_reports_unavailable(fake_cognee, monkeypatch):
     from fastapi.testclient import TestClient
 
@@ -367,3 +401,18 @@ def test_graph_endpoint_bounds_max_nodes_and_reports_unavailable(fake_cognee, mo
     set_cognee_memory(CogneeMemory(config=CogneeMemoryConfig(enabled=False)))
     unavailable = client.get("/api/memory/graph").json()
     assert unavailable["available"] is False and unavailable["nodes"] == []
+
+
+def test_graph_extraction_schema_requires_edges_but_parsing_stays_lenient():
+    from litellm.utils import type_to_response_format_param
+    from cognee.shared.data_models import KnowledgeGraph
+    from src.memory.cognee_memory import _require_edges_in_graph_extraction_schema
+
+    _require_edges_in_graph_extraction_schema()
+    _require_edges_in_graph_extraction_schema()  # idempotent
+
+    # What the LLM is asked for: both lists are required, so models cannot drop edges.
+    sent_schema = type_to_response_format_param(KnowledgeGraph)["json_schema"]["schema"]
+    assert sent_schema["required"].count("edges") == 1 and "nodes" in sent_schema["required"]
+    # What cognee accepts back is unchanged.
+    assert KnowledgeGraph.model_validate({"nodes": []}).edges == []

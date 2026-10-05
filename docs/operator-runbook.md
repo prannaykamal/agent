@@ -12,26 +12,37 @@ pip install -r requirements.txt
 
 cognee may lag behind the newest Python release. If `pip install cognee` fails on your interpreter, create the virtualenv with a version cognee supports.
 
+## Choose A Model Provider
+
+Set one line in `.env` and the key for that provider:
+
+```dotenv
+AI_PROVIDER=gemini         # or openai
+GOOGLE_API_KEY=...         # for gemini
+OPENAI_API_KEY=...         # for openai
+```
+
+This picks the default chat model, the background summary model, and cognee's graph-extraction and embedding models (see the Model Provider section of [Memory Architecture](memory-architecture.md)). Restart the API after changing it. Pick the provider before storing memory: switching later changes the embedding model, and old memory must then be reset and re-imported.
+
+On Gemini's free tier the chat model can return `503 UNAVAILABLE` or `RESOURCE_EXHAUSTED` when Google is overloaded or the daily quota is used up; the turn then shows the error and you can resend. Free-tier requests may also be used by Google to improve its products, so check Google's current terms before sending personal data.
+
 ## Configure Long-Term Memory
 
-The defaults work with only `OPENAI_API_KEY` set:
-
-- cognee's `LLM_API_KEY` and `EMBEDDING_API_KEY` default to `OPENAI_API_KEY`.
-- `EMBEDDING_DIMENSIONS` is set automatically for known OpenAI embedding models.
-- Data is stored under `.agent/cognee`.
-
-To use another provider for graph extraction or embeddings, set cognee's variables explicitly (`LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY`, `EMBEDDING_PROVIDER`, `EMBEDDING_MODEL`, `EMBEDDING_DIMENSIONS`). Explicit values are never overridden. The `MEMORY_COGNEE_*` settings are listed in `.env.example`.
+Long-term memory needs no extra keys: cognee uses the `AI_PROVIDER` profile's models and key. Data is stored under `.agent/cognee`. The `MEMORY_COGNEE_*` and memory switches are listed in `.env.example`.
 
 ## Configure Jev
 
 Jev is the small routing model that decides, per message, whether to store and whether to retrieve long-term memory, and may escalate medium-risk tool calls to approval. Point it at any OpenAI-compatible chat endpoint:
 
 ```dotenv
-JEV_ENDPOINT=http://localhost:8001/v1
-JEV_MODEL=your-jev-model
-JEV_API_KEY=...            # optional for local servers
+# Gemini (free tier), using GOOGLE_API_KEY:
+JEV_ENDPOINT=https://generativelanguage.googleapis.com/v1beta/openai
+JEV_MODEL=gemini-3.5-flash-lite
+JEV_API_KEY=               # empty: uses GOOGLE_API_KEY for Google's endpoint
 JEV_TIMEOUT_SECONDS=5
 ```
+
+Any other OpenAI-compatible server works the same way with its own `JEV_API_KEY`. OpenCode's free models (`*-free`) cannot be used this way: OpenCode only allows them inside the OpenCode app, and the API returns `403 FreeTierError`.
 
 Without Jev the assistant still works: nothing is stored from chat, retrieval runs for every non-trivial message, and tool calls follow policy alone. `GET /api/memory/observability/long-term` shows whether Jev is configured. Tune `SESSION_IDLE_TIMEOUT` (minutes) for how long a conversation must be quiet before its session merges into the main graph.
 
@@ -40,6 +51,14 @@ Without Jev the assistant still works: nothing is stored from chat, retrieval ru
 ```powershell
 python src/api/server.py
 ```
+
+or, to listen on this machine only:
+
+```bash
+.venv/bin/python -m uvicorn src.api.server:app --host 127.0.0.1 --port 8000
+```
+
+When `frontend/dist` exists the API also serves the built cockpit at `http://127.0.0.1:8000` (the bundle under `/assets`), so no separate frontend server is needed.
 
 The server initializes directories and the SQLite schema through `ensure_system_initialized()`, then starts the in-process memory worker (`src/memory/worker_runtime.py`). Set `MEMORY_WORKER_AUTOSTART=false` to run the worker separately. The worker never starts under pytest.
 
@@ -149,7 +168,17 @@ curl -X POST http://localhost:8000/api/memory/procedure -H "Content-Type: applic
 
 Both queue a `cognee_ingest` job that writes straight into the main graph, bypassing Jev and the session cache. The knowledge becomes searchable once the worker has processed it.
 
+## View The Memory Graph
+
+Open the **Memory Graph** tab, or call the API directly:
+
+```bash
+curl "http://localhost:8000/api/memory/graph?max_nodes=300&include_documents=true"
+```
+
 ## Merge A Session Now
+
+From the cockpit: open the chat and press **Save to memory now** in the Chat header. From the command line:
 
 ```powershell
 curl -X POST http://localhost:8000/api/memory/sessions/<session_id>/merge
@@ -221,10 +250,14 @@ python -c "from src.memory.worker import recover_stale_running_jobs; print(recov
 
 ## Reset Long-Term Memory
 
-To wipe the knowledge graph completely, back up first, then call `CogneeMemory.forget_all()` from a maintenance session:
+To wipe the knowledge graph completely:
+
+1. Stop the API and the memory worker.
+2. Back up first: `POST /api/system/backup`, or the Overview page.
+3. Run `forget_all()` from a maintenance session. Importing `src.config` first loads `.env`, so the configured cognee store is the one that is reset:
 
 ```powershell
-python -c "from src.memory.cognee_memory import get_cognee_memory; get_cognee_memory().forget_all()"
+python -c "import src.config; from src.memory.cognee_memory import get_cognee_memory; get_cognee_memory().forget_all()"
 ```
 
-This deletes all cognee data for the deployment and cannot be undone without a backup.
+`forget_all()` runs cognee's own forget, then removes the local store directories (`<COGNEE_DATA_DIR>/system` and `/data`). The directory removal is needed because cognee's forget/prune leave the session vector index (`SessionQAVector`) behind when backend access control is on, so old session entries would survive. cognee recreates the stores empty on next start; the Memory Graph page shows an empty graph until something is merged. This cannot be undone without a backup.
